@@ -1,0 +1,157 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+.virtualenv
+
+# Python Version
+.python-version
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Frontend build
+frontend/dist/
+frontend/build/
+frontend/.vite/
+
+# Frontend cache
+frontend/.cache/
+frontend/.parcel-cache/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+esd.yml
+Icon?
+Thumbs.db
+Desktop.ini
+
+# Docker
+.dockerignore
+
+# IDEs
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Archives
+*.tar.gz
+*.zip
+*.7z
+*.rar
+backend/pandas-ta.tar.gz
+
+# Documentation artifacts
+*.docx
+*.pdf
+architecture_diagram.html
+
+# Test coverage
+coverage/
+
+# Alembic
+# Note: Keep alembic/versions/*.py in source control
+alembic/__pycache__/
+
+# Redis dumps
+dump.rdb
+
+# PostgreSQL
+*.sql.gz
+
+# Backup files
+*.bak
+*.backup
+
+# Claude AI
+.claude/
+
+# Local commands/notes
+commands.txt
+notes.txt
+todo.txt
