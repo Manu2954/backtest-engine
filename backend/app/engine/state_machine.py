@@ -16,6 +16,7 @@ class TradeRecord:
     pnl: float
     pnl_pct: float
     trade_duration_days: int
+    exit_reason: str  # NEW: Track why trade exited (signal, stop_loss, take_profit, force_close)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -27,6 +28,7 @@ class TradeRecord:
             "pnl": self.pnl,
             "pnl_pct": self.pnl_pct,
             "trade_duration_days": self.trade_duration_days,
+            "exit_reason": self.exit_reason,  # NEW: Include in output
         }
 
 
@@ -38,6 +40,61 @@ def _ensure_series(series: pd.Series, index: pd.Index) -> pd.Series:
     return series.astype(bool)
 
 
+def _calculate_position_size(
+    cash: float,
+    total_capital: float,
+    price: float,
+    position_size_type: str,
+    position_size_value: float,
+    allow_fractional: bool,
+) -> float:
+    """
+    Calculate how many shares to buy based on position sizing rules.
+
+    Args:
+        cash: Available cash to invest
+        total_capital: Total account value (cash + position value)
+        price: Current price per share
+        position_size_type: "full_capital", "percent_capital", or "fixed_amount"
+        position_size_value: The percentage or dollar amount
+        allow_fractional: Whether fractional shares are allowed (True for crypto, False for stocks)
+
+    Returns:
+        Number of shares to buy (may be fractional or integer)
+    """
+    if price <= 0:
+        return 0.0
+
+    # Determine the dollar amount to invest
+    if position_size_type == "full_capital":
+        # Use all available cash (original behavior)
+        amount_to_invest = cash
+    elif position_size_type == "percent_capital":
+        # Use X% of total capital (not just cash)
+        # Example: If you have $100,000 total and position_size_value=25,
+        # invest $25,000 (even if you have $80,000 cash)
+        amount_to_invest = (position_size_value / 100.0) * total_capital
+        # But can't invest more than available cash
+        amount_to_invest = min(amount_to_invest, cash)
+    else:  # fixed_amount
+        # Use fixed dollar amount
+        # Example: Always invest $10,000 per trade
+        amount_to_invest = position_size_value
+        # But can't invest more than available cash
+        amount_to_invest = min(amount_to_invest, cash)
+
+    # Convert dollar amount to shares
+    raw_shares = amount_to_invest / price
+
+    # Apply fractional/integer constraint
+    if allow_fractional:
+        return raw_shares
+    else:
+        # For stocks, must buy whole shares
+        return float(int(raw_shares))
+
+
+
 def run_backtest(
     df: pd.DataFrame,
     entry_signal: pd.Series,
@@ -46,6 +103,12 @@ def run_backtest(
     asset_class: str = "STOCK",
     shares: float = 0.0,
     periodic_contribution: dict[str, Any] | None = None,
+    # NEW: Position sizing parameters
+    position_size_type: str = "full_capital",  # "full_capital" | "percent_capital" | "fixed_amount"
+    position_size_value: float = 100.0,  # Percentage (0-100) or dollar amount
+    # NEW: Risk management parameters
+    stop_loss_pct: float | None = None,  # Stop loss percentage (e.g., 5.0 for 5% loss)
+    take_profit_pct: float | None = None,  # Take profit percentage (e.g., 10.0 for 10% gain)
 ) -> tuple[list[dict[str, Any]], pd.Series]:
     if df.empty:
         return [], pd.Series([], dtype=float, name="equity")
@@ -53,6 +116,29 @@ def run_backtest(
     for col in ("open", "close"):
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
+
+    # NEW: Validate position sizing parameters
+    if position_size_type not in {"full_capital", "percent_capital", "fixed_amount"}:
+        raise ValueError(
+            f"Invalid position_size_type: {position_size_type}. "
+            "Must be 'full_capital', 'percent_capital', or 'fixed_amount'"
+        )
+    if position_size_type == "percent_capital":
+        if position_size_value <= 0 or position_size_value > 100:
+            raise ValueError(
+                f"position_size_value must be between 0 and 100 for percent_capital, got {position_size_value}"
+            )
+    if position_size_type == "fixed_amount":
+        if position_size_value <= 0:
+            raise ValueError(
+                f"position_size_value must be positive for fixed_amount, got {position_size_value}"
+            )
+
+    # NEW: Validate risk management parameters
+    if stop_loss_pct is not None and stop_loss_pct <= 0:
+        raise ValueError(f"stop_loss_pct must be positive, got {stop_loss_pct}")
+    if take_profit_pct is not None and take_profit_pct <= 0:
+        raise ValueError(f"take_profit_pct must be positive, got {take_profit_pct}")
 
     entry_signal = _ensure_series(entry_signal, df.index)
     exit_signal = _ensure_series(exit_signal, df.index)
@@ -131,8 +217,17 @@ def run_backtest(
 
         # Fill pending entry at current bar open
         if pending_entry and shares == 0.0:
-            raw_shares = cash / open_price if open_price > 0 else 0.0
-            shares = raw_shares if allow_fractional else float(int(raw_shares))
+            # NEW: Calculate position size based on sizing rules
+            total_capital = cash  # When flat, total capital = cash
+            shares = _calculate_position_size(
+                cash=cash,
+                total_capital=total_capital,
+                price=open_price,
+                position_size_type=position_size_type,
+                position_size_value=position_size_value,
+                allow_fractional=allow_fractional,
+            )
+            # Deduct cost from cash
             cash = cash - (shares * open_price)
             if abs(cash) < 1e-8:
                 cash = 0.0
@@ -144,6 +239,7 @@ def run_backtest(
         if pending_exit and shares > 0.0:
             exit_price = open_price
             exit_date = ts
+            exit_reason = "signal"  # NEW: Exit triggered by strategy signal
             pnl = (exit_price - (entry_price or 0.0)) * shares
             pnl_pct = pnl / initial_capital if initial_capital else 0.0
             trade_duration_days = (
@@ -159,6 +255,7 @@ def run_backtest(
                     pnl=pnl,
                     pnl_pct=pnl_pct,
                     trade_duration_days=trade_duration_days,
+                    exit_reason=exit_reason,  # NEW: Record exit reason
                 )
             )
             cash = cash + (shares * exit_price)
@@ -168,6 +265,76 @@ def run_backtest(
             entry_date = None
             entry_price = None
             pending_exit = False
+
+        # NEW: Check stop loss and take profit WHILE in position (after any exits processed)
+        # This happens at the bar's open price (realistic - you'd see the price and exit)
+        if shares > 0.0 and entry_price is not None:
+            current_price = open_price
+            price_change_pct = ((current_price - entry_price) / entry_price) * 100.0
+
+            # Check stop loss (price dropped too much)
+            if stop_loss_pct is not None and price_change_pct <= -stop_loss_pct:
+                # Exit immediately at current open price
+                exit_price = current_price
+                exit_date = ts
+                exit_reason = "stop_loss"
+                pnl = (exit_price - entry_price) * shares
+                pnl_pct = pnl / initial_capital if initial_capital else 0.0
+                trade_duration_days = (
+                    (exit_date - entry_date).days if entry_date is not None else 0
+                )
+                trade_log.append(
+                    TradeRecord(
+                        entry_date=entry_date or ts,
+                        entry_price=entry_price,
+                        exit_date=exit_date,
+                        exit_price=exit_price,
+                        shares=shares,
+                        pnl=pnl,
+                        pnl_pct=pnl_pct,
+                        trade_duration_days=trade_duration_days,
+                        exit_reason=exit_reason,
+                    )
+                )
+                cash = cash + (shares * exit_price)
+                if abs(cash) < 1e-8:
+                    cash = 0.0
+                shares = 0.0
+                entry_date = None
+                entry_price = None
+                pending_exit = False  # Clear any pending signal exit
+
+            # Check take profit (price gained enough)
+            elif take_profit_pct is not None and price_change_pct >= take_profit_pct:
+                # Exit immediately at current open price
+                exit_price = current_price
+                exit_date = ts
+                exit_reason = "take_profit"
+                pnl = (exit_price - entry_price) * shares
+                pnl_pct = pnl / initial_capital if initial_capital else 0.0
+                trade_duration_days = (
+                    (exit_date - entry_date).days if entry_date is not None else 0
+                )
+                trade_log.append(
+                    TradeRecord(
+                        entry_date=entry_date or ts,
+                        entry_price=entry_price,
+                        exit_date=exit_date,
+                        exit_price=exit_price,
+                        shares=shares,
+                        pnl=pnl,
+                        pnl_pct=pnl_pct,
+                        trade_duration_days=trade_duration_days,
+                        exit_reason=exit_reason,
+                    )
+                )
+                cash = cash + (shares * exit_price)
+                if abs(cash) < 1e-8:
+                    cash = 0.0
+                shares = 0.0
+                entry_date = None
+                entry_price = None
+                pending_exit = False  # Clear any pending signal exit
 
         # Mark-to-market equity at bar close
         equity_curve.iloc[i] = cash + (shares * close_price)
@@ -197,6 +364,7 @@ def run_backtest(
                 pnl=pnl,
                 pnl_pct=pnl_pct,
                 trade_duration_days=trade_duration_days,
+                exit_reason="force_close",  # NEW: Backtest ended while in position
             )
         )
         cash = cash + (shares * last_close)

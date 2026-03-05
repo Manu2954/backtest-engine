@@ -84,6 +84,12 @@ async def _run_backtest_async(run_id: str) -> None:
                 float(run.initial_capital),
                 asset_class=run.asset_class,
                 periodic_contribution=run.periodic_contribution,
+                # NEW: Pass position sizing parameters
+                position_size_type=run.position_size_type or "full_capital",
+                position_size_value=float(run.position_size_value or 100.0),
+                # NEW: Pass risk management parameters
+                stop_loss_pct=float(run.stop_loss_pct) if run.stop_loss_pct is not None else None,
+                take_profit_pct=float(run.take_profit_pct) if run.take_profit_pct is not None else None,
             )
 
             logger.info("Generating report and persisting trades")
@@ -151,6 +157,7 @@ def _persist_trades(
                 pnl=trade["pnl"],
                 pnl_pct=trade["pnl_pct"],
                 trade_duration_days=trade["trade_duration_days"],
+                exit_reason=trade.get("exit_reason", "signal"),  # NEW: Store exit reason
             )
         )
 

@@ -30,6 +30,11 @@ class BacktestRun(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     periodic_contribution: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # NEW: Position sizing and risk management parameters
+    position_size_type: Mapped[str | None] = mapped_column(String(32), nullable=True, default="full_capital")
+    position_size_value: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True, default=100.0)
+    stop_loss_pct: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    take_profit_pct: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
 
     strategy = relationship("Strategy", back_populates="backtest_runs")
     trades = relationship("TradeLog", back_populates="run", cascade="all, delete-orphan")
@@ -48,5 +53,7 @@ class TradeLog(Base):
     pnl: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     pnl_pct: Mapped[float] = mapped_column(Numeric(8, 4), nullable=False)
     trade_duration_days: Mapped[int] = mapped_column(nullable=False)
+    # NEW: Track how the trade exited
+    exit_reason: Mapped[str | None] = mapped_column(String(32), nullable=True, default="signal")
 
     run = relationship("BacktestRun", back_populates="trades")
