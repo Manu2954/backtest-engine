@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.engine.condition_engine import evaluate_conditions
 from app.engine.data_layer import fetch_ohlcv_async
 from app.engine.indicator_layer import compute_indicators, trim_warmup_period
-from app.engine.report_generator import generate_report
+from app.engine.report_generator import generate_report, calculate_buy_and_hold_equity
 from app.engine.state_machine import run_backtest
 from app.models.backtest import BacktestRun, TradeLog
 from app.models.strategy import ConditionGroup, Strategy
@@ -111,7 +111,16 @@ async def _run_backtest_async(run_id: str) -> None:
 
             logger.info("Generating report and persisting trades")
             _persist_trades(session, run.id, trades)
-            report = generate_report(trades, equity_curve, float(run.initial_capital))
+
+            # Calculate buy-and-hold benchmark
+            logger.info("Calculating buy-and-hold benchmark")
+            benchmark_equity = calculate_buy_and_hold_equity(
+                df, float(run.initial_capital), asset_class=run.asset_class
+            )
+
+            report = generate_report(
+                trades, equity_curve, float(run.initial_capital), benchmark_equity=benchmark_equity
+            )
             run.report = report
             run.status = "COMPLETE"
             await session.commit()

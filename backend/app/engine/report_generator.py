@@ -5,6 +5,45 @@ from typing import Any
 import pandas as pd
 
 
+def calculate_buy_and_hold_equity(
+    df: pd.DataFrame,
+    initial_capital: float,
+    asset_class: str = "STOCK",
+) -> pd.Series:
+    """
+    Calculate buy-and-hold equity curve.
+
+    Buys at the first bar's open price and holds until the end.
+
+    Args:
+        df: OHLCV DataFrame
+        initial_capital: Starting capital
+        asset_class: "STOCK" or "CRYPTO" (affects fractional shares)
+
+    Returns:
+        Equity curve Series aligned with df.index
+    """
+    if df.empty or "open" not in df.columns or "close" not in df.columns:
+        return pd.Series([], dtype=float, name="benchmark_equity")
+
+    # Buy at first bar's open
+    entry_price = float(df.iloc[0]["open"])
+
+    # Calculate shares
+    allow_fractional = asset_class.upper() != "STOCK"
+    raw_shares = initial_capital / entry_price if entry_price > 0 else 0.0
+    shares = raw_shares if allow_fractional else float(int(raw_shares))
+
+    if shares == 0:
+        # Not enough capital to buy even 1 share
+        return pd.Series([initial_capital] * len(df), index=df.index, name="benchmark_equity")
+
+    # Mark-to-market at each bar's close
+    equity_curve = df["close"] * shares
+
+    return pd.Series(equity_curve, index=df.index, name="benchmark_equity")
+
+
 def _safe_div(numerator: float, denominator: float) -> float:
     if denominator == 0:
         return 0.0
@@ -69,10 +108,75 @@ def _longest_drawdown_days(equity: pd.Series) -> int:
     return longest
 
 
+def _calculate_benchmark_stats(
+    strategy_equity: pd.Series,
+    benchmark_equity: pd.Series,
+    initial_capital: float,
+    strategy_daily_returns: pd.Series,
+) -> dict[str, Any]:
+    """
+    Calculate benchmark comparison statistics.
+
+    Args:
+        strategy_equity: Strategy equity curve
+        benchmark_equity: Buy-and-hold equity curve
+        initial_capital: Starting capital
+        strategy_daily_returns: Strategy daily returns (already calculated)
+
+    Returns:
+        Dictionary with benchmark comparison stats
+    """
+    benchmark_equity = _to_series(benchmark_equity).dropna()
+    benchmark_equity = _ensure_datetime_index(benchmark_equity)
+
+    if benchmark_equity.empty:
+        return {}
+
+    # Benchmark final capital and return
+    benchmark_final = float(benchmark_equity.iloc[-1])
+    benchmark_return_pct = _safe_div(benchmark_final - initial_capital, initial_capital) * 100
+
+    # Alpha: Strategy return - Benchmark return
+    strategy_final = float(strategy_equity.iloc[-1])
+    strategy_return_pct = _safe_div(strategy_final - initial_capital, initial_capital) * 100
+    alpha = strategy_return_pct - benchmark_return_pct
+
+    # Benchmark Sharpe ratio
+    benchmark_daily_returns = benchmark_equity.pct_change().dropna()
+    if not benchmark_daily_returns.empty and benchmark_daily_returns.std() != 0:
+        benchmark_sharpe = (benchmark_daily_returns.mean() / benchmark_daily_returns.std()) * (252 ** 0.5)
+    else:
+        benchmark_sharpe = 0.0
+
+    # Beta: Correlation between strategy and benchmark returns
+    # Align the two series
+    aligned_strategy, aligned_benchmark = strategy_daily_returns.align(benchmark_daily_returns, join="inner")
+
+    if len(aligned_strategy) > 1 and aligned_benchmark.std() != 0:
+        covariance = aligned_strategy.cov(aligned_benchmark)
+        benchmark_variance = aligned_benchmark.var()
+        beta = covariance / benchmark_variance if benchmark_variance != 0 else 0.0
+    else:
+        beta = 0.0
+
+    # Benchmark max drawdown
+    benchmark_max_dd = _max_drawdown(benchmark_equity)
+
+    return {
+        "benchmark_return_pct": benchmark_return_pct,
+        "benchmark_final_capital": benchmark_final,
+        "benchmark_sharpe_ratio": benchmark_sharpe,
+        "benchmark_max_drawdown_pct": benchmark_max_dd,
+        "alpha": alpha,
+        "beta": beta,
+    }
+
+
 def generate_report(
     trade_log: list[dict[str, Any]],
     equity_curve: pd.Series,
     initial_capital: float,
+    benchmark_equity: pd.Series | None = None,
 ) -> dict[str, Any]:
     equity = _to_series(equity_curve).dropna()
     equity = _ensure_datetime_index(equity)
@@ -128,5 +232,12 @@ def generate_report(
         "longest_drawdown_days": _longest_drawdown_days(equity),
         "final_capital": final_capital,
     }
+
+    # Add benchmark comparison if provided
+    if benchmark_equity is not None and not benchmark_equity.empty:
+        benchmark_stats = _calculate_benchmark_stats(
+            equity, benchmark_equity, initial_capital, daily_returns
+        )
+        report.update(benchmark_stats)
 
     return report
