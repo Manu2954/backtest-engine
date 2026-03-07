@@ -168,3 +168,169 @@ def test_or_logic() -> None:
     }
     result = evaluate_conditions(df, group)
     assert result.tolist() == [True, False, False, False, True]
+
+
+def test_zero_scalar_value_accepted() -> None:
+    """
+    Bug Fix Test #5: Zero scalar values should be accepted.
+
+    Previously, the validation used all() which treats 0 as falsy.
+    Now using explicit None checks to allow 0 as a valid value.
+    """
+    df = make_df()
+
+    # Test with integer 0
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "GT",
+                "right_operand_type": "SCALAR",
+                "right_operand_value": 0,  # Integer 0
+            }
+        ],
+    }
+    result = evaluate_conditions(df, group)
+    # All closes (10-14) should be > 0
+    assert result.tolist() == [True, True, True, True, True]
+
+    # Test with string '0'
+    group2 = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "GT",
+                "right_operand_type": "SCALAR",
+                "right_operand_value": "0",  # String '0'
+            }
+        ],
+    }
+    result2 = evaluate_conditions(df, group2)
+    # Should work the same as integer 0
+    assert result2.tolist() == [True, True, True, True, True]
+
+
+def test_zero_in_left_operand() -> None:
+    """
+    Bug Fix Test #5: Zero as left operand value should work.
+    """
+    index = pd.date_range("2020-01-01", periods=3, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10, 10, 10],
+            "close": [10, 10, 10],
+            "volume": [0, 100, 0],  # Zero volume on bars 0 and 2
+            "indicator": [5, 5, 5],
+        },
+        index=index,
+    )
+
+    # Check where volume equals 0
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "volume",
+                "operator": "EQ",
+                "right_operand_type": "SCALAR",
+                "right_operand_value": 0,
+            }
+        ],
+    }
+    result = evaluate_conditions(df, group)
+    assert result.tolist() == [True, False, True]
+
+
+def test_empty_string_value_accepted() -> None:
+    """
+    Bug Fix Test #5: Empty string should be accepted (though may fail later).
+
+    Empty string is a valid value to pass validation, even if it causes
+    errors during operand extraction.
+    """
+    df = make_df()
+
+    # Empty string as scalar value should pass validation
+    # (it will fail during conversion to float, but that's different)
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "GT",
+                "right_operand_type": "SCALAR",
+                "right_operand_value": "",  # Empty string
+            }
+        ],
+    }
+
+    # Should raise ValueError during float conversion, not during validation
+    try:
+        result = evaluate_conditions(df, group)
+        assert False, "Should have raised ValueError for invalid scalar"
+    except ValueError as e:
+        # Should fail on scalar conversion, not missing field validation
+        assert "Invalid scalar value" in str(e) or "could not convert" in str(e).lower()
+
+
+def test_none_value_rejected() -> None:
+    """
+    Bug Fix Test #5: None values should still be rejected.
+
+    The fix checks for None explicitly, so None should still fail validation.
+    """
+    df = make_df()
+
+    # None as value should be rejected
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "GT",
+                "right_operand_type": "SCALAR",
+                "right_operand_value": None,  # None value
+            }
+        ],
+    }
+
+    try:
+        result = evaluate_conditions(df, group)
+        assert False, "Should have raised ValueError for None value"
+    except ValueError as e:
+        assert "missing required fields" in str(e).lower()
+
+
+def test_missing_field_rejected() -> None:
+    """
+    Bug Fix Test #5: Missing fields should still be rejected.
+    """
+    df = make_df()
+
+    # Missing operator field
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                # Missing operator!
+                "right_operand_type": "SCALAR",
+                "right_operand_value": "10",
+            }
+        ],
+    }
+
+    try:
+        result = evaluate_conditions(df, group)
+        assert False, "Should have raised ValueError for missing operator"
+    except ValueError as e:
+        assert "missing required fields" in str(e).lower()
+        assert "operator" in str(e).lower()
