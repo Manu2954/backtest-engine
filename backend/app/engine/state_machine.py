@@ -94,6 +94,61 @@ def _calculate_position_size(
         return float(int(raw_shares))
 
 
+def _apply_slippage(price: float, slippage_pct: float, is_entry: bool) -> float:
+    """
+    Apply slippage to execution price.
+
+    Args:
+        price: The quoted price
+        slippage_pct: Slippage percentage (e.g., 0.05 for 0.05%)
+        is_entry: True for entry (pay more), False for exit (receive less)
+
+    Returns:
+        Adjusted price after slippage
+    """
+    if slippage_pct == 0:
+        return price
+
+    slippage_factor = slippage_pct / 100.0
+
+    if is_entry:
+        # On entry, pay MORE (worse price for buying)
+        return price * (1.0 + slippage_factor)
+    else:
+        # On exit, receive LESS (worse price for selling)
+        return price * (1.0 - slippage_factor)
+
+
+def _calculate_commission(
+    shares: float,
+    price: float,
+    commission_per_trade: float,
+    commission_pct: float,
+) -> float:
+    """
+    Calculate total commission for a trade.
+
+    Args:
+        shares: Number of shares traded
+        price: Price per share
+        commission_per_trade: Fixed commission per trade
+        commission_pct: Commission as percentage of trade value
+
+    Returns:
+        Total commission cost
+    """
+    trade_value = shares * price
+
+    # Fixed commission
+    fixed_cost = commission_per_trade
+
+    # Percentage commission
+    pct_cost = (commission_pct / 100.0) * trade_value
+
+    # Total commission
+    return fixed_cost + pct_cost
+
+
 
 def run_backtest(
     df: pd.DataFrame,
@@ -103,12 +158,16 @@ def run_backtest(
     asset_class: str = "STOCK",
     shares: float = 0.0,
     periodic_contribution: dict[str, Any] | None = None,
-    # NEW: Position sizing parameters
+    # Position sizing parameters
     position_size_type: str = "full_capital",  # "full_capital" | "percent_capital" | "fixed_amount"
     position_size_value: float = 100.0,  # Percentage (0-100) or dollar amount
-    # NEW: Risk management parameters
+    # Risk management parameters
     stop_loss_pct: float | None = None,  # Stop loss percentage (e.g., 5.0 for 5% loss)
     take_profit_pct: float | None = None,  # Take profit percentage (e.g., 10.0 for 10% gain)
+    # Transaction cost parameters
+    commission_per_trade: float = 0.0,  # Fixed commission per trade (e.g., $5)
+    commission_pct: float = 0.0,  # Commission as % of trade value (e.g., 0.1 for 0.1%)
+    slippage_pct: float = 0.0,  # Slippage as % of price (e.g., 0.05 for 0.05%)
 ) -> tuple[list[dict[str, Any]], pd.Series]:
     if df.empty:
         return [], pd.Series([], dtype=float, name="equity")
@@ -140,6 +199,14 @@ def run_backtest(
     if take_profit_pct is not None and take_profit_pct <= 0:
         raise ValueError(f"take_profit_pct must be positive, got {take_profit_pct}")
 
+    # NEW: Validate transaction cost parameters
+    if commission_per_trade < 0:
+        raise ValueError(f"commission_per_trade must be non-negative, got {commission_per_trade}")
+    if commission_pct < 0:
+        raise ValueError(f"commission_pct must be non-negative, got {commission_pct}")
+    if slippage_pct < 0:
+        raise ValueError(f"slippage_pct must be non-negative, got {slippage_pct}")
+
     entry_signal = _ensure_series(entry_signal, df.index)
     exit_signal = _ensure_series(exit_signal, df.index)
 
@@ -159,6 +226,7 @@ def run_backtest(
     pending_exit = False
     entry_date: pd.Timestamp | None = None
     entry_price: float | None = None
+    entry_commission: float = 0.0  # Track commission paid on entry for PnL calculation
 
     contribution_amount = 0.0
     contribution_frequency = ""
@@ -217,30 +285,50 @@ def run_backtest(
 
         # Fill pending entry at current bar open
         if pending_entry and shares == 0.0:
-            # NEW: Calculate position size based on sizing rules
+            # Apply slippage to entry price (pay more)
+            execution_price = _apply_slippage(open_price, slippage_pct, is_entry=True)
+
+            # Calculate position size based on sizing rules
             total_capital = cash  # When flat, total capital = cash
             shares = _calculate_position_size(
                 cash=cash,
                 total_capital=total_capital,
-                price=open_price,
+                price=execution_price,
                 position_size_type=position_size_type,
                 position_size_value=position_size_value,
                 allow_fractional=allow_fractional,
             )
-            # Deduct cost from cash
-            cash = cash - (shares * open_price)
+
+            # Calculate commission for entry
+            entry_commission = _calculate_commission(
+                shares, execution_price, commission_per_trade, commission_pct
+            )
+
+            # Deduct cost (shares + commission) from cash
+            total_cost = (shares * execution_price) + entry_commission
+            cash = cash - total_cost
             if abs(cash) < 1e-8:
                 cash = 0.0
-            entry_price = open_price
+
+            entry_price = execution_price
             entry_date = ts
             pending_entry = False
 
         # Fill pending exit at current bar open
         if pending_exit and shares > 0.0:
-            exit_price = open_price
+            # Apply slippage to exit price (receive less)
+            execution_price = _apply_slippage(open_price, slippage_pct, is_entry=False)
+
+            # Calculate commission for exit
+            exit_commission = _calculate_commission(
+                shares, execution_price, commission_per_trade, commission_pct
+            )
+
+            exit_price = execution_price
             exit_date = ts
-            exit_reason = "signal"  # NEW: Exit triggered by strategy signal
-            pnl = (exit_price - (entry_price or 0.0)) * shares
+            exit_reason = "signal"  # Exit triggered by strategy signal
+
+            pnl = (exit_price - (entry_price or 0.0)) * shares - entry_commission - exit_commission
             pnl_pct = pnl / initial_capital if initial_capital else 0.0
             trade_duration_days = (
                 (exit_date - entry_date).days if entry_date is not None else 0
@@ -255,15 +343,19 @@ def run_backtest(
                     pnl=pnl,
                     pnl_pct=pnl_pct,
                     trade_duration_days=trade_duration_days,
-                    exit_reason=exit_reason,  # NEW: Record exit reason
+                    exit_reason=exit_reason,
                 )
             )
-            cash = cash + (shares * exit_price)
+
+            # Add proceeds (shares value - commission) to cash
+            proceeds = (shares * exit_price) - exit_commission
+            cash = cash + proceeds
             if abs(cash) < 1e-8:
                 cash = 0.0
             shares = 0.0
             entry_date = None
             entry_price = None
+            entry_commission = 0.0  # Reset for next trade
             pending_exit = False
 
         # NEW: Check stop loss and take profit WHILE in position (after any exits processed)
@@ -274,11 +366,19 @@ def run_backtest(
 
             # Check stop loss (price dropped too much)
             if stop_loss_pct is not None and price_change_pct <= -stop_loss_pct:
-                # Exit immediately at current open price
-                exit_price = current_price
+                # Apply slippage to exit price (receive less)
+                execution_price = _apply_slippage(current_price, slippage_pct, is_entry=False)
+
+                # Calculate commission for exit
+                exit_commission = _calculate_commission(
+                    shares, execution_price, commission_per_trade, commission_pct
+                )
+
+                exit_price = execution_price
                 exit_date = ts
                 exit_reason = "stop_loss"
-                pnl = (exit_price - entry_price) * shares
+
+                pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
                 pnl_pct = pnl / initial_capital if initial_capital else 0.0
                 trade_duration_days = (
                     (exit_date - entry_date).days if entry_date is not None else 0
@@ -296,21 +396,33 @@ def run_backtest(
                         exit_reason=exit_reason,
                     )
                 )
-                cash = cash + (shares * exit_price)
+
+                # Add proceeds (shares value - commission) to cash
+                proceeds = (shares * exit_price) - exit_commission
+                cash = cash + proceeds
                 if abs(cash) < 1e-8:
                     cash = 0.0
                 shares = 0.0
                 entry_date = None
                 entry_price = None
+                entry_commission = 0.0  # Reset for next trade
                 pending_exit = False  # Clear any pending signal exit
 
             # Check take profit (price gained enough)
             elif take_profit_pct is not None and price_change_pct >= take_profit_pct:
-                # Exit immediately at current open price
-                exit_price = current_price
+                # Apply slippage to exit price (receive less)
+                execution_price = _apply_slippage(current_price, slippage_pct, is_entry=False)
+
+                # Calculate commission for exit
+                exit_commission = _calculate_commission(
+                    shares, execution_price, commission_per_trade, commission_pct
+                )
+
+                exit_price = execution_price
                 exit_date = ts
                 exit_reason = "take_profit"
-                pnl = (exit_price - entry_price) * shares
+
+                pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
                 pnl_pct = pnl / initial_capital if initial_capital else 0.0
                 trade_duration_days = (
                     (exit_date - entry_date).days if entry_date is not None else 0
@@ -328,12 +440,16 @@ def run_backtest(
                         exit_reason=exit_reason,
                     )
                 )
-                cash = cash + (shares * exit_price)
+
+                # Add proceeds (shares value - commission) to cash
+                proceeds = (shares * exit_price) - exit_commission
+                cash = cash + proceeds
                 if abs(cash) < 1e-8:
                     cash = 0.0
                 shares = 0.0
                 entry_date = None
                 entry_price = None
+                entry_commission = 0.0  # Reset for next trade
                 pending_exit = False  # Clear any pending signal exit
 
         # Mark-to-market equity at bar close
@@ -349,7 +465,16 @@ def run_backtest(
     if shares > 0.0:
         last_ts = df.index[-1]
         last_close = float(df.iloc[-1]["close"])
-        pnl = (last_close - (entry_price or 0.0)) * shares
+
+        # Apply slippage to force-close exit
+        execution_price = _apply_slippage(last_close, slippage_pct, is_entry=False)
+
+        # Calculate commission for force-close exit
+        exit_commission = _calculate_commission(
+            shares, execution_price, commission_per_trade, commission_pct
+        )
+
+        pnl = (execution_price - (entry_price or 0.0)) * shares - entry_commission - exit_commission
         pnl_pct = pnl / initial_capital if initial_capital else 0.0
         trade_duration_days = (
             (last_ts - entry_date).days if entry_date is not None else 0
@@ -359,15 +484,18 @@ def run_backtest(
                 entry_date=entry_date or last_ts,
                 entry_price=entry_price or last_close,
                 exit_date=last_ts,
-                exit_price=last_close,
+                exit_price=execution_price,
                 shares=shares,
                 pnl=pnl,
                 pnl_pct=pnl_pct,
                 trade_duration_days=trade_duration_days,
-                exit_reason="force_close",  # NEW: Backtest ended while in position
+                exit_reason="force_close",
             )
         )
-        cash = cash + (shares * last_close)
+
+        # Add proceeds to cash
+        proceeds = (shares * execution_price) - exit_commission
+        cash = cash + proceeds
         if abs(cash) < 1e-8:
             cash = 0.0
         shares = 0.0

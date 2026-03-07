@@ -16,12 +16,16 @@ class BacktestCreate(BaseModel):
     bar_resolution: str = "1d"
     initial_capital: float
     periodic_contribution: dict[str, Any] | None = None
-    # NEW: Position sizing parameters
+    # Position sizing parameters
     position_size_type: str = "full_capital"  # "full_capital" | "percent_capital" | "fixed_amount"
     position_size_value: float = 100.0  # Percentage or dollar amount
-    # NEW: Risk management parameters
+    # Risk management parameters
     stop_loss_pct: float | None = None  # Stop loss percentage (e.g., 5.0 for 5%)
     take_profit_pct: float | None = None  # Take profit percentage (e.g., 10.0 for 10%)
+    # Transaction cost parameters
+    commission_per_trade: float = 0.0  # Fixed commission per trade (e.g., $5)
+    commission_pct: float = 0.0  # Commission as % of trade value (e.g., 0.1 for 0.1%)
+    slippage_pct: float = 0.0  # Slippage as % of price (e.g., 0.05 for 0.05%)
 
 
 class BacktestOut(BaseModel):
@@ -42,11 +46,15 @@ class BacktestOut(BaseModel):
     error_message: str | None
     report: dict[str, Any] | None
     periodic_contribution: dict[str, Any] | None
-    # NEW: Position sizing and risk management parameters
+    # Position sizing and risk management parameters
     position_size_type: str | None
     position_size_value: float | None
     stop_loss_pct: float | None
     take_profit_pct: float | None
+    # Transaction cost parameters
+    commission_per_trade: float | None
+    commission_pct: float | None
+    slippage_pct: float | None
 
 
 class TradeLogOut(BaseModel):
