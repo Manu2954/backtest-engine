@@ -51,6 +51,9 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
     df_out = df.copy()
     _ensure_ohlcv(df_out)
 
+    # Track all indicator column names for warmup detection
+    indicator_columns = []
+
     for indicator in indicators:
         indicator_type = indicator.get("indicator_type") or indicator.get("type")
         alias = indicator.get("alias")
@@ -68,14 +71,17 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             period = int(_require_param(params, "period"))
             series = _get_series(df_out, source)
             df_out[alias] = ta.rsi(series, length=period)
+            indicator_columns.append(alias)
         elif kind == "EMA":
             period = int(_require_param(params, "period"))
             series = _get_series(df_out, source)
             df_out[alias] = ta.ema(series, length=period)
+            indicator_columns.append(alias)
         elif kind == "SMA":
             period = int(_require_param(params, "period"))
             series = _get_series(df_out, source)
             df_out[alias] = ta.sma(series, length=period)
+            indicator_columns.append(alias)
         elif kind == "MACD":
             fast = int(_require_param(params, "fast"))
             slow = int(_require_param(params, "slow"))
@@ -87,6 +93,7 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             df_out[f"{alias}_macd"] = macd_df.iloc[:, 0]
             df_out[f"{alias}_signal"] = macd_df.iloc[:, 1]
             df_out[f"{alias}_hist"] = macd_df.iloc[:, 2]
+            indicator_columns.extend([f"{alias}_macd", f"{alias}_signal", f"{alias}_hist"])
         elif kind in {"BB", "BBANDS", "BOLLINGER"}:
             length = int(_require_param(params, "period"))
             std = float(_require_param(params, "std_dev"))
@@ -97,6 +104,7 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             df_out[f"{alias}_upper"] = _pick_first_col(bb_df, "BBU")
             df_out[f"{alias}_mid"] = _pick_first_col(bb_df, "BBM")
             df_out[f"{alias}_lower"] = _pick_first_col(bb_df, "BBL")
+            indicator_columns.extend([f"{alias}_upper", f"{alias}_mid", f"{alias}_lower"])
         elif kind == "ATR":
             period = int(_require_param(params, "period"))
             df_out[alias] = ta.atr(
@@ -105,6 +113,7 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
                 df_out["close"],
                 length=period,
             )
+            indicator_columns.append(alias)
         elif kind in {"STOCH", "STOCHASTIC"}:
             k_period = int(_require_param(params, "k_period"))
             d_period = int(_require_param(params, "d_period"))
@@ -119,7 +128,76 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
                 raise ValueError("Stochastic computation returned empty data")
             df_out[f"{alias}_k"] = _pick_first_col(stoch_df, "STOCHk")
             df_out[f"{alias}_d"] = _pick_first_col(stoch_df, "STOCHd")
+            indicator_columns.extend([f"{alias}_k", f"{alias}_d"])
         else:
             raise ValueError(f"Unsupported indicator type: {indicator_type}")
 
+    # Store indicator columns as metadata for warmup detection
+    df_out.attrs["indicator_columns"] = indicator_columns
+
     return df_out
+
+
+def get_warmup_period(df: pd.DataFrame) -> int:
+    """
+    Determine the warmup period (number of bars to skip) based on indicator NaN values.
+
+    The warmup period is the first bar where ALL indicators have valid (non-NaN) values.
+
+    Args:
+        df: DataFrame with computed indicators
+
+    Returns:
+        Number of bars to skip (0 if no warmup needed)
+    """
+    if df.empty:
+        return 0
+
+    # Get indicator columns from metadata
+    indicator_columns = df.attrs.get("indicator_columns", [])
+
+    if not indicator_columns:
+        # No indicators, no warmup needed
+        return 0
+
+    # Find first row where all indicators are non-NaN
+    indicator_data = df[indicator_columns]
+    valid_rows = indicator_data.notna().all(axis=1)
+
+    if not valid_rows.any():
+        # All rows have at least one NaN - no valid data
+        raise ValueError(
+            "All bars contain NaN values in indicators. "
+            "Need more historical data or reduce indicator periods."
+        )
+
+    # First True value is the first valid bar
+    first_valid_idx = valid_rows.idxmax()
+    warmup_bars = df.index.get_loc(first_valid_idx)
+
+    return warmup_bars
+
+
+def trim_warmup_period(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """
+    Remove warmup period from DataFrame where indicators have NaN values.
+
+    Args:
+        df: DataFrame with computed indicators
+
+    Returns:
+        Tuple of (trimmed_df, warmup_bars_skipped)
+    """
+    warmup_bars = get_warmup_period(df)
+
+    if warmup_bars == 0:
+        return df, 0
+
+    # Trim the warmup period
+    trimmed_df = df.iloc[warmup_bars:].copy()
+
+    # Preserve indicator column metadata
+    if "indicator_columns" in df.attrs:
+        trimmed_df.attrs["indicator_columns"] = df.attrs["indicator_columns"]
+
+    return trimmed_df, warmup_bars
