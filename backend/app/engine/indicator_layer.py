@@ -129,6 +129,66 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             df_out[f"{alias}_k"] = _pick_first_col(stoch_df, "STOCHk")
             df_out[f"{alias}_d"] = _pick_first_col(stoch_df, "STOCHd")
             indicator_columns.extend([f"{alias}_k", f"{alias}_d"])
+        elif kind == "ADX":
+            period = int(_require_param(params, "period"))
+            adx_df = ta.adx(
+                df_out["high"],
+                df_out["low"],
+                df_out["close"],
+                length=period,
+            )
+            if adx_df is None or adx_df.empty:
+                raise ValueError("ADX computation returned empty data")
+            # ADX returns: ADX, DMP (+DI), DMN (-DI)
+            df_out[alias] = _pick_first_col(adx_df, "ADX")
+            df_out[f"{alias}_dmp"] = _pick_first_col(adx_df, "DMP")  # +DI
+            df_out[f"{alias}_dmn"] = _pick_first_col(adx_df, "DMN")  # -DI
+            indicator_columns.extend([alias, f"{alias}_dmp", f"{alias}_dmn"])
+        elif kind in {"ICHIMOKU", "CLOUD"}:
+            # Ichimoku Cloud with standard or custom periods
+            tenkan = int(params.get("tenkan", 9))
+            kijun = int(params.get("kijun", 26))
+            senkou = int(params.get("senkou", 52))
+
+            ichimoku_result = ta.ichimoku(
+                df_out["high"],
+                df_out["low"],
+                df_out["close"],
+                tenkan=tenkan,
+                kijun=kijun,
+                senkou=senkou,
+            )
+
+            # pandas_ta ichimoku returns a tuple of (df, span_a, span_b)
+            if isinstance(ichimoku_result, tuple):
+                ichimoku_df = ichimoku_result[0]
+            else:
+                ichimoku_df = ichimoku_result
+
+            if ichimoku_df is None or ichimoku_df.empty:
+                raise ValueError("Ichimoku computation returned empty data")
+
+            # Ichimoku returns 5 lines:
+            # - ITS_9 (Tenkan-sen / Conversion Line)
+            # - IKS_26 (Kijun-sen / Base Line)
+            # - ISA_9 (Senkou Span A / Leading Span A)
+            # - ISB_26 (Senkou Span B / Leading Span B)
+            # - ICS_26 (Chikou Span / Lagging Span)
+
+            # Map to standard names
+            df_out[f"{alias}_tenkan"] = _pick_first_col(ichimoku_df, f"ITS_{tenkan}")
+            df_out[f"{alias}_kijun"] = _pick_first_col(ichimoku_df, f"IKS_{kijun}")
+            df_out[f"{alias}_span_a"] = _pick_first_col(ichimoku_df, f"ISA_{tenkan}")
+            df_out[f"{alias}_span_b"] = _pick_first_col(ichimoku_df, f"ISB_{kijun}")
+            df_out[f"{alias}_chikou"] = _pick_first_col(ichimoku_df, f"ICS_{kijun}")
+
+            indicator_columns.extend([
+                f"{alias}_tenkan",
+                f"{alias}_kijun",
+                f"{alias}_span_a",
+                f"{alias}_span_b",
+                f"{alias}_chikou",
+            ])
         else:
             raise ValueError(f"Unsupported indicator type: {indicator_type}")
 

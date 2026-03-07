@@ -16,7 +16,10 @@ class TradeRecord:
     pnl: float
     pnl_pct: float
     trade_duration_days: int
-    exit_reason: str  # NEW: Track why trade exited (signal, stop_loss, take_profit, force_close)
+    exit_reason: str
+    entry_commission: float
+    exit_commission: float
+    total_commission: float
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -28,7 +31,10 @@ class TradeRecord:
             "pnl": self.pnl,
             "pnl_pct": self.pnl_pct,
             "trade_duration_days": self.trade_duration_days,
-            "exit_reason": self.exit_reason,  # NEW: Include in output
+            "exit_reason": self.exit_reason,
+            "entry_commission": self.entry_commission,
+            "exit_commission": self.exit_commission,
+            "total_commission": self.total_commission,
         }
 
 
@@ -159,15 +165,16 @@ def run_backtest(
     shares: float = 0.0,
     periodic_contribution: dict[str, Any] | None = None,
     # Position sizing parameters
-    position_size_type: str = "full_capital",  # "full_capital" | "percent_capital" | "fixed_amount"
-    position_size_value: float = 100.0,  # Percentage (0-100) or dollar amount
+    position_size_type: str = "full_capital",
+    position_size_value: float = 100.0,
     # Risk management parameters
-    stop_loss_pct: float | None = None,  # Stop loss percentage (e.g., 5.0 for 5% loss)
-    take_profit_pct: float | None = None,  # Take profit percentage (e.g., 10.0 for 10% gain)
+    stop_loss_pct: float | None = None,
+    take_profit_pct: float | None = None,
+    dynamic_stop_column: str | None = None,
     # Transaction cost parameters
-    commission_per_trade: float = 0.0,  # Fixed commission per trade (e.g., $5)
-    commission_pct: float = 0.0,  # Commission as % of trade value (e.g., 0.1 for 0.1%)
-    slippage_pct: float = 0.0,  # Slippage as % of price (e.g., 0.05 for 0.05%)
+    commission_per_trade: float = 0.0,
+    commission_pct: float = 0.0,
+    slippage_pct: float = 0.0,
 ) -> tuple[list[dict[str, Any]], pd.Series]:
     if df.empty:
         return [], pd.Series([], dtype=float, name="equity")
@@ -329,7 +336,8 @@ def run_backtest(
             exit_reason = "signal"  # Exit triggered by strategy signal
 
             pnl = (exit_price - (entry_price or 0.0)) * shares - entry_commission - exit_commission
-            pnl_pct = pnl / initial_capital if initial_capital else 0.0
+            trade_cost = (entry_price or 0.0) * shares + entry_commission
+            pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
             trade_duration_days = (
                 (exit_date - entry_date).days if entry_date is not None else 0
             )
@@ -344,6 +352,9 @@ def run_backtest(
                     pnl_pct=pnl_pct,
                     trade_duration_days=trade_duration_days,
                     exit_reason=exit_reason,
+                    entry_commission=entry_commission,
+                    exit_commission=exit_commission,
+                    total_commission=entry_commission + exit_commission,
                 )
             )
 
@@ -362,95 +373,165 @@ def run_backtest(
         # This happens at the bar's open price (realistic - you'd see the price and exit)
         if shares > 0.0 and entry_price is not None:
             current_price = open_price
-            price_change_pct = ((current_price - entry_price) / entry_price) * 100.0
 
-            # Check stop loss (price dropped too much)
-            if stop_loss_pct is not None and price_change_pct <= -stop_loss_pct:
-                # Apply slippage to exit price (receive less)
-                execution_price = _apply_slippage(current_price, slippage_pct, is_entry=False)
+            # Check dynamic stop first (takes priority over percentage stops)
+            if dynamic_stop_column is not None:
+                if dynamic_stop_column not in df.columns:
+                    raise ValueError(f"Dynamic stop column not found: {dynamic_stop_column}")
 
-                # Calculate commission for exit
-                exit_commission = _calculate_commission(
-                    shares, execution_price, commission_per_trade, commission_pct
-                )
+                dynamic_stop_value = float(row[dynamic_stop_column])
 
-                exit_price = execution_price
-                exit_date = ts
-                exit_reason = "stop_loss"
+                # Exit if price drops below dynamic stop level
+                if not pd.isna(dynamic_stop_value) and current_price < dynamic_stop_value:
+                    # Apply slippage to exit price (receive less)
+                    execution_price = _apply_slippage(current_price, slippage_pct, is_entry=False)
 
-                pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
-                pnl_pct = pnl / initial_capital if initial_capital else 0.0
-                trade_duration_days = (
-                    (exit_date - entry_date).days if entry_date is not None else 0
-                )
-                trade_log.append(
-                    TradeRecord(
-                        entry_date=entry_date or ts,
-                        entry_price=entry_price,
-                        exit_date=exit_date,
-                        exit_price=exit_price,
-                        shares=shares,
-                        pnl=pnl,
-                        pnl_pct=pnl_pct,
-                        trade_duration_days=trade_duration_days,
-                        exit_reason=exit_reason,
+                    # Calculate commission for exit
+                    exit_commission = _calculate_commission(
+                        shares, execution_price, commission_per_trade, commission_pct
                     )
-                )
 
-                # Add proceeds (shares value - commission) to cash
-                proceeds = (shares * exit_price) - exit_commission
-                cash = cash + proceeds
-                if abs(cash) < 1e-8:
-                    cash = 0.0
-                shares = 0.0
-                entry_date = None
-                entry_price = None
-                entry_commission = 0.0  # Reset for next trade
-                pending_exit = False  # Clear any pending signal exit
+                    exit_price = execution_price
+                    exit_date = ts
 
-            # Check take profit (price gained enough)
-            elif take_profit_pct is not None and price_change_pct >= take_profit_pct:
-                # Apply slippage to exit price (receive less)
-                execution_price = _apply_slippage(current_price, slippage_pct, is_entry=False)
+                    # Calculate P&L to determine exit reason
+                    pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
 
-                # Calculate commission for exit
-                exit_commission = _calculate_commission(
-                    shares, execution_price, commission_per_trade, commission_pct
-                )
+                    # Label as trailing_stop (profit) or stop_loss (loss)
+                    exit_reason = "trailing_stop" if pnl >= 0 else "stop_loss"
 
-                exit_price = execution_price
-                exit_date = ts
-                exit_reason = "take_profit"
-
-                pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
-                pnl_pct = pnl / initial_capital if initial_capital else 0.0
-                trade_duration_days = (
-                    (exit_date - entry_date).days if entry_date is not None else 0
-                )
-                trade_log.append(
-                    TradeRecord(
-                        entry_date=entry_date or ts,
-                        entry_price=entry_price,
-                        exit_date=exit_date,
-                        exit_price=exit_price,
-                        shares=shares,
-                        pnl=pnl,
-                        pnl_pct=pnl_pct,
-                        trade_duration_days=trade_duration_days,
-                        exit_reason=exit_reason,
+                    trade_cost = entry_price * shares + entry_commission
+                    pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+                    trade_duration_days = (
+                        (exit_date - entry_date).days if entry_date is not None else 0
                     )
-                )
+                    trade_log.append(
+                        TradeRecord(
+                            entry_date=entry_date or ts,
+                            entry_price=entry_price,
+                            exit_date=exit_date,
+                            exit_price=exit_price,
+                            shares=shares,
+                            pnl=pnl,
+                            pnl_pct=pnl_pct,
+                            trade_duration_days=trade_duration_days,
+                            exit_reason=exit_reason,
+                            entry_commission=entry_commission,
+                            exit_commission=exit_commission,
+                            total_commission=entry_commission + exit_commission,
+                        )
+                    )
 
-                # Add proceeds (shares value - commission) to cash
-                proceeds = (shares * exit_price) - exit_commission
-                cash = cash + proceeds
-                if abs(cash) < 1e-8:
-                    cash = 0.0
-                shares = 0.0
-                entry_date = None
-                entry_price = None
-                entry_commission = 0.0  # Reset for next trade
-                pending_exit = False  # Clear any pending signal exit
+                    # Add proceeds (shares value - commission) to cash
+                    proceeds = (shares * exit_price) - exit_commission
+                    cash = cash + proceeds
+                    if abs(cash) < 1e-8:
+                        cash = 0.0
+                    shares = 0.0
+                    entry_date = None
+                    entry_price = None
+                    entry_commission = 0.0  # Reset for next trade
+                    pending_exit = False  # Clear any pending signal exit
+
+            # Check percentage-based stops (only if dynamic stop didn't trigger)
+            if shares > 0.0 and entry_price is not None:
+                price_change_pct = ((current_price - entry_price) / entry_price) * 100.0
+
+                # Check stop loss (price dropped too much)
+                if stop_loss_pct is not None and price_change_pct <= -stop_loss_pct:
+                    # Apply slippage to exit price (receive less)
+                    execution_price = _apply_slippage(current_price, slippage_pct, is_entry=False)
+
+                    # Calculate commission for exit
+                    exit_commission = _calculate_commission(
+                        shares, execution_price, commission_per_trade, commission_pct
+                    )
+
+                    exit_price = execution_price
+                    exit_date = ts
+                    exit_reason = "stop_loss"
+
+                    pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
+                    trade_cost = entry_price * shares + entry_commission
+                    pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+                    trade_duration_days = (
+                        (exit_date - entry_date).days if entry_date is not None else 0
+                    )
+                    trade_log.append(
+                        TradeRecord(
+                            entry_date=entry_date or ts,
+                            entry_price=entry_price,
+                            exit_date=exit_date,
+                            exit_price=exit_price,
+                            shares=shares,
+                            pnl=pnl,
+                            pnl_pct=pnl_pct,
+                            trade_duration_days=trade_duration_days,
+                            exit_reason=exit_reason,
+                            entry_commission=entry_commission,
+                            exit_commission=exit_commission,
+                            total_commission=entry_commission + exit_commission,
+                        )
+                    )
+
+                    # Add proceeds (shares value - commission) to cash
+                    proceeds = (shares * exit_price) - exit_commission
+                    cash = cash + proceeds
+                    if abs(cash) < 1e-8:
+                        cash = 0.0
+                    shares = 0.0
+                    entry_date = None
+                    entry_price = None
+                    entry_commission = 0.0  # Reset for next trade
+                    pending_exit = False  # Clear any pending signal exit
+
+                # Check take profit (price gained enough)
+                elif take_profit_pct is not None and price_change_pct >= take_profit_pct:
+                    # Apply slippage to exit price (receive less)
+                    execution_price = _apply_slippage(current_price, slippage_pct, is_entry=False)
+
+                    # Calculate commission for exit
+                    exit_commission = _calculate_commission(
+                        shares, execution_price, commission_per_trade, commission_pct
+                    )
+
+                    exit_price = execution_price
+                    exit_date = ts
+                    exit_reason = "take_profit"
+
+                    pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
+                    trade_cost = entry_price * shares + entry_commission
+                    pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+                    trade_duration_days = (
+                        (exit_date - entry_date).days if entry_date is not None else 0
+                    )
+                    trade_log.append(
+                        TradeRecord(
+                            entry_date=entry_date or ts,
+                            entry_price=entry_price,
+                            exit_date=exit_date,
+                            exit_price=exit_price,
+                            shares=shares,
+                            pnl=pnl,
+                            pnl_pct=pnl_pct,
+                            trade_duration_days=trade_duration_days,
+                            exit_reason=exit_reason,
+                            entry_commission=entry_commission,
+                            exit_commission=exit_commission,
+                            total_commission=entry_commission + exit_commission,
+                        )
+                    )
+
+                    # Add proceeds (shares value - commission) to cash
+                    proceeds = (shares * exit_price) - exit_commission
+                    cash = cash + proceeds
+                    if abs(cash) < 1e-8:
+                        cash = 0.0
+                    shares = 0.0
+                    entry_date = None
+                    entry_price = None
+                    entry_commission = 0.0  # Reset for next trade
+                    pending_exit = False  # Clear any pending signal exit
 
         # Mark-to-market equity at bar close
         equity_curve.iloc[i] = cash + (shares * close_price)
@@ -475,7 +556,8 @@ def run_backtest(
         )
 
         pnl = (execution_price - (entry_price or 0.0)) * shares - entry_commission - exit_commission
-        pnl_pct = pnl / initial_capital if initial_capital else 0.0
+        trade_cost = (entry_price or last_close) * shares + entry_commission
+        pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
         trade_duration_days = (
             (last_ts - entry_date).days if entry_date is not None else 0
         )
@@ -490,6 +572,9 @@ def run_backtest(
                 pnl_pct=pnl_pct,
                 trade_duration_days=trade_duration_days,
                 exit_reason="force_close",
+                entry_commission=entry_commission,
+                exit_commission=exit_commission,
+                total_commission=entry_commission + exit_commission,
             )
         )
 
