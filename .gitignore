@@ -155,3 +155,5 @@ dump.rdb
 commands.txt
 notes.txt
 todo.txt
+BUG_SUMMARY.txt
+BUG_REPORT.md
