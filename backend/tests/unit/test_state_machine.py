@@ -292,3 +292,156 @@ def test_high_commission_percentage_prevents_entry() -> None:
     # Cash should not be negative
     assert equity.iloc[-1] >= -1e-6
 
+
+def test_negative_proceeds_prevented_on_worthless_exit() -> None:
+    """
+    Bug Fix Test #3: Negative proceeds on exit should not cause negative cash.
+
+    When commission exceeds position value, proceeds would be negative.
+    The fix caps commission at (position_value + available_cash) to prevent
+    negative cash.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10, 10, 0.01, 0.01, 0.01],  # Price crashes to $0.01
+            "high": [12, 12, 0.02, 0.02, 0.02],
+            "low": [8, 8, 0.01, 0.01, 0.01],
+            "close": [10, 10, 0.01, 0.01, 0.01],
+            "volume": [1000, 1000, 1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, True, False], index=index)
+
+    initial_capital = 100.0
+    commission_per_trade = 10.0  # High commission relative to exit value
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        commission_per_trade=commission_per_trade,
+    )
+
+    # Entry: 10 shares at $10 = $100 (all capital used)
+    # Exit: 10 shares at $0.01 = $0.10 value, $10 commission
+    # Without fix: proceeds = $0.10 - $10 = -$9.90 (negative!)
+    # With fix: commission capped to prevent negative cash
+
+    assert len(trades) == 1
+    trade = trades[0]
+
+    # Verify exit happened
+    assert trade["exit_price"] == 0.01
+
+    # Verify cash never went negative
+    assert all(equity >= -1e-6), f"Cash went negative: min = {equity.min()}"
+    assert equity.iloc[-1] >= -1e-6, f"Final cash negative: {equity.iloc[-1]}"
+
+
+def test_negative_proceeds_with_sufficient_cash() -> None:
+    """
+    Bug Fix Test #3: If cash can absorb negative proceeds, allow it.
+
+    When there's enough cash to pay commission even if it exceeds position value,
+    the trade should proceed normally (realistic broker behavior).
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10, 10, 1, 1, 1],  # Price drops to $1
+            "high": [12, 12, 2, 2, 2],
+            "low": [8, 8, 1, 1, 1],
+            "close": [10, 10, 1, 1, 1],
+            "volume": [1000, 1000, 1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, True, False], index=index)
+
+    # Use percent_capital to keep some cash
+    initial_capital = 100.0
+    commission_per_trade = 5.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        position_size_type="percent_capital",
+        position_size_value=50.0,  # Only invest 50% of capital
+        commission_per_trade=commission_per_trade,
+    )
+
+    # Entry: 5 shares at $10 = $50 + $5 commission (50% of $100)
+    # Remaining cash: $100 - $55 = $45
+    # Exit: 5 shares at $1 = $5 value, $5 commission
+    # Proceeds: $5 - $5 = $0 (break even on this trade)
+    # Final cash: $45 + $0 = $45
+
+    assert len(trades) == 1
+    trade = trades[0]
+
+    # Position should have been 50% of capital
+    assert trade["shares"] == 5.0
+
+    # Cash should never go negative
+    assert all(equity >= -1e-6), f"Cash went negative: min = {equity.min()}"
+
+    # Final cash should be positive (had reserves)
+    assert equity.iloc[-1] > 0
+
+
+def test_force_close_with_high_commission() -> None:
+    """
+    Bug Fix Test #3: Force-close at end should also validate proceeds.
+
+    When backtest ends and position is force-closed, commission validation
+    should still apply.
+    """
+    index = pd.date_range("2020-01-01", periods=3, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 0.01],  # Price crashes on last day
+            "high": [105, 105, 0.02],
+            "low": [95, 95, 0.01],
+            "close": [100, 100, 0.01],
+            "volume": [1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    entry_signal = pd.Series([False, True, False], index=index)
+    exit_signal = pd.Series([False, False, False], index=index)  # No exit signal
+
+    initial_capital = 100.0
+    commission_per_trade = 10.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        commission_per_trade=commission_per_trade,
+    )
+
+    # Entry at bar 1: 1 share at $100
+    # Force-close at bar 2: 1 share at $0.01 (worthless)
+    # Commission $10 exceeds position value $0.01
+
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade["exit_reason"] == "force_close"
+
+    # Cash should not be negative
+    assert equity.iloc[-1] >= -1e-6
+
