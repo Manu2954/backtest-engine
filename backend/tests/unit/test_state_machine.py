@@ -63,3 +63,90 @@ def test_monthly_contribution_applies_on_period_change() -> None:
     assert trades == []
     # Contribution applies when month changes (Jan -> Feb) once.
     assert equity.iloc[-1] == 2100.0
+
+
+def test_zero_shares_entry_skipped_no_commission_deducted() -> None:
+    """
+    Bug Fix Test: Zero-share entry should not deduct commission.
+
+    When position sizing returns 0 shares (insufficient capital or fractional
+    rounding to 0), the entry should be skipped entirely without deducting
+    commission or modifying cash.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 100, 100],
+            "high": [105, 105, 105, 105, 105],
+            "low": [95, 95, 95, 95, 95],
+            "close": [100, 100, 100, 100, 100],
+            "volume": [1000, 1000, 1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    # Entry signal on bar 1, but only have $50 (can't buy even 1 share at $100)
+    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+
+    initial_capital = 50.0
+    commission_per_trade = 5.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",  # Integer shares only
+        commission_per_trade=commission_per_trade,
+    )
+
+    # Should have no trades (0 shares, so entry skipped)
+    assert len(trades) == 0
+
+    # Cash should be unchanged (commission not deducted)
+    assert equity.iloc[-1] == initial_capital
+
+    # All equity values should equal initial capital (no activity)
+    assert all(equity == initial_capital)
+
+
+def test_zero_shares_from_fractional_rounding() -> None:
+    """
+    Bug Fix Test: Fractional shares rounding to 0 should skip entry.
+
+    For STOCK asset class, fractional shares are floored to integers.
+    If this results in 0 shares, entry should be skipped.
+    """
+    index = pd.date_range("2020-01-01", periods=3, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100],
+            "high": [105, 105, 105],
+            "low": [95, 95, 95],
+            "close": [100, 100, 100],
+            "volume": [1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    # Entry signal, but only $80 available (0.8 shares -> rounds to 0)
+    entry_signal = pd.Series([False, True, False], index=index)
+    exit_signal = pd.Series([False, False, False], index=index)
+
+    initial_capital = 80.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",  # Integer shares only (0.8 -> 0)
+    )
+
+    # No trades should occur
+    assert len(trades) == 0
+
+    # Capital preserved
+    assert equity.iloc[-1] == initial_capital
+

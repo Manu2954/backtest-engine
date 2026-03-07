@@ -306,20 +306,24 @@ def run_backtest(
                 allow_fractional=allow_fractional,
             )
 
-            # Calculate commission for entry
-            entry_commission = _calculate_commission(
-                shares, execution_price, commission_per_trade, commission_pct
-            )
+            # Skip entry if no shares can be purchased
+            if shares <= 0:
+                pending_entry = False
+            else:
+                # Calculate commission for entry
+                entry_commission = _calculate_commission(
+                    shares, execution_price, commission_per_trade, commission_pct
+                )
 
-            # Deduct cost (shares + commission) from cash
-            total_cost = (shares * execution_price) + entry_commission
-            cash = cash - total_cost
-            if abs(cash) < 1e-8:
-                cash = 0.0
+                # Deduct cost (shares + commission) from cash
+                total_cost = (shares * execution_price) + entry_commission
+                cash = cash - total_cost
+                if abs(cash) < 1e-8:
+                    cash = 0.0
 
-            entry_price = execution_price
-            entry_date = ts
-            pending_entry = False
+                entry_price = execution_price
+                entry_date = ts
+                pending_entry = False
 
         # Fill pending exit at current bar open
         if pending_exit and shares > 0.0:
