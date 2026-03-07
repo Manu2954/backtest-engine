@@ -155,6 +155,39 @@ def _calculate_commission(
     return fixed_cost + pct_cost
 
 
+def _calculate_exit_proceeds(
+    shares: float,
+    exit_price: float,
+    exit_commission: float,
+    cash: float,
+) -> tuple[float, float]:
+    """
+    Calculate proceeds from exit and validate cash doesn't go negative.
+
+    Args:
+        shares: Number of shares being sold
+        exit_price: Exit price per share
+        exit_commission: Commission charged for exit
+        cash: Current available cash
+
+    Returns:
+        Tuple of (proceeds, actual_commission_charged)
+        - If proceeds would be negative and cause negative cash, commission is capped
+    """
+    position_value = shares * exit_price
+    proceeds = position_value - exit_commission
+
+    # Check if proceeds are negative and would cause negative cash
+    if proceeds < 0 and cash + proceeds < 0:
+        # Cap commission at position value + available cash
+        # This prevents cash from going negative
+        max_affordable_commission = position_value + cash
+        actual_commission = max(0.0, max_affordable_commission)
+        proceeds = position_value - actual_commission
+        return proceeds, actual_commission
+
+    return proceeds, exit_commission
+
 
 def run_backtest(
     df: pd.DataFrame,
@@ -306,20 +339,60 @@ def run_backtest(
                 allow_fractional=allow_fractional,
             )
 
-            # Calculate commission for entry
-            entry_commission = _calculate_commission(
-                shares, execution_price, commission_per_trade, commission_pct
-            )
+            # Skip entry if no shares can be purchased
+            if shares <= 0:
+                pending_entry = False
+            else:
+                # Calculate commission for entry
+                entry_commission = _calculate_commission(
+                    shares, execution_price, commission_per_trade, commission_pct
+                )
 
-            # Deduct cost (shares + commission) from cash
-            total_cost = (shares * execution_price) + entry_commission
-            cash = cash - total_cost
-            if abs(cash) < 1e-8:
-                cash = 0.0
+                # Validate that total cost doesn't exceed available cash
+                total_cost = (shares * execution_price) + entry_commission
 
-            entry_price = execution_price
-            entry_date = ts
-            pending_entry = False
+                if total_cost > cash:
+                    # Reduce shares to fit within budget after commission
+                    # Reserve commission amount first
+                    affordable_amount = cash - commission_per_trade
+
+                    if affordable_amount <= 0:
+                        # Can't even afford the flat commission
+                        pending_entry = False
+                        shares = 0.0
+                    else:
+                        # Calculate max shares that fit within budget
+                        # Formula: cash = shares * price * (1 + commission_pct/100) + commission_per_trade
+                        # Solving for shares: shares = (cash - commission_per_trade) / (price * (1 + commission_pct/100))
+                        price_with_pct_commission = execution_price * (1.0 + commission_pct / 100.0)
+                        max_shares = affordable_amount / price_with_pct_commission
+
+                        # Apply fractional constraint
+                        shares = max_shares if allow_fractional else float(int(max_shares))
+
+                        if shares <= 0:
+                            # After adjustment, still can't afford any shares
+                            pending_entry = False
+                            shares = 0.0
+                        else:
+                            # Recalculate commission with adjusted shares
+                            entry_commission = _calculate_commission(
+                                shares, execution_price, commission_per_trade, commission_pct
+                            )
+                            total_cost = (shares * execution_price) + entry_commission
+
+                # Only proceed with entry if we have shares to buy
+                if shares > 0:
+                    # Deduct cost (shares + commission) from cash
+                    cash = cash - total_cost
+                    if abs(cash) < 1e-8:
+                        cash = 0.0
+
+                    entry_price = execution_price
+                    entry_date = ts
+                    pending_entry = False
+                else:
+                    pending_entry = False
 
         # Fill pending exit at current bar open
         if pending_exit and shares > 0.0:
@@ -331,11 +404,16 @@ def run_backtest(
                 shares, execution_price, commission_per_trade, commission_pct
             )
 
+            # Calculate proceeds and validate cash won't go negative
+            proceeds, actual_exit_commission = _calculate_exit_proceeds(
+                shares, execution_price, exit_commission, cash
+            )
+
             exit_price = execution_price
             exit_date = ts
             exit_reason = "signal"  # Exit triggered by strategy signal
 
-            pnl = (exit_price - (entry_price or 0.0)) * shares - entry_commission - exit_commission
+            pnl = (exit_price - (entry_price or 0.0)) * shares - entry_commission - actual_exit_commission
             trade_cost = (entry_price or 0.0) * shares + entry_commission
             pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
             trade_duration_days = (
@@ -353,13 +431,12 @@ def run_backtest(
                     trade_duration_days=trade_duration_days,
                     exit_reason=exit_reason,
                     entry_commission=entry_commission,
-                    exit_commission=exit_commission,
-                    total_commission=entry_commission + exit_commission,
+                    exit_commission=actual_exit_commission,
+                    total_commission=entry_commission + actual_exit_commission,
                 )
             )
 
-            # Add proceeds (shares value - commission) to cash
-            proceeds = (shares * exit_price) - exit_commission
+            # Add proceeds to cash
             cash = cash + proceeds
             if abs(cash) < 1e-8:
                 cash = 0.0
@@ -391,11 +468,16 @@ def run_backtest(
                         shares, execution_price, commission_per_trade, commission_pct
                     )
 
+                    # Calculate proceeds and validate cash won't go negative
+                    proceeds, actual_exit_commission = _calculate_exit_proceeds(
+                        shares, execution_price, exit_commission, cash
+                    )
+
                     exit_price = execution_price
                     exit_date = ts
 
                     # Calculate P&L to determine exit reason
-                    pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
+                    pnl = (exit_price - entry_price) * shares - entry_commission - actual_exit_commission
 
                     # Label as trailing_stop (profit) or stop_loss (loss)
                     exit_reason = "trailing_stop" if pnl >= 0 else "stop_loss"
@@ -417,13 +499,12 @@ def run_backtest(
                             trade_duration_days=trade_duration_days,
                             exit_reason=exit_reason,
                             entry_commission=entry_commission,
-                            exit_commission=exit_commission,
-                            total_commission=entry_commission + exit_commission,
+                            exit_commission=actual_exit_commission,
+                            total_commission=entry_commission + actual_exit_commission,
                         )
                     )
 
-                    # Add proceeds (shares value - commission) to cash
-                    proceeds = (shares * exit_price) - exit_commission
+                    # Add proceeds to cash
                     cash = cash + proceeds
                     if abs(cash) < 1e-8:
                         cash = 0.0
@@ -447,11 +528,16 @@ def run_backtest(
                         shares, execution_price, commission_per_trade, commission_pct
                     )
 
+                    # Calculate proceeds and validate cash won't go negative
+                    proceeds, actual_exit_commission = _calculate_exit_proceeds(
+                        shares, execution_price, exit_commission, cash
+                    )
+
                     exit_price = execution_price
                     exit_date = ts
                     exit_reason = "stop_loss"
 
-                    pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
+                    pnl = (exit_price - entry_price) * shares - entry_commission - actual_exit_commission
                     trade_cost = entry_price * shares + entry_commission
                     pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
                     trade_duration_days = (
@@ -469,13 +555,12 @@ def run_backtest(
                             trade_duration_days=trade_duration_days,
                             exit_reason=exit_reason,
                             entry_commission=entry_commission,
-                            exit_commission=exit_commission,
-                            total_commission=entry_commission + exit_commission,
+                            exit_commission=actual_exit_commission,
+                            total_commission=entry_commission + actual_exit_commission,
                         )
                     )
 
-                    # Add proceeds (shares value - commission) to cash
-                    proceeds = (shares * exit_price) - exit_commission
+                    # Add proceeds to cash
                     cash = cash + proceeds
                     if abs(cash) < 1e-8:
                         cash = 0.0
@@ -495,11 +580,16 @@ def run_backtest(
                         shares, execution_price, commission_per_trade, commission_pct
                     )
 
+                    # Calculate proceeds and validate cash won't go negative
+                    proceeds, actual_exit_commission = _calculate_exit_proceeds(
+                        shares, execution_price, exit_commission, cash
+                    )
+
                     exit_price = execution_price
                     exit_date = ts
                     exit_reason = "take_profit"
 
-                    pnl = (exit_price - entry_price) * shares - entry_commission - exit_commission
+                    pnl = (exit_price - entry_price) * shares - entry_commission - actual_exit_commission
                     trade_cost = entry_price * shares + entry_commission
                     pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
                     trade_duration_days = (
@@ -517,13 +607,12 @@ def run_backtest(
                             trade_duration_days=trade_duration_days,
                             exit_reason=exit_reason,
                             entry_commission=entry_commission,
-                            exit_commission=exit_commission,
-                            total_commission=entry_commission + exit_commission,
+                            exit_commission=actual_exit_commission,
+                            total_commission=entry_commission + actual_exit_commission,
                         )
                     )
 
-                    # Add proceeds (shares value - commission) to cash
-                    proceeds = (shares * exit_price) - exit_commission
+                    # Add proceeds to cash
                     cash = cash + proceeds
                     if abs(cash) < 1e-8:
                         cash = 0.0
@@ -555,7 +644,12 @@ def run_backtest(
             shares, execution_price, commission_per_trade, commission_pct
         )
 
-        pnl = (execution_price - (entry_price or 0.0)) * shares - entry_commission - exit_commission
+        # Calculate proceeds and validate cash won't go negative
+        proceeds, actual_exit_commission = _calculate_exit_proceeds(
+            shares, execution_price, exit_commission, cash
+        )
+
+        pnl = (execution_price - (entry_price or 0.0)) * shares - entry_commission - actual_exit_commission
         trade_cost = (entry_price or last_close) * shares + entry_commission
         pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
         trade_duration_days = (
@@ -573,13 +667,12 @@ def run_backtest(
                 trade_duration_days=trade_duration_days,
                 exit_reason="force_close",
                 entry_commission=entry_commission,
-                exit_commission=exit_commission,
-                total_commission=entry_commission + exit_commission,
+                exit_commission=actual_exit_commission,
+                total_commission=entry_commission + actual_exit_commission,
             )
         )
 
         # Add proceeds to cash
-        proceeds = (shares * execution_price) - exit_commission
         cash = cash + proceeds
         if abs(cash) < 1e-8:
             cash = 0.0
