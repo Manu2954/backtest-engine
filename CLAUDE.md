@@ -13,6 +13,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Do not bundle multiple unrelated changes into a single commit
 - Use conventional commit format: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, etc.
 
+### Git Branching Workflow
+
+- **Never commit directly to `master`** - Always create a feature/bugfix branch
+- Branch naming conventions:
+  - `feature/feature-name` for new features
+  - `bugfix/bug-description` for bug fixes
+  - `refactor/component-name` for refactoring work
+- Create a branch before making changes: `git checkout -b bugfix/description`
+- Commit changes to the branch
+- When ready, the branch can be merged to master via PR or direct merge
+
 ### Development Priorities
 
 - **UI is currently the least priority** - Do not make any changes to the frontend (`frontend/` directory) unless explicitly requested
