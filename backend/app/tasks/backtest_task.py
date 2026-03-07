@@ -13,7 +13,7 @@ from sqlalchemy.pool import NullPool
 from app.core.config import settings
 from app.engine.condition_engine import evaluate_conditions
 from app.engine.data_layer import fetch_ohlcv_async
-from app.engine.indicator_layer import compute_indicators
+from app.engine.indicator_layer import compute_indicators, trim_warmup_period
 from app.engine.report_generator import generate_report
 from app.engine.state_machine import run_backtest
 from app.models.backtest import BacktestRun, TradeLog
@@ -68,6 +68,19 @@ async def _run_backtest_async(run_id: str) -> None:
                 for ind in strategy.indicators
             ]
             df = compute_indicators(df, indicators)
+
+            # Trim warmup period where indicators have NaN values
+            logger.info("Checking for indicator warmup period")
+            df, warmup_bars = trim_warmup_period(df)
+            if warmup_bars > 0:
+                logger.info(f"Trimmed {warmup_bars} bars from warmup period. Starting backtest from bar {warmup_bars}.")
+
+            # Validate we have enough data after warmup
+            if len(df) < 30:
+                raise ValueError(
+                    f"Insufficient data after indicator warmup: {len(df)} bars remaining. "
+                    f"Need at least 30 bars. Try extending the date range or using shorter indicator periods."
+                )
 
             entry_group = _group_to_payload(strategy, "ENTRY")
             exit_group = _group_to_payload(strategy, "EXIT")
