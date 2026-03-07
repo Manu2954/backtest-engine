@@ -315,15 +315,51 @@ def run_backtest(
                     shares, execution_price, commission_per_trade, commission_pct
                 )
 
-                # Deduct cost (shares + commission) from cash
+                # Validate that total cost doesn't exceed available cash
                 total_cost = (shares * execution_price) + entry_commission
-                cash = cash - total_cost
-                if abs(cash) < 1e-8:
-                    cash = 0.0
 
-                entry_price = execution_price
-                entry_date = ts
-                pending_entry = False
+                if total_cost > cash:
+                    # Reduce shares to fit within budget after commission
+                    # Reserve commission amount first
+                    affordable_amount = cash - commission_per_trade
+
+                    if affordable_amount <= 0:
+                        # Can't even afford the flat commission
+                        pending_entry = False
+                        shares = 0.0
+                    else:
+                        # Calculate max shares that fit within budget
+                        # Formula: cash = shares * price * (1 + commission_pct/100) + commission_per_trade
+                        # Solving for shares: shares = (cash - commission_per_trade) / (price * (1 + commission_pct/100))
+                        price_with_pct_commission = execution_price * (1.0 + commission_pct / 100.0)
+                        max_shares = affordable_amount / price_with_pct_commission
+
+                        # Apply fractional constraint
+                        shares = max_shares if allow_fractional else float(int(max_shares))
+
+                        if shares <= 0:
+                            # After adjustment, still can't afford any shares
+                            pending_entry = False
+                            shares = 0.0
+                        else:
+                            # Recalculate commission with adjusted shares
+                            entry_commission = _calculate_commission(
+                                shares, execution_price, commission_per_trade, commission_pct
+                            )
+                            total_cost = (shares * execution_price) + entry_commission
+
+                # Only proceed with entry if we have shares to buy
+                if shares > 0:
+                    # Deduct cost (shares + commission) from cash
+                    cash = cash - total_cost
+                    if abs(cash) < 1e-8:
+                        cash = 0.0
+
+                    entry_price = execution_price
+                    entry_date = ts
+                    pending_entry = False
+                else:
+                    pending_entry = False
 
         # Fill pending exit at current bar open
         if pending_exit and shares > 0.0:

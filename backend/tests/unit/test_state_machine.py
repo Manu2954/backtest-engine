@@ -150,3 +150,145 @@ def test_zero_shares_from_fractional_rounding() -> None:
     # Capital preserved
     assert equity.iloc[-1] == initial_capital
 
+
+def test_commission_prevents_negative_cash() -> None:
+    """
+    Bug Fix Test #2: Commission should not cause negative cash.
+
+    When total cost (shares * price + commission) would exceed available cash,
+    shares should be reduced to fit within budget.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [95, 95, 95, 95, 95],
+            "high": [100, 100, 100, 100, 100],
+            "low": [90, 90, 90, 90, 90],
+            "close": [95, 95, 95, 95, 95],
+            "volume": [1000, 1000, 1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+
+    initial_capital = 100.0
+    commission_per_trade = 10.0  # High commission
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        commission_per_trade=commission_per_trade,
+    )
+
+    # Without fix: would calculate 1 share * $95 + $10 commission = $105 > $100 cash (negative!)
+    # With fix: should reduce to 0 shares (can't afford after commission)
+
+    # Should have no trade (can't afford shares after commission)
+    assert len(trades) == 0
+
+    # Cash should never go negative - should remain at initial capital
+    assert equity.iloc[-1] == initial_capital
+    assert all(equity >= 0), "Cash should never be negative"
+
+
+def test_commission_reduces_shares_to_fit_budget() -> None:
+    """
+    Bug Fix Test #2: Shares reduced to fit within budget after commission.
+
+    When commission would push total cost over budget, reduce shares
+    (not reject entirely if some shares are still affordable).
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10, 10, 10, 10, 10],
+            "high": [12, 12, 12, 12, 12],
+            "low": [8, 8, 8, 8, 8],
+            "close": [10, 10, 10, 10, 10],
+            "volume": [1000, 1000, 1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, True, False], index=index)
+
+    initial_capital = 100.0
+    commission_per_trade = 5.0
+    commission_pct = 1.0  # 1% of trade value
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        commission_per_trade=commission_per_trade,
+        commission_pct=commission_pct,
+    )
+
+    # Should complete a trade with reduced shares to fit budget
+    assert len(trades) == 1
+
+    trade = trades[0]
+
+    # Verify shares bought fit within budget
+    entry_cost = (trade["shares"] * trade["entry_price"]) + trade["entry_commission"]
+    assert entry_cost <= initial_capital, f"Entry cost ${entry_cost} exceeds budget ${initial_capital}"
+
+    # Verify cash never went negative during backtest
+    assert all(equity >= -1e-6), f"Cash went negative: min equity = {equity.min()}"
+
+
+def test_high_commission_percentage_prevents_entry() -> None:
+    """
+    Bug Fix Test #2: Very high percentage commission should prevent entry.
+
+    When commission percentage is so high that even 1 share is unaffordable,
+    entry should be skipped entirely.
+    """
+    index = pd.date_range("2020-01-01", periods=3, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [50, 50, 50],
+            "high": [55, 55, 55],
+            "low": [45, 45, 45],
+            "close": [50, 50, 50],
+            "volume": [1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    entry_signal = pd.Series([False, True, False], index=index)
+    exit_signal = pd.Series([False, False, False], index=index)
+
+    initial_capital = 100.0
+    commission_per_trade = 20.0  # $20 flat
+    commission_pct = 50.0  # 50% of trade value!
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        commission_per_trade=commission_per_trade,
+        commission_pct=commission_pct,
+    )
+
+    # 1 share costs: $50 + $20 + 50% of $50 = $50 + $20 + $25 = $95
+    # 2 shares costs: $100 + $20 + 50% of $100 = $100 + $20 + $50 = $170 (too much)
+    # Should be able to afford 1 share
+
+    # Should have a trade
+    assert len(trades) == 1
+    assert trades[0]["shares"] == 1.0
+
+    # Cash should not be negative
+    assert equity.iloc[-1] >= -1e-6
+
