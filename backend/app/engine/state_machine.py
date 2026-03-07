@@ -631,6 +631,99 @@ def run_backtest(
         elif shares > 0.0 and not pending_exit and exit_signal.iloc[i]:
             pending_exit = True
 
+    # Handle pending entry on last bar
+    if pending_entry and shares == 0.0:
+        # Entry signal triggered on last bar but loop ended
+        # Fill entry at last bar close, then immediately force-close
+        last_ts = df.index[-1]
+        last_close = float(df.iloc[-1]["close"])
+
+        # Apply slippage to entry price
+        execution_price = _apply_slippage(last_close, slippage_pct, is_entry=True)
+
+        # Calculate position size
+        total_capital = cash
+        shares = _calculate_position_size(
+            cash=cash,
+            total_capital=total_capital,
+            price=execution_price,
+            position_size_type=position_size_type,
+            position_size_value=position_size_value,
+            allow_fractional=allow_fractional,
+        )
+
+        if shares > 0:
+            # Calculate commission for entry
+            entry_commission = _calculate_commission(
+                shares, execution_price, commission_per_trade, commission_pct
+            )
+
+            # Validate affordability
+            total_cost = (shares * execution_price) + entry_commission
+
+            if total_cost > cash:
+                # Reduce shares to fit budget
+                affordable_amount = cash - commission_per_trade
+                if affordable_amount > 0:
+                    price_with_pct_commission = execution_price * (1.0 + commission_pct / 100.0)
+                    max_shares = affordable_amount / price_with_pct_commission
+                    shares = max_shares if allow_fractional else float(int(max_shares))
+
+                    if shares > 0:
+                        entry_commission = _calculate_commission(
+                            shares, execution_price, commission_per_trade, commission_pct
+                        )
+                        total_cost = (shares * execution_price) + entry_commission
+                    else:
+                        shares = 0.0
+                else:
+                    shares = 0.0
+
+            if shares > 0:
+                # Execute entry
+                cash = cash - total_cost
+                if abs(cash) < 1e-8:
+                    cash = 0.0
+
+                entry_price = execution_price
+                entry_date = last_ts
+
+                # Immediately force-close since backtest is ending
+                exit_commission = _calculate_commission(
+                    shares, execution_price, commission_per_trade, commission_pct
+                )
+
+                proceeds, actual_exit_commission = _calculate_exit_proceeds(
+                    shares, execution_price, exit_commission, cash
+                )
+
+                # Since entry and exit at same price, P&L is just commissions
+                pnl = -(entry_commission + actual_exit_commission)
+                trade_cost = entry_price * shares + entry_commission
+                pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+
+                trade_log.append(
+                    TradeRecord(
+                        entry_date=entry_date,
+                        entry_price=entry_price,
+                        exit_date=last_ts,
+                        exit_price=execution_price,
+                        shares=shares,
+                        pnl=pnl,
+                        pnl_pct=pnl_pct,
+                        trade_duration_days=0,
+                        exit_reason="last_bar_entry_force_close",
+                        entry_commission=entry_commission,
+                        exit_commission=actual_exit_commission,
+                        total_commission=entry_commission + actual_exit_commission,
+                    )
+                )
+
+                cash = cash + proceeds
+                if abs(cash) < 1e-8:
+                    cash = 0.0
+                shares = 0.0
+
     # Force-close at last bar close if still in position
     if shares > 0.0:
         last_ts = df.index[-1]

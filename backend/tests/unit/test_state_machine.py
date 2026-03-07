@@ -445,3 +445,149 @@ def test_force_close_with_high_commission() -> None:
     # Cash should not be negative
     assert equity.iloc[-1] >= -1e-6
 
+
+def test_pending_entry_on_last_bar_fills() -> None:
+    """
+    Bug Fix Test #4: Entry signal on last bar should be filled.
+
+    When an entry signal triggers on the final bar, the position should be
+    opened and immediately closed (force-close), rather than being ignored.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10, 10, 10, 10, 10],
+            "high": [12, 12, 12, 12, 12],
+            "low": [8, 8, 8, 8, 8],
+            "close": [10, 10, 10, 10, 10],
+            "volume": [1000, 1000, 1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    # Entry signal ONLY on last bar
+    entry_signal = pd.Series([False, False, False, False, True], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+
+    initial_capital = 100.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+    )
+
+    # Should have one trade (entry + immediate force-close)
+    assert len(trades) == 1
+
+    trade = trades[0]
+    assert trade["entry_date"] == index[-1]
+    assert trade["exit_date"] == index[-1]
+    assert trade["entry_price"] == 10.0
+    assert trade["exit_price"] == 10.0
+    assert trade["shares"] == 10.0
+    assert trade["trade_duration_days"] == 0
+    assert trade["exit_reason"] == "last_bar_entry_force_close"
+
+    # P&L should be negative (double commission, no price movement)
+    # Entry commission + exit commission with no gain
+    assert trade["pnl"] < 0
+
+    # Capital should have been deployed (not sitting idle)
+    # Entry happened, even though immediately closed
+    assert trade["shares"] > 0
+
+
+def test_pending_entry_last_bar_insufficient_capital() -> None:
+    """
+    Bug Fix Test #4: Entry signal on last bar with insufficient capital.
+
+    If there's not enough capital on the last bar, entry should be skipped
+    (same as any other bar).
+    """
+    index = pd.date_range("2020-01-01", periods=3, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100],
+            "high": [105, 105, 105],
+            "low": [95, 95, 95],
+            "close": [100, 100, 100],
+            "volume": [1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    # Entry signal on last bar, but insufficient capital
+    entry_signal = pd.Series([False, False, True], index=index)
+    exit_signal = pd.Series([False, False, False], index=index)
+
+    initial_capital = 50.0  # Not enough for 1 share at $100
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+    )
+
+    # No trade should occur (can't afford entry)
+    assert len(trades) == 0
+
+    # Capital preserved
+    assert equity.iloc[-1] == initial_capital
+
+
+def test_pending_entry_last_bar_with_commission() -> None:
+    """
+    Bug Fix Test #4: Last bar entry should account for double commission.
+
+    Since entry and exit happen at same bar, both commissions apply.
+    This should be factored into affordability check.
+    """
+    index = pd.date_range("2020-01-01", periods=3, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10, 10, 10],
+            "high": [12, 12, 12],
+            "low": [8, 8, 8],
+            "close": [10, 10, 10],
+            "volume": [1000, 1000, 1000],
+        },
+        index=index,
+    )
+
+    entry_signal = pd.Series([False, False, True], index=index)
+    exit_signal = pd.Series([False, False, False], index=index)
+
+    initial_capital = 100.0
+    commission_per_trade = 5.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        commission_per_trade=commission_per_trade,
+    )
+
+    # Should have trade
+    assert len(trades) == 1
+
+    trade = trades[0]
+
+    # Shares should fit within budget after entry commission
+    entry_cost = trade["shares"] * trade["entry_price"] + trade["entry_commission"]
+    assert entry_cost <= initial_capital
+
+    # P&L should be negative (entry + exit commission, no price gain)
+    assert trade["pnl"] == -(trade["entry_commission"] + trade["exit_commission"])
+
+    # Final cash should account for both commissions
+    # initial - entry_cost + proceeds (where proceeds = position_value - exit_commission)
+    expected_loss = trade["total_commission"]
+    assert abs(equity.iloc[-1] - (initial_capital - expected_loss)) < 0.01
+
