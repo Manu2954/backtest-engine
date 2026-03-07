@@ -46,12 +46,10 @@ class BacktestOut(BaseModel):
     error_message: str | None
     report: dict[str, Any] | None
     periodic_contribution: dict[str, Any] | None
-    # Position sizing and risk management parameters
     position_size_type: str | None
     position_size_value: float | None
     stop_loss_pct: float | None
     take_profit_pct: float | None
-    # Transaction cost parameters
     commission_per_trade: float | None
     commission_pct: float | None
     slippage_pct: float | None
