@@ -29,6 +29,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **UI is currently the least priority** - Do not make any changes to the frontend (`frontend/` directory) unless explicitly requested
 - Focus on backend functionality, engine improvements, and core features
 
+### File Format Preferences
+
+- Generate `.txt` files for reports, documentation, and analysis by default
+- Only generate `.md` (Markdown) files when explicitly requested by the user
+- **All documentation files should be placed in `docs/` folder** (e.g., `docs/BUG_SUMMARY.txt`, `docs/ANALYSIS.txt`)
+- Exception: Project root files like `README.md`, `CLAUDE.md` stay in root
+
 ## Project Overview
 
 This is a full-stack backtesting application for evaluating technical indicator-based trading strategies. The system uses FastAPI (backend), React/TypeScript (frontend), PostgreSQL (data store), Redis (caching/message broker), and Celery (async task processing).
