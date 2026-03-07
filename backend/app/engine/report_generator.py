@@ -205,6 +205,8 @@ def generate_report(
     avg_win = sum(wins) / len(wins) if wins else 0.0
     avg_loss = sum(losses) / len(losses) if losses else 0.0
     avg_win_loss = _safe_div(avg_win, abs(avg_loss)) if avg_loss != 0 else 0.0
+    largest_win = max(wins) if wins else 0.0
+    largest_loss = min(losses) if losses else 0.0
 
     daily_returns = equity.pct_change().dropna()
     if not daily_returns.empty and daily_returns.std() != 0:
@@ -224,11 +226,15 @@ def generate_report(
         "cagr": cagr,
         "total_trades": total_trades,
         "win_rate": win_rate,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
         "avg_win_loss": avg_win_loss,
+        "largest_win": largest_win,
+        "largest_loss": largest_loss,
         "max_drawdown_pct": _max_drawdown(equity),
         "sharpe_ratio": sharpe,
         "profit_factor": profit_factor,
-        "avg_trade_duration": avg_trade_duration,
+        "avg_trade_duration_days": avg_trade_duration,
         "longest_drawdown_days": _longest_drawdown_days(equity),
         "final_capital": final_capital,
     }
