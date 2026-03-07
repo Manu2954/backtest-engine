@@ -16,7 +16,10 @@ class TradeRecord:
     pnl: float
     pnl_pct: float
     trade_duration_days: int
-    exit_reason: str  # NEW: Track why trade exited (signal, stop_loss, take_profit, force_close)
+    exit_reason: str
+    entry_commission: float
+    exit_commission: float
+    total_commission: float
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -28,7 +31,10 @@ class TradeRecord:
             "pnl": self.pnl,
             "pnl_pct": self.pnl_pct,
             "trade_duration_days": self.trade_duration_days,
-            "exit_reason": self.exit_reason,  # NEW: Include in output
+            "exit_reason": self.exit_reason,
+            "entry_commission": self.entry_commission,
+            "exit_commission": self.exit_commission,
+            "total_commission": self.total_commission,
         }
 
 
@@ -159,15 +165,16 @@ def run_backtest(
     shares: float = 0.0,
     periodic_contribution: dict[str, Any] | None = None,
     # Position sizing parameters
-    position_size_type: str = "full_capital",  # "full_capital" | "percent_capital" | "fixed_amount"
-    position_size_value: float = 100.0,  # Percentage (0-100) or dollar amount
+    position_size_type: str = "full_capital",
+    position_size_value: float = 100.0,
     # Risk management parameters
-    stop_loss_pct: float | None = None,  # Stop loss percentage (e.g., 5.0 for 5% loss)
-    take_profit_pct: float | None = None,  # Take profit percentage (e.g., 10.0 for 10% gain)
+    stop_loss_pct: float | None = None,
+    take_profit_pct: float | None = None,
+    dynamic_stop_column: str | None = None,
     # Transaction cost parameters
-    commission_per_trade: float = 0.0,  # Fixed commission per trade (e.g., $5)
-    commission_pct: float = 0.0,  # Commission as % of trade value (e.g., 0.1 for 0.1%)
-    slippage_pct: float = 0.0,  # Slippage as % of price (e.g., 0.05 for 0.05%)
+    commission_per_trade: float = 0.0,
+    commission_pct: float = 0.0,
+    slippage_pct: float = 0.0,
 ) -> tuple[list[dict[str, Any]], pd.Series]:
     if df.empty:
         return [], pd.Series([], dtype=float, name="equity")
