@@ -12,6 +12,8 @@ OPERATORS = {
     "EQ",
     "GTE",
     "LTE",
+    "IS_RISING",
+    "IS_FALLING",
 }
 
 OPERAND_TYPES = {"INDICATOR", "OHLCV", "SCALAR"}
@@ -69,8 +71,26 @@ def _apply_operator(
     if op == "LTE":
         return left <= right
 
-    if not isinstance(left, pd.Series) or not isinstance(right, pd.Series):
-        raise ValueError(f"{operator} requires Series operands")
+    # Operators that require Series operands
+    if not isinstance(left, pd.Series):
+        raise ValueError(f"{operator} requires left operand to be a Series (indicator/OHLCV)")
+
+    if op == "IS_RISING":
+        # Current value > previous value
+        result = left > left.shift(1)
+        if len(result) > 0:
+            result.iloc[0] = False
+        return result.fillna(False)
+
+    if op == "IS_FALLING":
+        # Current value < previous value
+        result = left < left.shift(1)
+        if len(result) > 0:
+            result.iloc[0] = False
+        return result.fillna(False)
+
+    if not isinstance(right, pd.Series):
+        raise ValueError(f"{operator} requires both operands to be Series")
 
     if op == "CROSSES_ABOVE":
         prev = (left.shift(1) < right.shift(1))
@@ -79,6 +99,7 @@ def _apply_operator(
     else:  # CROSSES_BELOW
         prev = (left.shift(1) > right.shift(1))
         now = (left < right)
+        result = prev & now
         result = prev & now
 
     if len(result) > 0:
@@ -97,12 +118,18 @@ def evaluate_conditions(df: pd.DataFrame, condition_group: dict[str, Any]) -> pd
            {
              "left_operand_type": "INDICATOR"|"OHLCV"|"SCALAR",
              "left_operand_value": "rsi_14"|"close"|"42",
-             "operator": "CROSSES_ABOVE"|"CROSSES_BELOW"|"GT"|"LT"|"EQ"|"GTE"|"LTE",
+             "operator": "CROSSES_ABOVE"|"CROSSES_BELOW"|"GT"|"LT"|"EQ"|"GTE"|"LTE"|"IS_RISING"|"IS_FALLING",
              "right_operand_type": "INDICATOR"|"OHLCV"|"SCALAR",
              "right_operand_value": "ema_20"|"close"|"70",
            },
         ]
       }
+
+    Operators:
+      - GT, LT, EQ, GTE, LTE: Comparison operators (work with any operands)
+      - CROSSES_ABOVE, CROSSES_BELOW: Detect crossovers (require two Series operands)
+      - IS_RISING: True when left operand > previous value (requires Series, right operand ignored)
+      - IS_FALLING: True when left operand < previous value (requires Series, right operand ignored)
     """
     if df.empty:
         return pd.Series([], dtype=bool, index=df.index)
