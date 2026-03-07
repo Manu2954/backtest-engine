@@ -148,8 +148,17 @@ def evaluate_conditions(df: pd.DataFrame, condition_group: dict[str, Any]) -> pd
         left_value = cond.get("left_operand_value")
         right_value = cond.get("right_operand_value")
 
-        if not all([left_type, right_type, operator, left_value, right_value]):
-            raise ValueError(f"Condition is missing required fields: {cond}")
+        # Check for None instead of truthiness to allow 0, empty string, etc.
+        required_fields = [
+            ("left_operand_type", left_type),
+            ("right_operand_type", right_type),
+            ("operator", operator),
+            ("left_operand_value", left_value),
+            ("right_operand_value", right_value),
+        ]
+        missing = [name for name, value in required_fields if value is None]
+        if missing:
+            raise ValueError(f"Condition is missing required fields: {missing}. Condition: {cond}")
 
         left = _get_operand(df, left_type, str(left_value))
         right = _get_operand(df, right_type, str(right_value))
