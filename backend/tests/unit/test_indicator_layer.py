@@ -152,3 +152,98 @@ def test_stochastic() -> None:
     assert "stoch_14_3_d" in out.columns
     assert_no_recent_nans(out["stoch_14_3_k"])
     assert_no_recent_nans(out["stoch_14_3_d"])
+
+
+def test_duplicate_indicator_alias_rejected() -> None:
+    """
+    Bug Fix Test #8: Duplicate indicator aliases should be rejected.
+
+    When two indicators have the same alias, the second would overwrite
+    the first, causing silent data corruption. Should raise ValueError.
+    """
+    df = make_df()
+
+    # Two indicators with same alias "rsi_14"
+    indicators = [
+        {
+            "indicator_type": "RSI",
+            "alias": "rsi_14",
+            "params": {"period": 14, "source": "close"},
+        },
+        {
+            "indicator_type": "RSI",
+            "alias": "rsi_14",  # Duplicate!
+            "params": {"period": 20, "source": "close"},
+        },
+    ]
+
+    try:
+        compute_indicators(df, indicators)
+        assert False, "Should have raised ValueError for duplicate alias"
+    except ValueError as e:
+        assert "duplicate" in str(e).lower()
+        assert "rsi_14" in str(e).lower()
+
+
+def test_different_indicators_same_alias_rejected() -> None:
+    """
+    Bug Fix Test #8: Different indicator types with same alias should be rejected.
+    """
+    df = make_df()
+
+    # RSI and EMA with same alias
+    indicators = [
+        {
+            "indicator_type": "RSI",
+            "alias": "my_indicator",
+            "params": {"period": 14, "source": "close"},
+        },
+        {
+            "indicator_type": "EMA",
+            "alias": "my_indicator",  # Same alias as RSI!
+            "params": {"period": 20, "source": "close"},
+        },
+    ]
+
+    try:
+        compute_indicators(df, indicators)
+        assert False, "Should have raised ValueError for duplicate alias"
+    except ValueError as e:
+        assert "duplicate" in str(e).lower()
+        assert "my_indicator" in str(e).lower()
+
+
+def test_unique_aliases_allowed() -> None:
+    """
+    Bug Fix Test #8: Multiple indicators with unique aliases should work.
+    """
+    df = make_df()
+
+    # Multiple indicators with unique aliases
+    indicators = [
+        {
+            "indicator_type": "RSI",
+            "alias": "rsi_14",
+            "params": {"period": 14, "source": "close"},
+        },
+        {
+            "indicator_type": "RSI",
+            "alias": "rsi_20",  # Different alias
+            "params": {"period": 20, "source": "close"},
+        },
+        {
+            "indicator_type": "EMA",
+            "alias": "ema_50",
+            "params": {"period": 50, "source": "close"},
+        },
+    ]
+
+    out = compute_indicators(df, indicators)
+
+    # All indicators should be present
+    assert "rsi_14" in out.columns
+    assert "rsi_20" in out.columns
+    assert "ema_50" in out.columns
+
+    # Values should be different (different periods)
+    assert not out["rsi_14"].equals(out["rsi_20"])

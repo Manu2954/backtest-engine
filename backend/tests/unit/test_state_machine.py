@@ -591,3 +591,204 @@ def test_pending_entry_last_bar_with_commission() -> None:
     expected_loss = trade["total_commission"]
     assert abs(equity.iloc[-1] - (initial_capital - expected_loss)) < 0.01
 
+
+def test_dynamic_stop_crossover_detection() -> None:
+    """
+    Bug Fix Test #6: Dynamic stop should trigger only on crossover.
+
+    The dynamic stop should exit when price crosses below the stop level,
+    not simply when price < stop. This is important for trailing stops that
+    move up as price increases.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 105, 98, 102, 95],
+            "high": [105, 110, 103, 107, 100],
+            "low": [95, 100, 93, 97, 90],
+            "close": [100, 105, 98, 102, 95],
+            "volume": [1000, 1000, 1000, 1000, 1000],
+            "trailing_stop": [90, 95, 99, 99, 90],  # Stop moves up, then down
+        },
+        index=index,
+    )
+
+    # Entry on bar 1
+    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+
+    initial_capital = 1000.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        dynamic_stop_column="trailing_stop",
+    )
+
+    # Entry at bar 2 (signal on bar 1, fill at bar 2): open=$105
+    # Bar 2: price=$98 < stop=$99, BUT prev_close=$105 >= prev_stop=$95 → CROSS BELOW → EXIT
+    # Should have 1 trade exiting at bar 2
+
+    assert len(trades) == 1
+    trade = trades[0]
+
+    # Entry at bar 2 open
+    assert trade["entry_price"] == 105.0
+    assert trade["entry_date"] == index[2]
+
+    # Exit at bar 2 open (same bar, crossover detected)
+    assert trade["exit_date"] == index[2]
+    assert trade["exit_price"] == 98.0
+    assert trade["exit_reason"] in ["trailing_stop", "stop_loss"]
+
+
+def test_dynamic_stop_no_false_exit() -> None:
+    """
+    Bug Fix Test #6: Don't exit if stop moves up to price without crossover.
+
+    When the dynamic stop moves up faster than price falls, but we never
+    actually cross below, we should NOT exit.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 105, 103, 104, 106],
+            "high": [105, 110, 108, 109, 111],
+            "low": [95, 100, 98, 99, 101],
+            "close": [100, 105, 103, 104, 106],
+            "volume": [1000, 1000, 1000, 1000, 1000],
+            # Stop moves up from 90 to 104, but price stays above
+            "trailing_stop": [90, 95, 100, 104, 104],
+        },
+        index=index,
+    )
+
+    # Entry on bar 1
+    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+
+    initial_capital = 1000.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        dynamic_stop_column="trailing_stop",
+    )
+
+    # Entry at bar 2: open=$105
+    # Bar 3: open=$103, stop=$100 → 103 > 100 (no exit)
+    # Bar 4: open=$104, stop=$104 → 104 >= 104 (no exit, not below)
+    # Bar 5: open=$106, stop=$104 → 106 > 104 (no exit)
+    # Should be force-closed at end
+
+    assert len(trades) == 1
+    trade = trades[0]
+
+    # Should not exit early from dynamic stop
+    assert trade["exit_reason"] == "force_close"
+    assert trade["exit_date"] == index[-1]
+
+
+def test_dynamic_stop_already_below() -> None:
+    """
+    Bug Fix Test #6: Don't re-exit if already below stop.
+
+    If we're already below the stop on a previous bar (shouldn't happen in
+    normal operation, but edge case), don't trigger another exit.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 105, 98, 96, 97],
+            "high": [105, 110, 103, 101, 102],
+            "low": [95, 100, 93, 91, 92],
+            "close": [100, 105, 98, 96, 97],
+            "volume": [1000, 1000, 1000, 1000, 1000],
+            # Stop at 99 for multiple bars
+            "trailing_stop": [90, 95, 99, 99, 99],
+        },
+        index=index,
+    )
+
+    # Entry on bar 1
+    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+
+    initial_capital = 1000.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        dynamic_stop_column="trailing_stop",
+    )
+
+    # Entry at bar 2: open=$105
+    # Bar 2: open=$98 < stop=$99, prev_close=$105 >= prev_stop=$95 → CROSS → EXIT
+    # Bar 3: open=$96 < stop=$99, but we already exited (shares=0)
+    # Should have only 1 trade
+
+    assert len(trades) == 1
+    trade = trades[0]
+
+    # Exit should happen at bar 2 (first cross)
+    assert trade["exit_date"] == index[2]
+    assert trade["exit_price"] == 98.0
+
+
+def test_dynamic_stop_first_bar() -> None:
+    """
+    Bug Fix Test #6: First bar with position should use simple comparison.
+
+    On the first bar we're in position, we don't have a previous bar to
+    compare, so just use simple price < stop check.
+    """
+    index = pd.date_range("2020-01-01", periods=3, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 95, 100],
+            "high": [105, 100, 105],
+            "low": [95, 90, 95],
+            "close": [100, 95, 100],
+            "volume": [1000, 1000, 1000],
+            "trailing_stop": [90, 96, 96],  # Stop above price on bar 1
+        },
+        index=index,
+    )
+
+    # Entry on bar 0 (will fill at bar 1)
+    entry_signal = pd.Series([True, False, False], index=index)
+    exit_signal = pd.Series([False, False, False], index=index)
+
+    initial_capital = 1000.0
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal,
+        exit_signal,
+        initial_capital=initial_capital,
+        asset_class="STOCK",
+        dynamic_stop_column="trailing_stop",
+    )
+
+    # Entry at bar 1: open=$95
+    # Bar 1: First bar in position, open=$95 < stop=$96 → EXIT (simple check)
+    # Should exit immediately
+
+    assert len(trades) == 1
+    trade = trades[0]
+
+    # Entry and exit on same bar (bar 1)
+    assert trade["entry_date"] == index[1]
+    assert trade["exit_date"] == index[1]
+    assert trade["entry_price"] == 95.0
+    assert trade["exit_price"] == 95.0
+
