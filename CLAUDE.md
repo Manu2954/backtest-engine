@@ -30,6 +30,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Commit changes to the branch
 - When ready, the branch can be merged to master via PR or direct merge
 
+### Pull Request Guidelines
+
+- **ALWAYS provide PR title and description after committing all changes**
+- User will create the PR, but you must provide the content
+- PR title should be concise and descriptive (same style as commit messages)
+- PR description should include:
+  - Summary of changes
+  - Why the changes were made
+  - What was tested
+  - Any breaking changes or important notes
+- Format PR description as markdown
+- Example:
+  ```
+  ## PR Title
+  feat: add LOOKBACK operand type for historical comparisons
+
+  ## PR Description
+
+  ### Summary
+  Implements lookback comparisons to enable checking if indicators are rising/falling.
+
+  ### Changes
+  - Added LOOKBACK operand type with format "column:offset"
+  - 14 comprehensive unit tests
+  - Demo script showing usage examples
+
+  ### Testing
+  All tests passing ✅
+  ```
+
 ### Development Priorities
 
 - **UI is currently the least priority** - Do not make any changes to the frontend (`frontend/` directory) unless explicitly requested
