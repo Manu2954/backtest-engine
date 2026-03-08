@@ -204,7 +204,17 @@ def generate_report(
     win_rate = _safe_div(len(wins), total_trades) * 100 if total_trades else 0.0
     avg_win = sum(wins) / len(wins) if wins else 0.0
     avg_loss = sum(losses) / len(losses) if losses else 0.0
-    avg_win_loss = _safe_div(avg_win, abs(avg_loss)) if avg_loss != 0 else 0.0
+
+    # Calculate avg_win_loss ratio
+    if avg_loss != 0:
+        avg_win_loss = _safe_div(avg_win, abs(avg_loss))
+    elif avg_win > 0:
+        # No losses but have wins - perfect strategy (infinite ratio)
+        avg_win_loss = float('inf')
+    else:
+        # No wins and no losses (no trades)
+        avg_win_loss = 0.0
+
     largest_win = max(wins) if wins else 0.0
     largest_loss = min(losses) if losses else 0.0
 

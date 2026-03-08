@@ -54,6 +54,9 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
     # Track all indicator column names for warmup detection
     indicator_columns = []
 
+    # Track seen aliases to prevent duplicates (Bug #8 fix)
+    seen_aliases = set()
+
     for indicator in indicators:
         indicator_type = indicator.get("indicator_type") or indicator.get("type")
         alias = indicator.get("alias")
@@ -63,6 +66,11 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             raise ValueError("Indicator type is required")
         if not alias:
             raise ValueError("Indicator alias is required")
+
+        # Check for duplicate alias
+        if alias in seen_aliases:
+            raise ValueError(f"Duplicate indicator alias: '{alias}'. Each indicator must have a unique alias.")
+        seen_aliases.add(alias)
 
         kind = str(indicator_type).upper()
         source = params.get("source", "close")

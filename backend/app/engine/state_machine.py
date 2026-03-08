@@ -458,8 +458,27 @@ def run_backtest(
 
                 dynamic_stop_value = float(row[dynamic_stop_column])
 
-                # Exit if price drops below dynamic stop level
+                # Exit only on crossover (price crosses below stop)
+                should_exit = False
                 if not pd.isna(dynamic_stop_value) and current_price < dynamic_stop_value:
+                    # Check if this is a genuine cross-below
+                    if i == 0:
+                        # First bar - use simple comparison
+                        should_exit = True
+                    else:
+                        # Check previous bar's relationship
+                        prev_close = float(df.iloc[i - 1]["close"])
+                        prev_stop = float(df.iloc[i - 1][dynamic_stop_column])
+
+                        if pd.isna(prev_stop):
+                            # No previous stop value - treat as first trigger
+                            should_exit = True
+                        elif prev_close >= prev_stop:
+                            # Was above stop on previous bar, now below - genuine cross
+                            should_exit = True
+                        # else: Already below stop on previous bar - don't re-exit
+
+                if should_exit:
                     # Apply slippage to exit price (receive less)
                     execution_price = _apply_slippage(current_price, slippage_pct, is_entry=False)
 
