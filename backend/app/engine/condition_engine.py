@@ -100,7 +100,6 @@ def _apply_operator(
         prev = (left.shift(1) > right.shift(1))
         now = (left < right)
         result = prev & now
-        result = prev & now
 
     if len(result) > 0:
         result.iloc[0] = False

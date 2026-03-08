@@ -128,6 +128,13 @@ def test_crosses_above() -> None:
 
 
 def test_crosses_below() -> None:
+    """
+    Test CROSSES_BELOW operator.
+
+    Bug Fix #9: Removed duplicate line in condition_engine.py that was
+    redundantly computing result = prev & now twice. This test verifies
+    CROSSES_BELOW still works correctly after the cleanup.
+    """
     df = make_df()
     group = {
         "logic": "AND",
