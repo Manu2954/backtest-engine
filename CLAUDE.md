@@ -8,10 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Git Commit Guidelines
 
-- Commits should be concise, clear, and one-liner
+- **Commit messages must be concise, clear, and ONE-LINER only**
+- Never use multi-line commit messages with detailed descriptions
+- Keep the entire commit message under 100 characters when possible
 - Make a commit for every significant change, feature implementation, or improvement
 - Do not bundle multiple unrelated changes into a single commit
 - Use conventional commit format: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, etc.
+- Examples:
+  - ✅ GOOD: `feat: add LOOKBACK operand type for historical comparisons`
+  - ✅ GOOD: `fix: prevent negative cash in commission calculation`
+  - ❌ BAD: Multi-paragraph commit message with bullet points and detailed explanations
 
 ### Git Branching Workflow
 
