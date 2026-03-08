@@ -313,6 +313,25 @@ async def fetch_ohlcv_async(
     asset_class: str = "STOCK",
     session: AsyncSession | None = None,
 ) -> pd.DataFrame:
+    """
+    Fetch OHLCV data from cache, database, or external API.
+
+    Bug Fix #10: Added gap detection for cached database data.
+    Previously, only checked if min/max dates covered the range, which could
+    return incomplete data (e.g., Jan 1-5 and Jan 25-31 would pass for Jan 1-31).
+    Now checks data completeness using bar count heuristics before serving from cache.
+
+    Args:
+        ticker: Stock/crypto ticker symbol
+        start: Start date
+        end: End date
+        resolution: Time resolution (e.g., "1d", "1h")
+        asset_class: "STOCK" or "CRYPTO"
+        session: Optional database session
+
+    Returns:
+        DataFrame with OHLCV data
+    """
     asset = asset_class.upper()
     resolution = resolution.lower()
     if asset == "STOCK" and resolution not in STOCK_RESOLUTIONS:
@@ -348,12 +367,29 @@ async def fetch_ohlcv_async(
     try:
         db_df = await _load_db_ohlcv(session, ticker, asset, resolution, start_date, end_date)
         if not db_df.empty:
-            if (
-                db_df.index.min().date() <= start_date
-                and db_df.index.max().date() >= end_date
-            ):
-                store_cache(key, db_df, settings.ohlcv_cache_ttl_seconds)
-                return db_df
+            covers_start = db_df.index.min().date() <= start_date
+            covers_end = db_df.index.max().date() >= end_date
+
+            if covers_start and covers_end:
+                # Check for data completeness (rough heuristic to detect gaps)
+                # For daily data, expect ~70% coverage (accounting for weekends)
+                # For intraday, this check is less reliable, so we're more lenient
+                expected_days = (end_date - start_date).days
+                actual_bars = len(db_df)
+
+                # Daily data should have at least 60% coverage (5/7 days minus holidays)
+                # Intraday can vary greatly, so we use a lower threshold
+                if resolution == "1d":
+                    min_expected_bars = expected_days * 0.6
+                else:
+                    # For intraday, just check we have some reasonable amount of data
+                    # Don't enforce strict coverage due to market hours variation
+                    min_expected_bars = 1
+
+                if actual_bars >= min_expected_bars:
+                    store_cache(key, db_df, settings.ohlcv_cache_ttl_seconds)
+                    return db_df
+                # else: fall through to re-fetch (likely has gaps)
 
         if asset == "STOCK" and resolution in STOCK_INTRADAY_RESOLUTIONS:
             max_days = 60
