@@ -9,13 +9,66 @@ The Backtest Engine is designed to help traders and investors test their technic
 ### Key Features
 
 - **Visual Strategy Builder**: Create trading strategies using technical indicators with a user-friendly interface
-- **Flexible Indicator Support**: Support for multiple technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, etc.) via pandas-ta
-- **Conditional Logic**: Define entry and exit conditions with complex logic (AND/OR)
+- **Flexible Indicator Support**: Support for multiple technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, ATR, Stochastic, ADX, Ichimoku Cloud) via pandas-ta
+- **Advanced Conditional Logic**: Define entry and exit conditions with complex logic (AND/OR)
+- **Historical Comparisons (V2)**: Compare current values to historical values (lookback comparisons) for trend detection
 - **Asynchronous Backtesting**: Run backtests as background jobs using Celery
 - **Historical Data**: Fetch and cache OHLCV (Open, High, Low, Close, Volume) data from Yahoo Finance
 - **Performance Analytics**: Generate comprehensive reports with equity curves, trade logs, and key metrics
 - **Periodic Contributions**: Test dollar-cost averaging strategies with configurable contribution schedules
-- **Asset Class Support**: Handle both stocks (integer shares) and fractional assets
+- **Asset Class Support**: Handle both stocks (integer shares) and fractional assets (crypto)
+- **Dynamic Stop Loss**: Trailing stops based on indicators (e.g., ATR, Kijun-sen)
+- **Risk Management**: Commission modeling, slippage simulation, stop loss, and take profit
+
+## Recent Improvements (March 2026)
+
+### Critical Bug Fixes
+All 10 critical, high, and medium priority bugs have been fixed:
+
+✅ **Fixed Cash Management Issues:**
+- Zero-share entries no longer deduct commission
+- Commission affordability validated before entry
+- Exit commission cannot cause negative cash
+- Pending entries on last bar now properly filled
+
+✅ **Fixed Condition Validation:**
+- Zero and falsy values now accepted in conditions (e.g., "close > 0")
+- Proper None checking instead of truthiness
+
+✅ **Fixed Strategy Execution:**
+- Dynamic stop now uses crossover detection (not simple comparison)
+- Perfect strategies show infinite win/loss ratio (not 0.0)
+- Duplicate indicator aliases are rejected with clear errors
+
+✅ **Data Quality Improvements:**
+- Database cache checks for data gaps
+- Removed duplicate code lines
+
+### New Features (V2)
+
+🚀 **LOOKBACK Comparisons** (March 2026)
+- Compare current values to historical values (N bars ago)
+- Enable trend detection for any indicator or price data
+- Format: `"column:offset"` (e.g., `"adx:-3"`, `"close:-26"`)
+
+**Use Cases:**
+```json
+// Check if ADX is rising over 3 bars
+{"left": "adx", "operator": "GT", "right_type": "LOOKBACK", "right": "adx:-3"}
+
+// Ichimoku Chikou validation (close > close from 26 bars ago)
+{"left": "close", "operator": "GT", "right_type": "LOOKBACK", "right": "close:-26"}
+
+// Price momentum (10-bar uptrend)
+{"left": "close", "operator": "GT", "right_type": "LOOKBACK", "right": "close:-10"}
+```
+
+This enables:
+- ADX rising/falling detection
+- RSI momentum trends
+- Ichimoku Chikou span validation
+- Price momentum analysis
+- Any indicator trend detection
 
 ## Architecture
 
@@ -129,17 +182,61 @@ backtest-engine/
 1. **Indicators**: Define technical indicators with parameters (e.g., SMA with period=20)
 2. **Conditions**: Create entry and exit conditions comparing indicators or prices
 3. **Logic**: Combine multiple conditions with AND/OR logic
+4. **Historical Comparisons**: Use LOOKBACK to compare current values to past values
 
 Example Strategy:
 ```
 Entry Conditions (ALL must be true):
   - Close > SMA_20
   - RSI < 30
+  - ADX > ADX from 3 bars ago (rising trend strength)
 
 Exit Conditions (ANY must be true):
   - Close < SMA_20
   - RSI > 70
 ```
+
+### Supported Operators
+
+**Comparison Operators:**
+- `GT` - Greater than
+- `LT` - Less than
+- `EQ` - Equal to
+- `GTE` - Greater than or equal
+- `LTE` - Less than or equal
+
+**Crossover Operators:**
+- `CROSSES_ABOVE` - Detects when left crosses above right
+- `CROSSES_BELOW` - Detects when left crosses below right
+
+**Trend Operators:**
+- `IS_RISING` - True when value > previous value
+- `IS_FALLING` - True when value < previous value
+
+### Supported Operand Types
+
+**INDICATOR**: Reference to computed indicator column
+```json
+{"operand_type": "INDICATOR", "operand_value": "rsi_14"}
+```
+
+**OHLCV**: Reference to price/volume data
+```json
+{"operand_type": "OHLCV", "operand_value": "close"}
+```
+
+**SCALAR**: Constant numeric value
+```json
+{"operand_type": "SCALAR", "operand_value": "50"}
+```
+
+**LOOKBACK** (V2): Reference to historical value
+```json
+{"operand_type": "LOOKBACK", "operand_value": "adx:-3"}
+```
+- Format: `"column:offset"`
+- Negative offset = lookback (e.g., `-3` = 3 bars ago)
+- Works with any column (indicators, OHLCV)
 
 ### Backtest Execution
 
@@ -171,7 +268,21 @@ The `state_machine.py` implements the backtest execution:
 - **Pending Exit**: Exit signal detected, fill at next bar's open
 - **Mark-to-Market**: Equity calculated at each bar's close
 - **Periodic Contributions**: Cash added at configured intervals
+- **Dynamic Stop Loss**: Trailing stop based on indicator values
 - **Force Close**: Open positions closed at last bar
+- **Commission & Slippage**: Realistic transaction costs
+- **Cash Invariant**: Cash never goes negative (validated at all steps)
+
+### Supported Indicators
+
+Via pandas-ta library:
+- **Moving Averages**: SMA, EMA
+- **Momentum Oscillators**: RSI, Stochastic
+- **Trend Indicators**: MACD, ADX (with +DI/-DI)
+- **Volatility**: Bollinger Bands, ATR
+- **Multi-Component**: Ichimoku Cloud (Tenkan, Kijun, Span A/B, Chikou)
+
+All indicators support custom parameters and can be used with any operator.
 
 ## Getting Started
 
@@ -289,6 +400,11 @@ pytest tests/integration/
 python scripts/m1_smoke.py
 python scripts/m2_smoke.py
 python scripts/m3_smoke.py
+python scripts/m4_smoke.py
+python scripts/m5_smoke.py
+
+# Run LOOKBACK feature demo
+python scripts/demo_lookback.py
 ```
 
 ## Database Schema
@@ -313,16 +429,65 @@ The system calculates comprehensive performance statistics:
 - **Maximum Drawdown**: Largest peak-to-trough decline
 - **Average Trade Duration**: Mean holding period
 - **Trade Statistics**: Win/loss breakdown, P&L distribution
+- **Average Win/Loss Ratio**: Now correctly shows infinity for perfect strategies (no losses)
+
+## Quality & Reliability
+
+### Test Coverage
+- **Unit Tests**: 130+ tests covering all engine modules
+- **Integration Tests**: End-to-end API and database tests
+- **Smoke Tests**: Milestone validation scripts for critical features
+- **Bug Fixes**: All 10 identified bugs fixed with comprehensive test coverage
+
+### Code Quality
+- Robust error handling with clear error messages
+- Comprehensive validation at all entry/exit points
+- Cash invariant maintained (no negative cash possible)
+- NaN handling for indicator warmup periods
+- Gap detection for cached data
+
+## Roadmap
+
+### Completed (V1)
+✅ Core backtesting engine with realistic fills
+✅ 9 technical indicators (SMA, EMA, RSI, MACD, BB, ATR, STOCH, ADX, Ichimoku)
+✅ Condition engine with 9 operators
+✅ Dynamic stop loss (indicator-based trailing stops)
+✅ Commission and slippage modeling
+✅ Periodic contributions (DCA strategies)
+✅ Comprehensive performance metrics
+✅ All critical bugs fixed
+✅ LOOKBACK comparisons for trend detection
+
+### In Progress (V2)
+- 🔄 Additional indicators (ROC, OBV)
+- 🔄 Risk-based position sizing
+- 🔄 AND logic for exit conditions
+- 🔄 Pattern recognition (divergence detection)
+
+### Planned (V2+)
+- Portfolio-level backtesting (multiple tickers)
+- Short selling support
+- Parameter optimization/scanning
+- Walk-forward analysis
+- Multiple data providers
+- Custom indicator formulas
+- Multi-timeframe analysis
+
+For detailed limitations and V2 roadmap, see `docs/V1_LIMITATIONS.txt`
 
 ## Contributing
 
 Contributions are welcome! Please follow these guidelines:
 
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch (`feature/feature-name` or `bugfix/bug-description`)
 3. Write tests for new functionality
 4. Ensure all tests pass
-5. Submit a pull request
+5. Keep commit messages concise and single-line
+6. Submit a pull request with clear title and description
+
+See `CLAUDE.md` for detailed development guidelines.
 
 ## License
 
