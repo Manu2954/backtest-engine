@@ -20,33 +20,9 @@ The Backtest Engine is designed to help traders and investors test their technic
 - **Dynamic Stop Loss**: Trailing stops based on indicators (e.g., ATR, Kijun-sen)
 - **Risk Management**: Commission modeling, slippage simulation, stop loss, and take profit
 
-## Recent Improvements (March 2026)
+### V2 Features
 
-### Critical Bug Fixes
-All 10 critical, high, and medium priority bugs have been fixed:
-
-✅ **Fixed Cash Management Issues:**
-- Zero-share entries no longer deduct commission
-- Commission affordability validated before entry
-- Exit commission cannot cause negative cash
-- Pending entries on last bar now properly filled
-
-✅ **Fixed Condition Validation:**
-- Zero and falsy values now accepted in conditions (e.g., "close > 0")
-- Proper None checking instead of truthiness
-
-✅ **Fixed Strategy Execution:**
-- Dynamic stop now uses crossover detection (not simple comparison)
-- Perfect strategies show infinite win/loss ratio (not 0.0)
-- Duplicate indicator aliases are rejected with clear errors
-
-✅ **Data Quality Improvements:**
-- Database cache checks for data gaps
-- Removed duplicate code lines
-
-### New Features (V2)
-
-🚀 **LOOKBACK Comparisons** (March 2026)
+🚀 **LOOKBACK Comparisons**
 - Compare current values to historical values (N bars ago)
 - Enable trend detection for any indicator or price data
 - Format: `"column:offset"` (e.g., `"adx:-3"`, `"close:-26"`)
@@ -429,7 +405,6 @@ The system calculates comprehensive performance statistics:
 - **Maximum Drawdown**: Largest peak-to-trough decline
 - **Average Trade Duration**: Mean holding period
 - **Trade Statistics**: Win/loss breakdown, P&L distribution
-- **Average Win/Loss Ratio**: Now correctly shows infinity for perfect strategies (no losses)
 
 ## Quality & Reliability
 
@@ -437,7 +412,6 @@ The system calculates comprehensive performance statistics:
 - **Unit Tests**: 130+ tests covering all engine modules
 - **Integration Tests**: End-to-end API and database tests
 - **Smoke Tests**: Milestone validation scripts for critical features
-- **Bug Fixes**: All 10 identified bugs fixed with comprehensive test coverage
 
 ### Code Quality
 - Robust error handling with clear error messages
@@ -456,7 +430,8 @@ The system calculates comprehensive performance statistics:
 ✅ Commission and slippage modeling
 ✅ Periodic contributions (DCA strategies)
 ✅ Comprehensive performance metrics
-✅ All critical bugs fixed
+
+### Completed (V2)
 ✅ LOOKBACK comparisons for trend detection
 
 ### In Progress (V2)
