@@ -16,7 +16,105 @@ OPERATORS = {
     "IS_FALLING",
 }
 
-OPERAND_TYPES = {"INDICATOR", "OHLCV", "SCALAR"}
+OPERAND_TYPES = {"INDICATOR", "OHLCV", "SCALAR", "LOOKBACK"}
+
+
+def _parse_lookback(value: str) -> tuple[str, int]:
+    """
+    Parse LOOKBACK operand format: "column:offset"
+
+    Args:
+        value: String in format "column:offset" (e.g., "adx:-3", "close:-26")
+
+    Returns:
+        Tuple of (column_name, offset)
+
+    Examples:
+        "adx:-3" -> ("adx", -3)  # 3 bars ago
+        "close:-26" -> ("close", -26)  # 26 bars ago
+        "span_a:+26" -> ("span_a", 26)  # 26 bars ahead (future)
+
+    Raises:
+        ValueError: If format is invalid
+    """
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise ValueError(
+            f"Invalid LOOKBACK format: '{value}'. "
+            f"Expected 'column:offset' (e.g., 'adx:-3' for 3 bars ago)"
+        )
+
+    column_name = parts[0].strip()
+    offset_str = parts[1].strip()
+
+    if not column_name:
+        raise ValueError(f"Invalid LOOKBACK format: '{value}'. Column name cannot be empty")
+
+    try:
+        offset = int(offset_str)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid offset in LOOKBACK: '{offset_str}'. Must be an integer"
+        ) from exc
+
+    # Validate offset bounds (prevent extreme values that might cause issues)
+    if abs(offset) > 1000:
+        raise ValueError(
+            f"Invalid offset in LOOKBACK: {offset}. "
+            f"Offset must be between -1000 and +1000"
+        )
+
+    return column_name, offset
+
+
+def _get_lookback_series(df: pd.DataFrame, value: str) -> pd.Series:
+    """
+    Get a Series shifted by the specified offset.
+
+    Args:
+        df: DataFrame containing the data
+        value: LOOKBACK format string "column:offset"
+
+    Returns:
+        Shifted Series
+
+    Notes:
+        - Negative offset (e.g., -3) means look back 3 bars (shift forward in time)
+        - Positive offset (e.g., +3) means look ahead 3 bars (shift backward in time)
+        - Pandas shift() convention: shift(1) moves data DOWN (forward in time)
+        - So we use shift(-offset) to convert our offset to pandas convention
+
+    Examples:
+        If df has index [0, 1, 2, 3, 4] and column "value" = [10, 20, 30, 40, 50]:
+
+        value="value:-1" (1 bar ago):
+            shift(-(-1)) = shift(1) = [NaN, 10, 20, 30, 40]
+            At index 2, lookback value is 20 (value from index 1)
+
+        value="value:-3" (3 bars ago):
+            shift(-(-3)) = shift(3) = [NaN, NaN, NaN, 10, 20]
+            At index 4, lookback value is 20 (value from index 1)
+    """
+    column_name, offset = _parse_lookback(value)
+
+    # Check if column exists
+    if column_name not in df.columns:
+        raise ValueError(
+            f"Column not found in LOOKBACK: '{column_name}'. "
+            f"Available columns: {', '.join(df.columns[:10])}..."
+            if len(df.columns) > 10
+            else f"Available columns: {', '.join(df.columns)}"
+        )
+
+    # Get the series
+    series = df[column_name]
+
+    # Shift by negative offset to get lookback
+    # offset=-3 means "3 bars ago" -> shift(3) moves data down
+    shifted = series.shift(-offset)
+
+    # Ensure numeric for comparison
+    return pd.to_numeric(shifted, errors="coerce")
 
 
 def _get_operand_series(df: pd.DataFrame, operand_type: str, value: str) -> pd.Series:
@@ -49,6 +147,9 @@ def _get_operand(
             return float(value)
         except ValueError as exc:
             raise ValueError(f"Invalid scalar value: {value}") from exc
+
+    if kind == "LOOKBACK":
+        return _get_lookback_series(df, value)
 
     return _get_operand_series(df, kind, value)
 
@@ -115,20 +216,37 @@ def evaluate_conditions(df: pd.DataFrame, condition_group: dict[str, Any]) -> pd
         "logic": "AND"|"OR",
         "conditions": [
            {
-             "left_operand_type": "INDICATOR"|"OHLCV"|"SCALAR",
-             "left_operand_value": "rsi_14"|"close"|"42",
+             "left_operand_type": "INDICATOR"|"OHLCV"|"SCALAR"|"LOOKBACK",
+             "left_operand_value": "rsi_14"|"close"|"42"|"adx:-3",
              "operator": "CROSSES_ABOVE"|"CROSSES_BELOW"|"GT"|"LT"|"EQ"|"GTE"|"LTE"|"IS_RISING"|"IS_FALLING",
-             "right_operand_type": "INDICATOR"|"OHLCV"|"SCALAR",
-             "right_operand_value": "ema_20"|"close"|"70",
+             "right_operand_type": "INDICATOR"|"OHLCV"|"SCALAR"|"LOOKBACK",
+             "right_operand_value": "ema_20"|"close"|"70"|"close:-26",
            },
         ]
       }
+
+    Operand Types:
+      - INDICATOR: Reference to a computed indicator column (e.g., "rsi_14", "sma_20")
+      - OHLCV: Reference to OHLCV data column (e.g., "open", "high", "low", "close", "volume")
+      - SCALAR: Constant numeric value (e.g., "50", "0.5", "-10")
+      - LOOKBACK: Reference to a column value N bars ago (e.g., "adx:-3", "close:-26")
+        Format: "column:offset" where offset is negative for lookback, positive for lookahead
 
     Operators:
       - GT, LT, EQ, GTE, LTE: Comparison operators (work with any operands)
       - CROSSES_ABOVE, CROSSES_BELOW: Detect crossovers (require two Series operands)
       - IS_RISING: True when left operand > previous value (requires Series, right operand ignored)
       - IS_FALLING: True when left operand < previous value (requires Series, right operand ignored)
+
+    LOOKBACK Examples:
+      - Check if ADX is rising over 3 bars:
+        {"left": "adx", "operator": "GT", "right_type": "LOOKBACK", "right": "adx:-3"}
+
+      - Check if price is above price from 26 bars ago (Ichimoku Chikou validation):
+        {"left": "close", "operator": "GT", "right_type": "LOOKBACK", "right": "close:-26"}
+
+      - Check if RSI crossed above its value from 5 bars ago:
+        {"left": "rsi", "operator": "CROSSES_ABOVE", "right_type": "LOOKBACK", "right": "rsi:-5"}
     """
     if df.empty:
         return pd.Series([], dtype=bool, index=df.index)

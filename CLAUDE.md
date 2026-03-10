@@ -8,10 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Git Commit Guidelines
 
-- Commits should be concise, clear, and one-liner
+- **Commit messages must be concise, clear, and ONE-LINER only**
+- Never use multi-line commit messages with detailed descriptions
+- Keep the entire commit message under 100 characters when possible
 - Make a commit for every significant change, feature implementation, or improvement
 - Do not bundle multiple unrelated changes into a single commit
 - Use conventional commit format: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, etc.
+- Examples:
+  - ✅ GOOD: `feat: add LOOKBACK operand type for historical comparisons`
+  - ✅ GOOD: `fix: prevent negative cash in commission calculation`
+  - ❌ BAD: Multi-paragraph commit message with bullet points and detailed explanations
 
 ### Git Branching Workflow
 
@@ -23,6 +29,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Create a branch before making changes: `git checkout -b bugfix/description`
 - Commit changes to the branch
 - When ready, the branch can be merged to master via PR or direct merge
+
+### Pull Request Guidelines
+
+- **ALWAYS provide PR title and description after committing all changes**
+- User will create the PR, but you must provide the content
+- PR title should be concise and descriptive (same style as commit messages)
+- PR description should include:
+  - Summary of changes
+  - Why the changes were made
+  - What was tested
+  - Any breaking changes or important notes
+- Format PR description as markdown
+- Example:
+  ```
+  ## PR Title
+  feat: add LOOKBACK operand type for historical comparisons
+
+  ## PR Description
+
+  ### Summary
+  Implements lookback comparisons to enable checking if indicators are rising/falling.
+
+  ### Changes
+  - Added LOOKBACK operand type with format "column:offset"
+  - 14 comprehensive unit tests
+  - Demo script showing usage examples
+
+  ### Testing
+  All tests passing ✅
+  ```
 
 ### Development Priorities
 
