@@ -247,3 +247,38 @@ def test_unique_aliases_allowed() -> None:
 
     # Values should be different (different periods)
     assert not out["rsi_14"].equals(out["rsi_20"])
+
+
+def test_roc() -> None:
+    """Test ROC (Rate of Change) indicator."""
+    df = make_df()
+    out = compute_indicators(
+        df,
+        [
+            {
+                "indicator_type": "ROC",
+                "alias": "roc_10",
+                "params": {"period": 10, "source": "close"},
+            }
+        ],
+    )
+    assert "roc_10" in out.columns
+    assert_no_recent_nans(out["roc_10"])
+
+
+def test_obv() -> None:
+    """Test OBV (On-Balance Volume) indicator."""
+    df = make_df()
+    out = compute_indicators(
+        df,
+        [
+            {
+                "indicator_type": "OBV",
+                "alias": "obv",
+                "params": {},  # OBV doesn't need parameters
+            }
+        ],
+    )
+    assert "obv" in out.columns
+    # OBV is cumulative, so should not have NaNs
+    assert out["obv"].isna().sum() == 0
