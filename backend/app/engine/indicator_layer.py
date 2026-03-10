@@ -197,6 +197,17 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
                 f"{alias}_span_b",
                 f"{alias}_chikou",
             ])
+        elif kind == "ROC":
+            # Rate of Change: (price - price[n]) / price[n] * 100
+            period = int(_require_param(params, "period"))
+            series = _get_series(df_out, source)
+            df_out[alias] = ta.roc(series, length=period)
+            indicator_columns.append(alias)
+        elif kind == "OBV":
+            # On-Balance Volume: cumulative volume based on price direction
+            # OBV doesn't use a period parameter
+            df_out[alias] = ta.obv(df_out["close"], df_out["volume"])
+            indicator_columns.append(alias)
         else:
             raise ValueError(f"Unsupported indicator type: {indicator_type}")
 
