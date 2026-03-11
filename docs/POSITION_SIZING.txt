@@ -1,0 +1,427 @@
+# Position Sizing Methods
+
+This document explains all available position sizing methods in the backtest engine.
+
+## Overview
+
+Position sizing determines how many shares to buy when an entry signal triggers. The engine supports four methods, each with different risk/capital management characteristics.
+
+## Available Methods
+
+### 1. Full Capital (`full_capital`)
+
+**Description:** Uses all available cash for each trade.
+
+**Use Case:** Maximum exposure, single-position strategies.
+
+**Parameters:**
+- `position_size_type`: "full_capital"
+- `position_size_value`: Ignored (any value)
+
+**Example:**
+```python
+run_backtest(
+    df=df,
+    entry_signal=entry_signal,
+    exit_signal=exit_signal,
+    initial_capital=10000,
+    position_size_type="full_capital",
+    position_size_value=100.0,  # Ignored
+)
+```
+
+**Calculation:**
+```
+shares = available_cash / entry_price
+```
+
+**Example Trade:**
+```
+Capital: $10,000
+Entry price: $50
+Shares: $10,000 / $50 = 200 shares
+Position value: $10,000 (100% of capital)
+```
+
+**Pros:**
+- Simple
+- Maximum capital utilization
+- Good for single-position strategies
+
+**Cons:**
+- No diversification
+- High risk (all eggs in one basket)
+- Cannot scale positions
+
+
+### 2. Percent Capital (`percent_capital`)
+
+**Description:** Invests a fixed percentage of total capital per trade.
+
+**Use Case:** Diversification, managing multiple positions, controlled exposure.
+
+**Parameters:**
+- `position_size_type`: "percent_capital"
+- `position_size_value`: Percentage of capital (1-100)
+
+**Example:**
+```python
+run_backtest(
+    df=df,
+    entry_signal=entry_signal,
+    exit_signal=exit_signal,
+    initial_capital=10000,
+    position_size_type="percent_capital",
+    position_size_value=25.0,  # 25% of capital
+)
+```
+
+**Calculation:**
+```
+target_amount = total_capital × (percentage / 100)
+actual_amount = min(target_amount, available_cash)
+shares = actual_amount / entry_price
+```
+
+**Example Trade:**
+```
+Capital: $10,000
+Percentage: 25%
+Entry price: $50
+
+Target investment: $10,000 × 0.25 = $2,500
+Shares: $2,500 / $50 = 50 shares
+Position value: $2,500 (25% of capital)
+```
+
+**Pros:**
+- Enables diversification
+- Scales with account growth
+- Predictable capital allocation
+
+**Cons:**
+- Risk varies with stop distance
+- Fixed exposure regardless of volatility
+
+
+### 3. Fixed Amount (`fixed_amount`)
+
+**Description:** Invests a fixed dollar amount per trade.
+
+**Use Case:** Consistent position sizes, equal weighting across trades.
+
+**Parameters:**
+- `position_size_type`: "fixed_amount"
+- `position_size_value`: Dollar amount to invest
+
+**Example:**
+```python
+run_backtest(
+    df=df,
+    entry_signal=entry_signal,
+    exit_signal=exit_signal,
+    initial_capital=10000,
+    position_size_type="fixed_amount",
+    position_size_value=2000.0,  # Always invest $2,000
+)
+```
+
+**Calculation:**
+```
+target_amount = position_size_value
+actual_amount = min(target_amount, available_cash)
+shares = actual_amount / entry_price
+```
+
+**Example Trade:**
+```
+Capital: $10,000
+Fixed amount: $2,000
+Entry price: $50
+
+Investment: $2,000
+Shares: $2,000 / $50 = 40 shares
+Position value: $2,000
+```
+
+**Pros:**
+- Simple and predictable
+- Equal weighting across trades
+- Good for comparing strategies
+
+**Cons:**
+- Doesn't scale with account size
+- Risk still varies with stop distance
+- May become too large or small as account grows
+
+
+### 4. Risk-Based (`risk_based`)
+
+**Description:** Calculates shares based on risk percentage and stop distance to maintain consistent dollar risk per trade.
+
+**Use Case:** Professional risk management, consistent risk exposure, volatility-adaptive position sizing.
+
+**Parameters:**
+- `position_size_type`: "risk_based"
+- `position_size_value`: Risk percentage (0.1-10.0)
+- **Requires:** Either `stop_loss_pct` OR `dynamic_stop_column`
+
+**Example with Percentage Stop:**
+```python
+run_backtest(
+    df=df,
+    entry_signal=entry_signal,
+    exit_signal=exit_signal,
+    initial_capital=10000,
+    position_size_type="risk_based",
+    position_size_value=1.0,  # Risk 1% per trade
+    stop_loss_pct=5.0,  # Stop at -5%
+)
+```
+
+**Example with Dynamic Stop:**
+```python
+# Create ATR-based trailing stop
+df["atr_stop"] = df["close"] - (2 * df["atr_14"])
+
+run_backtest(
+    df=df,
+    entry_signal=entry_signal,
+    exit_signal=exit_signal,
+    initial_capital=10000,
+    position_size_type="risk_based",
+    position_size_value=1.0,  # Risk 1% per trade
+    dynamic_stop_column="atr_stop",  # ATR trailing stop
+)
+```
+
+**Calculation:**
+```
+risk_amount = total_capital × (risk_percent / 100)
+stop_distance = entry_price - stop_price
+shares = risk_amount / stop_distance
+
+# Capped by available cash:
+if shares × entry_price > available_cash:
+    shares = available_cash / entry_price
+```
+
+**Example Trades:**
+
+**Scenario 1: Tight Stop (Low Volatility)**
+```
+Capital: $10,000
+Risk: 1% = $100
+Entry: $50
+Stop: $48 (2% stop)
+Stop distance: $2
+
+Shares: $100 / $2 = 50 shares
+Position value: 50 × $50 = $2,500
+Actual risk: 50 × $2 = $100 ✓
+```
+
+**Scenario 2: Wide Stop (High Volatility)**
+```
+Capital: $10,000
+Risk: 1% = $100
+Entry: $50
+Stop: $45 (10% stop)
+Stop distance: $5
+
+Shares: $100 / $5 = 20 shares
+Position value: 20 × $50 = $1,000
+Actual risk: 20 × $5 = $100 ✓
+```
+
+**Key Insight:**
+- Tight stop → Larger position (50 shares, $2,500)
+- Wide stop → Smaller position (20 shares, $1,000)
+- **Risk is constant** ($100) across both scenarios
+
+**Pros:**
+- Consistent dollar risk per trade
+- Adapts to volatility automatically
+- Professional risk management
+- Position size scales inversely with stop distance
+- Protects capital in high-volatility conditions
+
+**Cons:**
+- More complex to understand
+- Requires stop loss configuration
+- Position sizes vary significantly
+- May result in very small positions with wide stops
+
+
+## Stop Loss Priority with Risk-Based Sizing
+
+When **both** `dynamic_stop_column` and `stop_loss_pct` are provided:
+
+**Position Sizing (Entry):**
+- Uses `dynamic_stop_column` if available and valid
+- Falls back to `stop_loss_pct` if dynamic stop is NaN
+
+**Exit Monitoring (While in Position):**
+- Checks `dynamic_stop_column` first
+- Then checks `stop_loss_pct` as safety net
+- **Both are active** (dynamic is primary, percentage is backup)
+
+**Recommended Setup:**
+```python
+run_backtest(
+    df=df,
+    entry_signal=entry_signal,
+    exit_signal=exit_signal,
+    initial_capital=10000,
+    position_size_type="risk_based",
+    position_size_value=1.0,
+    dynamic_stop_column="atr_stop",  # Smart trailing stop
+    stop_loss_pct=15.0,  # Catastrophic stop (disaster protection)
+)
+```
+
+This gives you:
+- Sophisticated ATR-based trailing stop (adapts to volatility)
+- Hard percentage stop as safety net (protects against gaps/failures)
+- Position sizing based on ATR distance
+
+
+## Comparison Table
+
+| Method | Position Size | Risk Per Trade | Scales with Account | Adapts to Volatility |
+|--------|--------------|----------------|---------------------|---------------------|
+| `full_capital` | 100% of cash | Varies (100% exposure) | No | No |
+| `percent_capital` | Fixed % of capital | Varies with stop distance | Yes | No |
+| `fixed_amount` | Fixed dollars | Varies with stop distance | No | No |
+| `risk_based` | Varies | **Fixed dollars** | Yes | **Yes** |
+
+
+## Risk-Based vs Percent Capital Example
+
+**Setup:**
+- Capital: $10,000
+- Two trades: low volatility (3% stop) vs high volatility (10% stop)
+
+**Percent Capital (25%):**
+```
+Trade 1 (3% stop):
+  Position: $2,500 (25% of $10k)
+  Shares: 50
+  Risk: 50 × ($50 × 0.03) = $75
+
+Trade 2 (10% stop):
+  Position: $2,500 (25% of $10k)
+  Shares: 50
+  Risk: 50 × ($50 × 0.10) = $250  ← Risk increased 3.3x!
+```
+
+**Risk-Based (1%):**
+```
+Trade 1 (3% stop):
+  Risk: $100 (1% of $10k)
+  Stop distance: $1.50
+  Shares: $100 / $1.50 = 66.67
+  Position: $3,333
+
+Trade 2 (10% stop):
+  Risk: $100 (1% of $10k)
+  Stop distance: $5.00
+  Shares: $100 / $5.00 = 20
+  Position: $1,000
+
+Both trades risk exactly $100 ✓
+```
+
+
+## Fractional Shares
+
+All position sizing methods respect the `asset_class` parameter:
+
+**Crypto (`asset_class="CRYPTO"`):**
+- Allows fractional shares (e.g., 16.67 shares)
+- Precise position sizing
+
+**Stocks (`asset_class="STOCK"`):**
+- Rounds down to whole shares (e.g., 16.67 → 16 shares)
+- Slightly less precise
+
+
+## Validation Rules
+
+**`full_capital`:**
+- No validation needed
+
+**`percent_capital`:**
+- `position_size_value` must be > 0 and ≤ 100
+
+**`fixed_amount`:**
+- `position_size_value` must be > 0
+
+**`risk_based`:**
+- `position_size_value` must be > 0 and ≤ 10 (0.1% to 10% risk)
+- Must have `stop_loss_pct` OR `dynamic_stop_column` configured
+- Raises error if neither stop method is provided
+
+
+## Best Practices
+
+### For Beginners:
+- Start with `percent_capital` at 10-25%
+- Use `stop_loss_pct` at 5-10%
+- Simple and predictable
+
+### For Intermediate:
+- Use `percent_capital` with `dynamic_stop_column`
+- Trailing stops for profit protection
+- Better risk/reward
+
+### For Advanced:
+- Use `risk_based` with `dynamic_stop_column`
+- Risk 0.5-2% per trade
+- Professional risk management
+- Consistent risk exposure across all market conditions
+
+
+## Common Mistakes
+
+### 1. Using `full_capital` with Multiple Signals
+```python
+# WRONG: Will over-leverage if signals overlap
+position_size_type="full_capital"
+```
+Use `percent_capital` instead for strategies that can have multiple signals.
+
+### 2. Using `fixed_amount` Without Scaling
+```python
+# WRONG: $2,000 is 20% of $10k, but 2% of $100k
+position_size_type="fixed_amount"
+position_size_value=2000.0
+```
+As account grows, fixed amounts become too small. Use `percent_capital` or `risk_based`.
+
+### 3. Risk-Based Without Stop Loss
+```python
+# ERROR: Will raise ValueError
+position_size_type="risk_based"
+position_size_value=1.0
+# Missing stop_loss_pct or dynamic_stop_column!
+```
+Risk-based sizing requires knowing the stop distance.
+
+### 4. High Risk Percentage
+```python
+# RISKY: 10% risk per trade is extremely aggressive
+position_size_type="risk_based"
+position_size_value=10.0
+```
+Professional traders typically risk 0.5-2% per trade. 10% is the maximum allowed.
+
+
+## Summary
+
+- **Simple strategies:** Use `percent_capital` (10-25%)
+- **Professional risk management:** Use `risk_based` (0.5-2% risk)
+- **Single position only:** Use `full_capital`
+- **Testing/comparison:** Use `fixed_amount`
+
+Risk-based sizing is recommended for strategies with varying stop distances (ATR stops, volatility-based stops, etc.) where you want consistent dollar risk per trade.

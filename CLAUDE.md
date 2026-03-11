@@ -72,6 +72,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **All documentation files should be placed in `docs/` folder** (e.g., `docs/BUG_SUMMARY.txt`, `docs/ANALYSIS.txt`)
 - Exception: Project root files like `README.md`, `CLAUDE.md` stay in root
 
+### Documentation Organization
+
+Feature-specific documentation is organized in `docs/`:
+- **POSITION_SIZING.txt** - Position sizing methods (full_capital, percent_capital, fixed_amount, risk_based)
+- **INDICATORS.txt** - All supported indicators with parameters and examples
+- **OPERATORS.txt** - Condition operators and operand types reference
+- **V1_LIMITATIONS.txt** - Known limitations and V2 roadmap
+
+When adding new features, update the relevant documentation file. If a feature is significant enough, create a new dedicated doc file.
+
 ## Project Overview
 
 This is a full-stack backtesting application for evaluating technical indicator-based trading strategies. The system uses FastAPI (backend), React/TypeScript (frontend), PostgreSQL (data store), Redis (caching/message broker), and Celery (async task processing).

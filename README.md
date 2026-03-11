@@ -9,9 +9,10 @@ The Backtest Engine is designed to help traders and investors test their technic
 ### Key Features
 
 - **Visual Strategy Builder**: Create trading strategies using technical indicators with a user-friendly interface
-- **Flexible Indicator Support**: Support for multiple technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, ATR, Stochastic, ADX, Ichimoku Cloud) via pandas-ta
+- **Flexible Indicator Support**: 11 technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, ATR, Stochastic, ADX, Ichimoku Cloud, ROC, OBV) via pandas-ta
 - **Advanced Conditional Logic**: Define entry and exit conditions with complex logic (AND/OR)
 - **Historical Comparisons (V2)**: Compare current values to historical values (lookback comparisons) for trend detection
+- **Risk-Based Position Sizing (V2)**: Automatically adjust position size based on risk percentage and stop distance
 - **Asynchronous Backtesting**: Run backtests as background jobs using Celery
 - **Historical Data**: Fetch and cache OHLCV (Open, High, Low, Close, Volume) data from Yahoo Finance
 - **Performance Analytics**: Generate comprehensive reports with equity curves, trade logs, and key metrics
@@ -45,6 +46,30 @@ This enables:
 - Ichimoku Chikou span validation
 - Price momentum analysis
 - Any indicator trend detection
+
+🎯 **Risk-Based Position Sizing**
+- Automatically adjust position size to maintain consistent dollar risk per trade
+- Formula: `shares = (equity × risk%) / (entry_price - stop_price)`
+- Works with both percentage stops and dynamic indicator-based stops
+- Adapts to volatility: tight stops = larger positions, wide stops = smaller positions
+
+**Example:**
+```python
+# Risk 1% per trade with ATR trailing stop
+df["atr_stop"] = df["close"] - (2 * df["atr_14"])
+
+run_backtest(
+    position_size_type="risk_based",
+    position_size_value=1.0,  # Risk 1% of equity
+    dynamic_stop_column="atr_stop",
+)
+```
+
+**Benefits:**
+- Consistent risk exposure across all trades
+- Position size scales inversely with stop distance
+- Professional risk management
+- Better capital preservation in high-volatility conditions
 
 ## Architecture
 
@@ -253,12 +278,15 @@ The `state_machine.py` implements the backtest execution:
 
 Via pandas-ta library:
 - **Moving Averages**: SMA, EMA
-- **Momentum Oscillators**: RSI, Stochastic
+- **Momentum Oscillators**: RSI, Stochastic, ROC (Rate of Change)
 - **Trend Indicators**: MACD, ADX (with +DI/-DI)
 - **Volatility**: Bollinger Bands, ATR
+- **Volume**: OBV (On-Balance Volume)
 - **Multi-Component**: Ichimoku Cloud (Tenkan, Kijun, Span A/B, Chikou)
 
 All indicators support custom parameters and can be used with any operator.
+
+**See [docs/INDICATORS.txt](docs/INDICATORS.txt) for complete indicator reference.**
 
 ## Getting Started
 
@@ -433,11 +461,11 @@ The system calculates comprehensive performance statistics:
 
 ### Completed (V2)
 ✅ LOOKBACK comparisons for trend detection
+✅ ROC and OBV indicators
+✅ Risk-based position sizing
+✅ AND logic for exit conditions
 
 ### In Progress (V2)
-- 🔄 Additional indicators (ROC, OBV)
-- 🔄 Risk-based position sizing
-- 🔄 AND logic for exit conditions
 - 🔄 Pattern recognition (divergence detection)
 
 ### Planned (V2+)
@@ -450,6 +478,16 @@ The system calculates comprehensive performance statistics:
 - Multi-timeframe analysis
 
 For detailed limitations and V2 roadmap, see `docs/V1_LIMITATIONS.txt`
+
+## Documentation
+
+Comprehensive guides for all features:
+
+- **[POSITION_SIZING.txt](docs/POSITION_SIZING.txt)** - Complete guide to position sizing methods (full_capital, percent_capital, fixed_amount, risk_based)
+- **[INDICATORS.txt](docs/INDICATORS.txt)** - All 11 supported indicators with parameters, examples, and common uses
+- **[OPERATORS.txt](docs/OPERATORS.txt)** - Condition operators reference (GT, LT, CROSSES_ABOVE, IS_RISING, LOOKBACK, etc.)
+- **[V1_LIMITATIONS.txt](docs/V1_LIMITATIONS.txt)** - Known limitations and V2 roadmap
+- **[CLAUDE.md](CLAUDE.md)** - Development guidelines and project conventions
 
 ## Contributing
 
