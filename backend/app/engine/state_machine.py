@@ -53,6 +53,7 @@ def _calculate_position_size(
     position_size_type: str,
     position_size_value: float,
     allow_fractional: bool,
+    stop_price: float | None = None,
 ) -> float:
     """
     Calculate how many shares to buy based on position sizing rules.
@@ -61,9 +62,10 @@ def _calculate_position_size(
         cash: Available cash to invest
         total_capital: Total account value (cash + position value)
         price: Current price per share
-        position_size_type: "full_capital", "percent_capital", or "fixed_amount"
-        position_size_value: The percentage or dollar amount
+        position_size_type: "full_capital", "percent_capital", "fixed_amount", or "risk_based"
+        position_size_value: The percentage, dollar amount, or risk percentage
         allow_fractional: Whether fractional shares are allowed (True for crypto, False for stocks)
+        stop_price: Stop loss price (required for risk_based sizing)
 
     Returns:
         Number of shares to buy (may be fractional or integer)
@@ -71,10 +73,11 @@ def _calculate_position_size(
     if price <= 0:
         return 0.0
 
-    # Determine the dollar amount to invest
+    # Determine the dollar amount to invest or shares to buy
     if position_size_type == "full_capital":
         # Use all available cash (original behavior)
         amount_to_invest = cash
+        raw_shares = amount_to_invest / price
     elif position_size_type == "percent_capital":
         # Use X% of total capital (not just cash)
         # Example: If you have $100,000 total and position_size_value=25,
@@ -82,15 +85,40 @@ def _calculate_position_size(
         amount_to_invest = (position_size_value / 100.0) * total_capital
         # But can't invest more than available cash
         amount_to_invest = min(amount_to_invest, cash)
-    else:  # fixed_amount
+        raw_shares = amount_to_invest / price
+    elif position_size_type == "fixed_amount":
         # Use fixed dollar amount
         # Example: Always invest $10,000 per trade
         amount_to_invest = position_size_value
         # But can't invest more than available cash
         amount_to_invest = min(amount_to_invest, cash)
+        raw_shares = amount_to_invest / price
+    elif position_size_type == "risk_based":
+        # Calculate shares based on risk percentage and stop distance
+        # Formula: shares = (equity × risk%) / (entry_price - stop_price)
 
-    # Convert dollar amount to shares
-    raw_shares = amount_to_invest / price
+        if stop_price is None:
+            raise ValueError("risk_based position sizing requires stop_price")
+
+        stop_distance = price - stop_price
+
+        if stop_distance <= 0:
+            # Stop is above or equal to entry - invalid
+            return 0.0
+
+        # Calculate risk amount (in dollars)
+        risk_amount = total_capital * (position_size_value / 100.0)
+
+        # Calculate shares based on risk
+        raw_shares = risk_amount / stop_distance
+
+        # Validate against available cash
+        position_value = raw_shares * price
+        if position_value > cash:
+            # Can't afford the risk-based position - scale down to available cash
+            raw_shares = cash / price
+    else:
+        raise ValueError(f"Unsupported position_size_type: {position_size_type}")
 
     # Apply fractional/integer constraint
     if allow_fractional:
@@ -217,10 +245,10 @@ def run_backtest(
             raise ValueError(f"Missing required column: {col}")
 
     # NEW: Validate position sizing parameters
-    if position_size_type not in {"full_capital", "percent_capital", "fixed_amount"}:
+    if position_size_type not in {"full_capital", "percent_capital", "fixed_amount", "risk_based"}:
         raise ValueError(
             f"Invalid position_size_type: {position_size_type}. "
-            "Must be 'full_capital', 'percent_capital', or 'fixed_amount'"
+            "Must be 'full_capital', 'percent_capital', 'fixed_amount', or 'risk_based'"
         )
     if position_size_type == "percent_capital":
         if position_size_value <= 0 or position_size_value > 100:
@@ -231,6 +259,16 @@ def run_backtest(
         if position_size_value <= 0:
             raise ValueError(
                 f"position_size_value must be positive for fixed_amount, got {position_size_value}"
+            )
+    if position_size_type == "risk_based":
+        if position_size_value <= 0 or position_size_value > 10:
+            raise ValueError(
+                f"position_size_value (risk%) must be between 0 and 10 for risk_based, got {position_size_value}"
+            )
+        # Validate that at least one stop method is configured
+        if stop_loss_pct is None and dynamic_stop_column is None:
+            raise ValueError(
+                "risk_based position sizing requires either stop_loss_pct or dynamic_stop_column to be configured"
             )
 
     # NEW: Validate risk management parameters
@@ -328,6 +366,23 @@ def run_backtest(
             # Apply slippage to entry price (pay more)
             execution_price = _apply_slippage(open_price, slippage_pct, is_entry=True)
 
+            # Calculate stop price for risk-based sizing
+            stop_price = None
+            if position_size_type == "risk_based":
+                # Determine stop price from configured stop method
+                if dynamic_stop_column is not None:
+                    # Use dynamic stop indicator value at entry
+                    if dynamic_stop_column in df.columns:
+                        stop_price = float(row[dynamic_stop_column])
+                        if pd.isna(stop_price):
+                            # No valid stop value - skip entry
+                            pending_entry = False
+                            shares = 0.0
+                            continue
+                elif stop_loss_pct is not None:
+                    # Calculate stop from percentage
+                    stop_price = execution_price * (1.0 - stop_loss_pct / 100.0)
+
             # Calculate position size based on sizing rules
             total_capital = cash  # When flat, total capital = cash
             shares = _calculate_position_size(
@@ -337,6 +392,7 @@ def run_backtest(
                 position_size_type=position_size_type,
                 position_size_value=position_size_value,
                 allow_fractional=allow_fractional,
+                stop_price=stop_price,
             )
 
             # Skip entry if no shares can be purchased
@@ -660,6 +716,20 @@ def run_backtest(
         # Apply slippage to entry price
         execution_price = _apply_slippage(last_close, slippage_pct, is_entry=True)
 
+        # Calculate stop price for risk-based sizing
+        stop_price = None
+        if position_size_type == "risk_based":
+            # Determine stop price from configured stop method
+            if dynamic_stop_column is not None:
+                # Use dynamic stop indicator value at last bar
+                if dynamic_stop_column in df.columns:
+                    stop_price = float(df.iloc[-1][dynamic_stop_column])
+                    if pd.isna(stop_price):
+                        stop_price = None
+            if stop_price is None and stop_loss_pct is not None:
+                # Calculate stop from percentage
+                stop_price = execution_price * (1.0 - stop_loss_pct / 100.0)
+
         # Calculate position size
         total_capital = cash
         shares = _calculate_position_size(
@@ -669,6 +739,7 @@ def run_backtest(
             position_size_type=position_size_type,
             position_size_value=position_size_value,
             allow_fractional=allow_fractional,
+            stop_price=stop_price,
         )
 
         if shares > 0:

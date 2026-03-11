@@ -1,0 +1,466 @@
+# Version 1 - Current Limitations and Constraints
+
+Generated: 2026-03-08
+Status: All 10 critical/high/medium bugs fixed and merged
+
+---
+
+## 1. POSITION MANAGEMENT
+
+### Single Position Only
+- Only supports ONE position at a time (all-in or all-out)
+- Cannot scale in/out of positions (e.g., 50% entry, then add 25% more later)
+- Cannot hold multiple positions across different assets simultaneously
+- No portfolio-level backtesting (single ticker only per backtest)
+- Cannot pyramid into winning positions
+- Cannot dollar-cost average into a single position over multiple signals
+
+Impact: Limits realistic trading simulation where traders often scale positions
+
+
+---
+
+## 2. ORDER TYPES
+
+### Market Orders Only
+- Only supports market orders executed at next bar's open price
+- No support for:
+  * Limit orders (buy/sell at specific price)
+  * Stop orders (trigger at specific price level)
+  * Market-on-close orders
+  * Trailing stop orders as entry/exit signals (only as exit mechanism)
+  * Good-til-canceled (GTC) orders
+  * Fill-or-kill (FOK) orders
+
+Impact: Cannot model realistic order execution strategies
+
+
+---
+
+## 3. POSITION SIZING
+
+### Limited Sizing Methods
+Current methods:
+  - full_capital: Use all available cash
+  - percent_capital: Use X% of available cash
+  - fixed_amount: Use fixed dollar amount
+
+Missing methods:
+  - Kelly Criterion (optimal bet sizing)
+  - Risk-based sizing (% of equity risked per trade based on stop distance)
+  - Volatility-adjusted sizing (ATR-based)
+  - Maximum shares/dollar constraints combined with other methods
+  - Fixed fractional (risk fixed % of total equity, not just cash)
+  - Optimal f (Ralph Vince)
+
+Impact: Cannot implement professional risk management strategies
+
+
+---
+
+## 4. DATA SOURCES
+
+### Yahoo Finance Only
+- Single data provider: yfinance library
+- Subject to Yahoo Finance API limitations:
+  * Rate limiting
+  * Data quality issues
+  * Historical data gaps
+  * Service outages
+  * Intraday data limited to last 60 days for stocks
+
+Missing capabilities:
+  - Multiple data providers (Alpha Vantage, IEX Cloud, Polygon.io, etc.)
+  - Custom CSV data import
+  - Real-time or tick data
+  - Alternative data (fundamentals, sentiment, news, etc.)
+  - Cryptocurrency exchanges (Binance, Coinbase Pro)
+  - Futures and options data
+
+Impact: Limited data quality and coverage, single point of failure
+
+
+---
+
+## 5. TIME RESOLUTION
+
+### Fixed Resolution Constraints
+- Stocks: Intraday history limited to 60 days (Yahoo Finance constraint)
+- No sub-minute resolutions (lowest is 1m)
+- Fixed resolution per backtest (can't mix daily strategy with intraday data)
+- No tick-by-tick data support
+
+Impact: Cannot test high-frequency strategies or combine timeframes
+
+
+---
+
+## 6. CONDITION ENGINE
+
+### Single-Level Logic Only
+- Only supports single-level AND/OR within a condition group
+- Cannot create nested logic: (A AND B) OR (C AND D)
+- Current structure:
+  * Entry Group: Condition1 AND/OR Condition2 AND/OR Condition3
+  * Exit Group: Condition1 AND/OR Condition2 AND/OR Condition3
+
+Missing capabilities:
+  - Arithmetic operations in conditions (e.g., "SMA_20 - SMA_50 > 10")
+  - Time-based conditions (e.g., "only trade between 9:30-10:30 AM")
+  - Day-of-week filters (e.g., "no trades on Mondays")
+  - Inter-bar conditions (e.g., "highest high in last 20 bars")
+  - Lookback comparisons (e.g., "close > close[5]" - 5 bars ago)
+  - Pattern recognition (e.g., "bullish engulfing candle")
+  - Volume conditions (no direct volume operators)
+
+Supported operators only:
+  - GT, LT, EQ, GTE, LTE (basic comparison)
+  - CROSSES_ABOVE, CROSSES_BELOW (crossover detection)
+  - IS_RISING, IS_FALLING (trend detection)
+
+Impact: Cannot implement complex trading rules or filters
+
+
+---
+
+## 7. INDICATORS
+
+### Pre-defined Indicators Only
+Supported indicators (via pandas-ta):
+  - SMA, EMA (moving averages)
+  - RSI (momentum oscillator)
+  - MACD (trend/momentum)
+  - Bollinger Bands (volatility)
+  - ATR (volatility)
+  - Stochastic (momentum)
+  - ADX (trend strength)
+  - Ichimoku Cloud (trend/support/resistance)
+
+Missing capabilities:
+  - Custom indicator formulas (user-defined calculations)
+  - Indicator-on-indicator (e.g., "RSI of momentum", "SMA of ATR")
+  - Multi-timeframe indicators (e.g., daily SMA on 1h chart)
+  - Composite indicators combining price and volume
+  - Custom aggregations (e.g., "sum of close over 10 bars")
+  - Percentage change calculations
+  - Highest/lowest over N periods (except via Ichimoku)
+
+Impact: Limited to common indicators, cannot implement proprietary systems
+
+
+---
+
+## 8. EXIT STRATEGIES
+
+### Limited Exit Options
+Current exit methods:
+  - Exit signal from condition engine
+  - Percentage-based stop loss (static)
+  - Percentage-based take profit (static)
+  - Dynamic stop (single indicator reference, e.g., ATR trailing)
+  - Force close at end of backtest
+
+Missing capabilities:
+  - Multiple trailing stops simultaneously (e.g., both ATR AND percentage)
+  - Time-based exits (e.g., "exit after 10 days" or "exit at 3:55 PM")
+  - Profit target laddering (e.g., take 50% at 2R, 50% at 4R)
+  - Chandelier stops (ATR-based from highest high)
+  - Parabolic SAR exits
+  - Break-even stops (move stop to entry after profit)
+  - Reward-to-risk ratio targets (e.g., exit at 3:1 R:R)
+  - Volatility-adjusted exits
+
+Impact: Cannot implement sophisticated exit strategies
+
+
+---
+
+## 9. TRADING DIRECTION
+
+### Long Only
+- Only supports LONG positions (buy low, sell high)
+- No short selling (sell high, buy low)
+- No inverse strategies
+
+Impact: Cannot test bear market strategies or hedging
+
+
+---
+
+## 10. PERFORMANCE & SCALABILITY
+
+### Single-Threaded Execution
+- Backtests run one at a time (one ticker per backtest)
+- No parallel execution across multiple tickers
+- Celery worker processes tasks sequentially
+
+Missing capabilities:
+  - Batch backtesting (test strategy across 100 tickers at once)
+  - Parameter optimization/scanning (test 1000 parameter combinations)
+  - Walk-forward analysis (rolling window optimization)
+  - Monte Carlo simulation (randomize entry/exit timing)
+  - Genetic algorithm optimization
+  - Multi-core/distributed backtesting
+
+Cache limitations:
+  - Redis cache has no clustering support
+  - Single Redis instance (single point of failure)
+  - No cache invalidation strategy beyond TTL
+
+Impact: Slow for portfolio-wide analysis or optimization
+
+
+---
+
+## 11. RISK MANAGEMENT
+
+### Basic Risk Controls Only
+Current features:
+  - Commission (flat + percentage)
+  - Slippage (percentage-based)
+  - Stop loss (percentage)
+  - Take profit (percentage)
+  - Position sizing (basic methods)
+
+Missing capabilities:
+  - Maximum drawdown stop (halt strategy when DD exceeds threshold)
+  - Daily loss limits (stop trading after losing X% in one day)
+  - Correlation tracking across backtests
+  - Position concentration limits (max % of portfolio per position)
+  - Leverage/margin simulation
+  - Margin calls
+  - Advanced commission models (tiered, maker/taker)
+  - Borrowing costs (for shorts)
+  - Overnight holding fees
+  - Currency conversion fees (for international assets)
+
+Impact: Cannot model realistic broker constraints and risk limits
+
+
+---
+
+## 12. REPORTING & ANALYTICS
+
+### Basic Metrics Only
+Current metrics:
+  - Total return, win rate, profit factor
+  - Sharpe ratio, max drawdown
+  - Average win/loss, largest win/loss
+  - Trade count, trade duration
+  - Buy-and-hold comparison
+
+Missing analytics:
+  - Sortino ratio (downside deviation)
+  - Calmar ratio (return/max drawdown)
+  - Omega ratio
+  - Value at Risk (VaR)
+  - Conditional VaR (CVaR)
+  - Monte Carlo analysis
+  - Equity curve comparison across strategies
+  - Trade distribution histograms
+  - Win/loss streaks analysis
+  - Seasonal/time-of-day analysis
+  - Slippage impact analysis (beyond fixed percentage)
+  - Rolling returns analysis
+  - Underwater equity curve (drawdown visualization)
+  - MAE/MFE analysis (maximum adverse/favorable excursion)
+
+Impact: Limited performance analysis and risk assessment
+
+
+---
+
+## 13. USER MANAGEMENT
+
+### No Authentication System
+Current state:
+  - Basic User model exists in database
+  - No login/logout functionality
+  - No password hashing
+  - No session management
+  - No API authentication
+
+Missing capabilities:
+  - User registration/authentication
+  - Role-based access control (admin, user, read-only)
+  - Multi-tenancy (isolated user data)
+  - API keys for programmatic access
+  - Rate limiting per user
+  - User quotas (max strategies, max backtests)
+  - Resource limits (CPU time, memory)
+  - Audit logging (who did what, when)
+
+Impact: Not production-ready, no security
+
+
+---
+
+## 14. REAL-TIME FEATURES
+
+### Historical Backtesting Only
+- No live trading integration
+- No paper trading mode (simulated live trading)
+- No real-time alerts when backtest completes
+- No WebSocket support for streaming results
+- No live data feeds
+
+Impact: Cannot transition from backtest to live trading
+
+
+---
+
+## 15. DATA QUALITY
+
+### Basic Validation Only
+Current handling:
+  - Gap detection (heuristic-based, checks bar count vs expected)
+  - Yahoo Finance auto-adjust for splits/dividends
+  - Basic OHLCV validation (columns exist)
+
+Missing capabilities:
+  - Outlier detection (e.g., price spikes from bad data)
+  - Bad tick filtering
+  - Missing data interpolation options (forward fill, linear, etc.)
+  - Data alignment across multiple tickers
+  - Corporate action handling (splits, dividends, mergers)
+  - Survivorship bias handling (delisted stocks)
+  - Point-in-time data (avoid look-ahead bias)
+
+Impact: May backtest on incorrect or incomplete data
+
+
+---
+
+## 16. STRATEGY VERSIONING
+
+### No Version Control
+- Editing a strategy modifies it permanently
+- All historical backtests reference the same strategy object
+- No way to revert to previous strategy version
+- No diff/comparison between strategy versions
+
+Missing capabilities:
+  - Strategy version history
+  - Rollback to previous version
+  - Compare strategy versions side-by-side
+  - Tag/label strategy versions (e.g., "v1.0-production")
+  - A/B testing framework (test two strategy variants)
+  - Strategy cloning/templating
+
+Impact: Cannot track strategy evolution or reproduce historical results
+
+
+---
+
+## 17. COSTS & FEES
+
+### Simple Commission Model
+Current model:
+  - Flat commission per trade (e.g., $5)
+  - Percentage commission (e.g., 0.1%)
+  - Applied to both entry and exit
+
+Missing cost types:
+  - Borrowing costs (for short positions)
+  - Overnight holding fees (for leveraged positions)
+  - Currency conversion fees (for international assets)
+  - Tax simulation (short-term vs long-term capital gains)
+  - Spread costs (bid-ask spread)
+  - Market impact (large orders moving the market)
+  - Maker/taker fee models (crypto exchanges)
+  - Tiered commission schedules (lower fees for high volume)
+
+Impact: Overly optimistic returns, especially for frequent trading
+
+
+---
+
+## 18. FRONTEND / UI
+
+### Basic Interface Only
+Current state (as per CLAUDE.md):
+  - UI is lowest priority
+  - Basic strategy builder
+  - Simple backtest results display
+  - Equity curve chart (Recharts)
+
+Missing features:
+  - Advanced charting with drawing tools
+  - Strategy comparison dashboard
+  - Parameter optimization visualizations
+  - Heat maps for optimization results
+  - Interactive trade analysis (click trade to see chart)
+  - Portfolio analytics dashboard
+  - Real-time progress indicators for long backtests
+  - Strategy templates/marketplace
+  - Mobile-responsive design
+
+Impact: Limited user experience, difficult to analyze results
+
+
+---
+
+## SUMMARY TABLE
+
+Priority | Category                    | Impact Level | Complexity
+---------|----------------------------|--------------|------------
+HIGH     | Portfolio backtesting      | Critical     | High
+HIGH     | Short selling              | High         | Medium
+HIGH     | Advanced position sizing   | High         | Medium
+HIGH     | Parameter optimization     | High         | High
+HIGH     | Multiple data providers    | High         | Medium
+MEDIUM   | Nested condition logic     | Medium       | Medium
+MEDIUM   | Custom indicators          | Medium       | High
+MEDIUM   | Time-based conditions      | Medium       | Low
+MEDIUM   | Authentication system      | Medium       | Medium
+MEDIUM   | Batch backtesting          | Medium       | Medium
+LOW      | Advanced order types       | Low          | High
+LOW      | Multiple exit strategies   | Low          | Medium
+LOW      | Real-time features         | Low          | High
+LOW      | Advanced analytics         | Low          | Medium
+LOW      | Strategy versioning        | Low          | Medium
+
+
+---
+
+## RECOMMENDED V2 ROADMAP
+
+### Phase 1: Core Trading Features (Q2 2026)
+1. Short selling support
+2. Advanced position sizing (Kelly, risk-based, volatility-adjusted)
+3. Nested condition logic (allow complex boolean expressions)
+4. Time-based conditions and exits
+
+### Phase 2: Multi-Asset & Performance (Q3 2026)
+5. Portfolio-level backtesting (multiple tickers)
+6. Batch backtesting (test across ticker universe)
+7. Parameter optimization framework
+8. Advanced analytics (Sortino, Calmar, MAE/MFE)
+
+### Phase 3: Data & Quality (Q4 2026)
+9. Multiple data provider support
+10. Custom CSV data import
+11. Improved data quality validation
+12. Survivorship bias handling
+
+### Phase 4: Production Ready (Q1 2027)
+13. User authentication & multi-tenancy
+14. API rate limiting and quotas
+15. Strategy versioning system
+16. Paper trading mode
+
+### Phase 5: Advanced Features (Q2 2027)
+17. Custom indicator formulas
+18. Multi-timeframe analysis
+19. Monte Carlo simulation
+20. Walk-forward optimization
+
+
+---
+
+## NOTES
+
+- This document reflects the state of the system AFTER all 10 bugs (critical, high, medium, low priority) have been fixed and merged
+- Focus remains on backend/engine improvements per CLAUDE.md guidelines
+- UI/frontend enhancements are explicitly lowest priority
+- All identified bugs from initial bug report have been resolved

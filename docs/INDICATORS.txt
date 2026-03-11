@@ -1,0 +1,519 @@
+# Indicators Reference
+
+This document lists all supported technical indicators in the backtest engine.
+
+## Overview
+
+Indicators are computed using the `pandas-ta` library and added to the OHLCV DataFrame before backtesting. Each indicator requires specific parameters and outputs one or more columns.
+
+## Supported Indicators
+
+### 1. RSI (Relative Strength Index)
+
+**Type:** Momentum Oscillator
+
+**Description:** Measures the speed and magnitude of price changes. Values range from 0-100.
+
+**Parameters:**
+- `period`: Lookback period (typically 14)
+- `source`: Price column to use ("close", "open", "high", "low")
+
+**Output Columns:**
+- `{alias}`: Single RSI value
+
+**Example:**
+```python
+{
+    "indicator_type": "RSI",
+    "alias": "rsi_14",
+    "params": {"period": 14, "source": "close"}
+}
+```
+
+**Common Uses:**
+- Overbought: RSI > 70
+- Oversold: RSI < 30
+- Divergence detection
+
+
+### 2. EMA (Exponential Moving Average)
+
+**Type:** Trend Indicator
+
+**Description:** Moving average that gives more weight to recent prices.
+
+**Parameters:**
+- `period`: Lookback period (e.g., 20, 50, 200)
+- `source`: Price column to use ("close", "open", "high", "low")
+
+**Output Columns:**
+- `{alias}`: Single EMA value
+
+**Example:**
+```python
+{
+    "indicator_type": "EMA",
+    "alias": "ema_20",
+    "params": {"period": 20, "source": "close"}
+}
+```
+
+**Common Uses:**
+- Trend direction (price above/below EMA)
+- Crossover signals (fast EMA crosses slow EMA)
+- Dynamic support/resistance
+
+
+### 3. SMA (Simple Moving Average)
+
+**Type:** Trend Indicator
+
+**Description:** Simple average of prices over N periods.
+
+**Parameters:**
+- `period`: Lookback period (e.g., 50, 100, 200)
+- `source`: Price column to use ("close", "open", "high", "low")
+
+**Output Columns:**
+- `{alias}`: Single SMA value
+
+**Example:**
+```python
+{
+    "indicator_type": "SMA",
+    "alias": "sma_50",
+    "params": {"period": 50, "source": "close"}
+}
+```
+
+**Common Uses:**
+- Long-term trend identification
+- Golden cross (SMA 50 crosses above SMA 200)
+- Death cross (SMA 50 crosses below SMA 200)
+
+
+### 4. MACD (Moving Average Convergence Divergence)
+
+**Type:** Momentum Indicator
+
+**Description:** Shows relationship between two EMAs of price.
+
+**Parameters:**
+- `fast`: Fast EMA period (typically 12)
+- `slow`: Slow EMA period (typically 26)
+- `signal`: Signal line EMA period (typically 9)
+- `source`: Price column to use ("close")
+
+**Output Columns:**
+- `{alias}_macd`: MACD line (fast EMA - slow EMA)
+- `{alias}_signal`: Signal line (EMA of MACD)
+- `{alias}_hist`: Histogram (MACD - signal)
+
+**Example:**
+```python
+{
+    "indicator_type": "MACD",
+    "alias": "macd",
+    "params": {"fast": 12, "slow": 26, "signal": 9, "source": "close"}
+}
+```
+
+**Common Uses:**
+- MACD crosses above signal → Bullish
+- MACD crosses below signal → Bearish
+- Histogram divergence
+
+
+### 5. BB (Bollinger Bands)
+
+**Type:** Volatility Indicator
+
+**Description:** Price envelope based on standard deviations.
+
+**Parameters:**
+- `period`: Moving average period (typically 20)
+- `std_dev`: Number of standard deviations (typically 2)
+- `source`: Price column to use ("close")
+
+**Output Columns:**
+- `{alias}_upper`: Upper band (SMA + std_dev × σ)
+- `{alias}_mid`: Middle band (SMA)
+- `{alias}_lower`: Lower band (SMA - std_dev × σ)
+
+**Example:**
+```python
+{
+    "indicator_type": "BB",
+    "alias": "bb_20",
+    "params": {"period": 20, "std_dev": 2, "source": "close"}
+}
+```
+
+**Common Uses:**
+- Price touching upper band → Overbought
+- Price touching lower band → Oversold
+- Bollinger squeeze (low volatility)
+- Bollinger expansion (high volatility)
+
+
+### 6. ATR (Average True Range)
+
+**Type:** Volatility Indicator
+
+**Description:** Measures market volatility in price units.
+
+**Parameters:**
+- `period`: Lookback period (typically 14)
+
+**Output Columns:**
+- `{alias}`: Single ATR value
+
+**Example:**
+```python
+{
+    "indicator_type": "ATR",
+    "alias": "atr_14",
+    "params": {"period": 14}
+}
+```
+
+**Common Uses:**
+- Trailing stop loss: `close - (2 × ATR)`
+- Position sizing based on volatility
+- Breakout confirmation (high ATR = strong move)
+
+
+### 7. STOCH (Stochastic Oscillator)
+
+**Type:** Momentum Indicator
+
+**Description:** Compares closing price to price range over N periods.
+
+**Parameters:**
+- `k_period`: %K period (typically 14)
+- `d_period`: %D smoothing period (typically 3)
+
+**Output Columns:**
+- `{alias}_k`: Fast stochastic (%K)
+- `{alias}_d`: Slow stochastic (%D - SMA of %K)
+
+**Example:**
+```python
+{
+    "indicator_type": "STOCH",
+    "alias": "stoch_14_3",
+    "params": {"k_period": 14, "d_period": 3}
+}
+```
+
+**Common Uses:**
+- %K > 80: Overbought
+- %K < 20: Oversold
+- %K crosses above %D: Bullish
+- %K crosses below %D: Bearish
+
+
+### 8. ADX (Average Directional Index)
+
+**Type:** Trend Strength Indicator
+
+**Description:** Measures strength of trend (not direction).
+
+**Parameters:**
+- `period`: Lookback period (typically 14)
+
+**Output Columns:**
+- `{alias}`: ADX value (0-100)
+- `{alias}_dmp`: +DI (Positive Directional Indicator)
+- `{alias}_dmn`: -DI (Negative Directional Indicator)
+
+**Example:**
+```python
+{
+    "indicator_type": "ADX",
+    "alias": "adx_14",
+    "params": {"period": 14}
+}
+```
+
+**Common Uses:**
+- ADX > 25: Strong trend
+- ADX < 20: Weak trend (ranging market)
+- +DI > -DI: Uptrend
+- -DI > +DI: Downtrend
+
+
+### 9. ICHIMOKU (Ichimoku Cloud)
+
+**Type:** Trend/Support/Resistance System
+
+**Description:** Japanese indicator showing support, resistance, momentum, and trend direction.
+
+**Parameters:**
+- `tenkan`: Conversion line period (default 9)
+- `kijun`: Base line period (default 26)
+- `senkou`: Leading span period (default 52)
+
+**Output Columns:**
+- `{alias}_tenkan`: Conversion line (fast)
+- `{alias}_kijun`: Base line (slow)
+- `{alias}_span_a`: Leading span A (cloud boundary)
+- `{alias}_span_b`: Leading span B (cloud boundary)
+- `{alias}_chikou`: Lagging span (displaced close)
+
+**Example:**
+```python
+{
+    "indicator_type": "ICHIMOKU",
+    "alias": "ichimoku",
+    "params": {"tenkan": 9, "kijun": 26, "senkou": 52}
+}
+```
+
+**Common Uses:**
+- Price above cloud: Bullish
+- Price below cloud: Bearish
+- Tenkan/Kijun cross: Trend change
+- Chikou above price: Confirmation
+
+
+### 10. ROC (Rate of Change)
+
+**Type:** Momentum Indicator
+
+**Description:** Measures percentage change in price over N periods.
+
+**Parameters:**
+- `period`: Lookback period (e.g., 10, 20)
+- `source`: Price column to use ("close")
+
+**Output Columns:**
+- `{alias}`: ROC percentage value
+
+**Example:**
+```python
+{
+    "indicator_type": "ROC",
+    "alias": "roc_10",
+    "params": {"period": 10, "source": "close"}
+}
+```
+
+**Formula:**
+```
+ROC = ((current_price - price_N_periods_ago) / price_N_periods_ago) × 100
+```
+
+**Common Uses:**
+- ROC > 0: Positive momentum
+- ROC < 0: Negative momentum
+- ROC divergence with price
+- Overbought/oversold levels
+
+
+### 11. OBV (On-Balance Volume)
+
+**Type:** Volume Indicator
+
+**Description:** Cumulative volume indicator based on price direction.
+
+**Parameters:**
+- None (uses close and volume automatically)
+
+**Output Columns:**
+- `{alias}`: Cumulative OBV value
+
+**Example:**
+```python
+{
+    "indicator_type": "OBV",
+    "alias": "obv",
+    "params": {}
+}
+```
+
+**Formula:**
+```
+If close > previous_close: OBV += volume
+If close < previous_close: OBV -= volume
+If close == previous_close: OBV unchanged
+```
+
+**Common Uses:**
+- OBV rising + price rising: Strong uptrend
+- OBV falling + price falling: Strong downtrend
+- OBV divergence with price (warning signal)
+- Trend confirmation
+
+
+## Indicator-on-Indicator
+
+You can compute indicators based on other indicators by using the indicator alias as the `source` parameter:
+
+**Example: EMA of RSI**
+```python
+indicators = [
+    {
+        "indicator_type": "RSI",
+        "alias": "rsi_14",
+        "params": {"period": 14, "source": "close"}
+    },
+    {
+        "indicator_type": "EMA",
+        "alias": "rsi_ema",
+        "params": {"period": 10, "source": "rsi_14"}  # ← Uses RSI as source
+    }
+]
+```
+
+**Example: SMA of ATR**
+```python
+indicators = [
+    {
+        "indicator_type": "ATR",
+        "alias": "atr_14",
+        "params": {"period": 14}
+    },
+    {
+        "indicator_type": "SMA",
+        "alias": "atr_sma",
+        "params": {"period": 20, "source": "atr_14"}  # ← Smoothed ATR
+    }
+]
+```
+
+
+## Warmup Period
+
+Most indicators need historical data to initialize (e.g., SMA 200 needs 200 bars). The engine automatically:
+
+1. Computes indicators on full dataset
+2. Identifies warmup period (bars with NaN values)
+3. Trims warmup bars before backtesting
+
+**Example:**
+```
+Original data: 500 bars (2022-01-01 to 2023-12-31)
+Indicator: SMA 200
+Warmup: First 199 bars (NaN values)
+Backtest starts: Bar 200 (first valid bar)
+Effective backtest: 301 bars
+```
+
+
+## Duplicate Alias Validation
+
+Each indicator must have a **unique alias**. Duplicate aliases are rejected:
+
+**Invalid:**
+```python
+indicators = [
+    {"indicator_type": "RSI", "alias": "rsi_14", "params": {"period": 14, "source": "close"}},
+    {"indicator_type": "RSI", "alias": "rsi_14", "params": {"period": 20, "source": "close"}},  # ❌ Duplicate!
+]
+```
+
+**Valid:**
+```python
+indicators = [
+    {"indicator_type": "RSI", "alias": "rsi_14", "params": {"period": 14, "source": "close"}},
+    {"indicator_type": "RSI", "alias": "rsi_20", "params": {"period": 20, "source": "close"}},  # ✓ Unique
+]
+```
+
+
+## Creating Custom Stop Columns
+
+Many indicators can be used to create dynamic stop loss columns:
+
+**ATR Trailing Stop:**
+```python
+df["atr_stop"] = df["close"] - (2 * df["atr_14"])
+```
+
+**Bollinger Lower Band Stop:**
+```python
+df["bb_stop"] = df["bb_20_lower"]
+```
+
+**EMA Stop:**
+```python
+df["ema_stop"] = df["ema_50"]
+```
+
+**Ichimoku Cloud Stop:**
+```python
+df["cloud_stop"] = df["ichimoku_span_a"]  # Or span_b
+```
+
+
+## Common Indicator Combinations
+
+### Trend + Momentum
+```python
+[
+    {"indicator_type": "EMA", "alias": "ema_20", "params": {"period": 20, "source": "close"}},
+    {"indicator_type": "RSI", "alias": "rsi_14", "params": {"period": 14, "source": "close"}},
+]
+```
+
+### Multi-Timeframe Moving Averages
+```python
+[
+    {"indicator_type": "EMA", "alias": "ema_10", "params": {"period": 10, "source": "close"}},
+    {"indicator_type": "EMA", "alias": "ema_20", "params": {"period": 20, "source": "close"}},
+    {"indicator_type": "EMA", "alias": "ema_50", "params": {"period": 50, "source": "close"}},
+    {"indicator_type": "SMA", "alias": "sma_200", "params": {"period": 200, "source": "close"}},
+]
+```
+
+### Volatility-Based System
+```python
+[
+    {"indicator_type": "ATR", "alias": "atr_14", "params": {"period": 14}},
+    {"indicator_type": "BB", "alias": "bb_20", "params": {"period": 20, "std_dev": 2, "source": "close"}},
+]
+```
+
+### Complete Ichimoku Strategy
+```python
+[
+    {"indicator_type": "ICHIMOKU", "alias": "ichimoku", "params": {"tenkan": 9, "kijun": 26, "senkou": 52}},
+    {"indicator_type": "ADX", "alias": "adx_14", "params": {"period": 14}},
+    {"indicator_type": "ATR", "alias": "atr_14", "params": {"period": 14}},
+]
+```
+
+
+## Performance Considerations
+
+**Fast indicators** (compute quickly):
+- RSI, EMA, SMA, MACD: O(n) complexity
+- Good for large datasets
+
+**Moderate indicators** (compute moderately):
+- BB, ATR, STOCH, ADX: O(n) with multiple passes
+- Acceptable for most use cases
+
+**Slow indicators** (compute slowly):
+- ICHIMOKU: Complex with multiple calculations
+- May be slower on very large datasets (10,000+ bars)
+
+**Recommendation:** Keep indicator count reasonable (<20 indicators per strategy) for optimal performance.
+
+
+## Summary Table
+
+| Indicator | Type | Warmup (period) | Outputs | Common Period |
+|-----------|------|----------------|---------|---------------|
+| RSI | Momentum | period | 1 | 14 |
+| EMA | Trend | period | 1 | 20, 50, 200 |
+| SMA | Trend | period | 1 | 50, 100, 200 |
+| MACD | Momentum | slow + signal | 3 | 12/26/9 |
+| BB | Volatility | period | 3 | 20 |
+| ATR | Volatility | period | 1 | 14 |
+| STOCH | Momentum | k + d | 2 | 14/3 |
+| ADX | Trend Strength | period × 2 | 3 | 14 |
+| ICHIMOKU | Trend System | senkou (52) | 5 | 9/26/52 |
+| ROC | Momentum | period | 1 | 10, 20 |
+| OBV | Volume | 0 | 1 | N/A |

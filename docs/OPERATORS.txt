@@ -1,0 +1,591 @@
+# Condition Operators Reference
+
+This document explains all operators available for creating entry and exit conditions.
+
+## Overview
+
+Operators are used in conditions to compare operands (indicators, OHLCV data, scalars, or lookback values). Each operator has specific behavior and requirements.
+
+## Comparison Operators
+
+### GT (Greater Than)
+
+**Description:** Left operand is greater than right operand.
+
+**Operands:** Any type (INDICATOR, OHLCV, SCALAR, LOOKBACK)
+
+**Returns:** True when `left > right`
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "rsi_14",
+    "operator": "GT",
+    "right_operand_type": "SCALAR",
+    "right_operand_value": "70"
+}
+# True when RSI > 70 (overbought)
+```
+
+**Common Uses:**
+- RSI > 70 (overbought)
+- Price > resistance level
+- Volume > average volume
+
+
+### LT (Less Than)
+
+**Description:** Left operand is less than right operand.
+
+**Operands:** Any type
+
+**Returns:** True when `left < right`
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "rsi_14",
+    "operator": "LT",
+    "right_operand_type": "SCALAR",
+    "right_operand_value": "30"
+}
+# True when RSI < 30 (oversold)
+```
+
+**Common Uses:**
+- RSI < 30 (oversold)
+- Price < support level
+- ATR < historical average (low volatility)
+
+
+### GTE (Greater Than or Equal)
+
+**Description:** Left operand is greater than or equal to right operand.
+
+**Operands:** Any type
+
+**Returns:** True when `left >= right`
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "adx_14",
+    "operator": "GTE",
+    "right_operand_type": "SCALAR",
+    "right_operand_value": "25"
+}
+# True when ADX >= 25 (strong trend)
+```
+
+**Common Uses:**
+- ADX >= 25 (trending market)
+- Volume >= minimum threshold
+- Price >= breakout level
+
+
+### LTE (Less Than or Equal)
+
+**Description:** Left operand is less than or equal to right operand.
+
+**Operands:** Any type
+
+**Returns:** True when `left <= right`
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "adx_14",
+    "operator": "LTE",
+    "right_operand_type": "SCALAR",
+    "right_operand_value": "20"
+}
+# True when ADX <= 20 (weak trend / ranging)
+```
+
+**Common Uses:**
+- ADX <= 20 (ranging market)
+- Volatility <= threshold
+- Price <= support
+
+
+### EQ (Equal)
+
+**Description:** Left operand equals right operand.
+
+**Operands:** Any type
+
+**Returns:** True when `left == right`
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "stoch_14_3_k",
+    "operator": "EQ",
+    "right_operand_type": "SCALAR",
+    "right_operand_value": "50"
+}
+# True when Stochastic %K == 50 (midline)
+```
+
+**Common Uses:**
+- Rarely used (exact equality is uncommon in float comparisons)
+- Better to use GTE/LTE for threshold checks
+
+
+## Crossover Operators
+
+### CROSSES_ABOVE
+
+**Description:** Left operand crosses above right operand.
+
+**Operands:** Both must be Series (INDICATOR, OHLCV, or LOOKBACK)
+
+**Returns:** True when:
+- Previous bar: `left <= right`
+- Current bar: `left > right`
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "ema_20",
+    "operator": "CROSSES_ABOVE",
+    "right_operand_type": "INDICATOR",
+    "right_operand_value": "ema_50"
+}
+# True when fast EMA crosses above slow EMA (golden cross)
+```
+
+**Common Uses:**
+- EMA crossovers (golden cross)
+- Price crosses above MA
+- MACD crosses above signal
+- RSI crosses above 30 (oversold exit)
+
+
+### CROSSES_BELOW
+
+**Description:** Left operand crosses below right operand.
+
+**Operands:** Both must be Series (INDICATOR, OHLCV, or LOOKBACK)
+
+**Returns:** True when:
+- Previous bar: `left >= right`
+- Current bar: `left < right`
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "ema_20",
+    "operator": "CROSSES_BELOW",
+    "right_operand_type": "INDICATOR",
+    "right_operand_value": "ema_50"
+}
+# True when fast EMA crosses below slow EMA (death cross)
+```
+
+**Common Uses:**
+- EMA crossovers (death cross)
+- Price crosses below MA
+- MACD crosses below signal
+- RSI crosses below 70 (overbought exit)
+
+
+## Trend Operators
+
+### IS_RISING
+
+**Description:** Left operand is rising (current value > previous value).
+
+**Operands:** Left must be Series, right operand is ignored
+
+**Returns:** True when `current > previous`
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "adx_14",
+    "operator": "IS_RISING",
+    "right_operand_type": "SCALAR",
+    "right_operand_value": "0"  # Ignored
+}
+# True when ADX is rising (trend strengthening)
+```
+
+**Common Uses:**
+- ADX rising (trend strengthening)
+- Volume rising (increasing participation)
+- Price rising (uptrend)
+- OBV rising (accumulation)
+
+
+### IS_FALLING
+
+**Description:** Left operand is falling (current value < previous value).
+
+**Operands:** Left must be Series, right operand is ignored
+
+**Returns:** True when `current < previous`
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "rsi_14",
+    "operator": "IS_FALLING",
+    "right_operand_type": "SCALAR",
+    "right_operand_value": "0"  # Ignored
+}
+# True when RSI is falling (momentum decreasing)
+```
+
+**Common Uses:**
+- RSI falling (momentum weakening)
+- Volume falling (decreasing participation)
+- Price falling (downtrend)
+- OBV falling (distribution)
+
+
+## Operand Types
+
+### INDICATOR
+
+**Description:** Reference to a computed indicator column.
+
+**Value:** Indicator alias (e.g., "rsi_14", "ema_20")
+
+**Example:**
+```python
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "rsi_14"
+}
+```
+
+
+### OHLCV
+
+**Description:** Reference to OHLCV price/volume data.
+
+**Value:** Column name ("open", "high", "low", "close", "volume")
+
+**Example:**
+```python
+{
+    "left_operand_type": "OHLCV",
+    "left_operand_value": "close"
+}
+```
+
+
+### SCALAR
+
+**Description:** Constant numeric value.
+
+**Value:** Number as string (e.g., "50", "0.5", "-10")
+
+**Example:**
+```python
+{
+    "right_operand_type": "SCALAR",
+    "right_operand_value": "70"
+}
+```
+
+
+### LOOKBACK
+
+**Description:** Reference to a column value N bars ago (or ahead).
+
+**Value:** Format `"column:offset"` (e.g., "adx:-3", "close:-26")
+- Negative offset = look back (e.g., -3 = 3 bars ago)
+- Positive offset = look ahead (rare, used for displaced indicators)
+
+**Example:**
+```python
+{
+    "right_operand_type": "LOOKBACK",
+    "right_operand_value": "adx_14:-3"
+}
+# Value of ADX from 3 bars ago
+```
+
+**Common Uses:**
+- Check if indicator is rising over N bars: `adx > adx:-3`
+- Ichimoku Chikou validation: `close > close:-26`
+- Momentum comparison: `rsi > rsi:-5`
+
+
+## Condition Logic (AND/OR)
+
+Conditions can be combined using `AND` or `OR` logic:
+
+### AND Logic
+
+**Description:** All conditions must be true.
+
+**Example:**
+```python
+{
+    "logic": "AND",
+    "conditions": [
+        {"left": "rsi_14", "operator": "LT", "right": "30"},      # RSI < 30
+        {"left": "adx_14", "operator": "GT", "right": "25"},      # AND ADX > 25
+        {"left": "close", "operator": "GT", "right": "ema_200"}   # AND Price > EMA 200
+    ]
+}
+# True only when ALL three conditions are true
+```
+
+### OR Logic
+
+**Description:** At least one condition must be true.
+
+**Example:**
+```python
+{
+    "logic": "OR",
+    "conditions": [
+        {"left": "rsi_14", "operator": "LT", "right": "30"},      # RSI < 30
+        {"left": "stoch_14_3_k", "operator": "LT", "right": "20"} # OR Stoch < 20
+    ]
+}
+# True when EITHER condition is true
+```
+
+
+## Complete Strategy Examples
+
+### Example 1: RSI Oversold with Trend Confirmation
+
+**Entry:**
+```python
+{
+    "logic": "AND",
+    "conditions": [
+        {
+            "left_operand_type": "INDICATOR",
+            "left_operand_value": "rsi_14",
+            "operator": "LT",
+            "right_operand_type": "SCALAR",
+            "right_operand_value": "30"
+        },
+        {
+            "left_operand_type": "OHLCV",
+            "left_operand_value": "close",
+            "operator": "GT",
+            "right_operand_type": "INDICATOR",
+            "right_operand_value": "ema_200"
+        }
+    ]
+}
+# Entry: RSI < 30 AND Price > EMA 200
+```
+
+**Exit:**
+```python
+{
+    "logic": "OR",
+    "conditions": [
+        {
+            "left_operand_type": "INDICATOR",
+            "left_operand_value": "rsi_14",
+            "operator": "GT",
+            "right_operand_type": "SCALAR",
+            "right_operand_value": "70"
+        },
+        {
+            "left_operand_type": "INDICATOR",
+            "left_operand_value": "ema_20",
+            "operator": "CROSSES_BELOW",
+            "right_operand_type": "INDICATOR",
+            "right_operand_value": "ema_50"
+        }
+    ]
+}
+# Exit: RSI > 70 OR EMA 20 crosses below EMA 50
+```
+
+
+### Example 2: Golden Cross with Volume
+
+**Entry:**
+```python
+{
+    "logic": "AND",
+    "conditions": [
+        {
+            "left_operand_type": "INDICATOR",
+            "left_operand_value": "ema_50",
+            "operator": "CROSSES_ABOVE",
+            "right_operand_type": "INDICATOR",
+            "right_operand_value": "ema_200"
+        },
+        {
+            "left_operand_type": "OHLCV",
+            "left_operand_value": "volume",
+            "operator": "GT",
+            "right_operand_type": "INDICATOR",
+            "right_operand_value": "volume_sma_20"
+        }
+    ]
+}
+# Entry: EMA 50 crosses above EMA 200 AND Volume > Average Volume
+```
+
+
+### Example 3: ADX Rising Confirmation (LOOKBACK)
+
+**Entry:**
+```python
+{
+    "logic": "AND",
+    "conditions": [
+        {
+            "left_operand_type": "INDICATOR",
+            "left_operand_value": "adx_14",
+            "operator": "GT",
+            "right_operand_type": "SCALAR",
+            "right_operand_value": "25"
+        },
+        {
+            "left_operand_type": "INDICATOR",
+            "left_operand_value": "adx_14",
+            "operator": "GT",
+            "right_operand_type": "LOOKBACK",
+            "right_operand_value": "adx_14:-3"
+        }
+    ]
+}
+# Entry: ADX > 25 AND ADX > ADX from 3 bars ago (rising)
+```
+
+
+### Example 4: Ichimoku Cloud Breakout
+
+**Entry:**
+```python
+{
+    "logic": "AND",
+    "conditions": [
+        {
+            "left_operand_type": "OHLCV",
+            "left_operand_value": "close",
+            "operator": "CROSSES_ABOVE",
+            "right_operand_type": "INDICATOR",
+            "right_operand_value": "ichimoku_span_a"
+        },
+        {
+            "left_operand_type": "OHLCV",
+            "left_operand_value": "close",
+            "operator": "GT",
+            "right_operand_type": "LOOKBACK",
+            "right_operand_value": "close:-26"
+        }
+    ]
+}
+# Entry: Price crosses above cloud AND Chikou span confirms (close > close 26 bars ago)
+```
+
+
+## Operator Compatibility Matrix
+
+| Operator | SCALAR | INDICATOR | OHLCV | LOOKBACK |
+|----------|--------|-----------|-------|----------|
+| GT, LT, GTE, LTE, EQ | ✓ | ✓ | ✓ | ✓ |
+| CROSSES_ABOVE, CROSSES_BELOW | ✗ | ✓ | ✓ | ✓ |
+| IS_RISING, IS_FALLING | ✗ | ✓ | ✓ | ✓ |
+
+**Note:**
+- Comparison operators work with any operand type
+- Crossover operators require both operands to be Series (not SCALAR)
+- Trend operators require left operand to be Series, right is ignored
+
+
+## Common Mistakes
+
+### 1. Using SCALAR with CROSSES_ABOVE
+```python
+# WRONG: SCALAR cannot be used with crossover operators
+{
+    "left": "ema_20",
+    "operator": "CROSSES_ABOVE",
+    "right_type": "SCALAR",
+    "right": "100"
+}
+
+# CORRECT: Use GT instead
+{
+    "left": "ema_20",
+    "operator": "GT",
+    "right_type": "SCALAR",
+    "right": "100"
+}
+```
+
+### 2. Forgetting Negative Sign in LOOKBACK
+```python
+# WRONG: Positive offset looks forward (rarely intended)
+{
+    "right_type": "LOOKBACK",
+    "right": "adx:3"  # 3 bars AHEAD (future)
+}
+
+# CORRECT: Negative offset looks backward
+{
+    "right_type": "LOOKBACK",
+    "right": "adx:-3"  # 3 bars AGO (past)
+}
+```
+
+### 3. Using Wrong Operand Type
+```python
+# WRONG: Referencing indicator as OHLCV
+{
+    "left_type": "OHLCV",
+    "left": "rsi_14"  # RSI is an INDICATOR, not OHLCV
+}
+
+# CORRECT: Use INDICATOR type
+{
+    "left_type": "INDICATOR",
+    "left": "rsi_14"
+}
+```
+
+### 4. Missing Condition Fields
+```python
+# WRONG: Missing required fields
+{
+    "left": "rsi_14",
+    "operator": "LT"
+    # Missing right_operand_type and right_operand_value!
+}
+
+# CORRECT: All fields present
+{
+    "left_operand_type": "INDICATOR",
+    "left_operand_value": "rsi_14",
+    "operator": "LT",
+    "right_operand_type": "SCALAR",
+    "right_operand_value": "30"
+}
+```
+
+
+## Summary
+
+**Simple comparisons:** Use GT, LT, GTE, LTE, EQ
+**Crossovers:** Use CROSSES_ABOVE, CROSSES_BELOW
+**Momentum:** Use IS_RISING, IS_FALLING
+**Historical comparison:** Use LOOKBACK operand type
+**Combine conditions:** Use AND/OR logic
+
+All operators work with indicators, OHLCV data, and lookback values. Crossover and trend operators require Series operands (not scalars).
