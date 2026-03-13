@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pandas as pd
@@ -299,3 +300,112 @@ def evaluate_conditions(df: pd.DataFrame, condition_group: dict[str, Any]) -> pd
     for series in results[1:]:
         combined = combined & series
     return combined.fillna(False)
+
+
+def evaluate_expression(
+    df: pd.DataFrame,
+    condition_groups: dict[str, dict[str, Any]],
+    expression: str,
+) -> pd.Series:
+    """
+    Evaluate a boolean expression combining multiple condition groups.
+
+    Args:
+        df: DataFrame with OHLCV + indicator columns
+        condition_groups: Dictionary mapping group names to condition group definitions
+        expression: Boolean expression combining groups (e.g., "(A && B) || C")
+
+    Returns:
+        Boolean Series indicating when the expression evaluates to True
+
+    Example:
+        groups = {
+            "oversold": {
+                "logic": "AND",
+                "conditions": [
+                    {"left_operand_type": "INDICATOR", "left_operand_value": "rsi_14",
+                     "operator": "LT", "right_operand_type": "SCALAR", "right_operand_value": "30"}
+                ]
+            },
+            "trending": {
+                "logic": "AND",
+                "conditions": [
+                    {"left_operand_type": "INDICATOR", "left_operand_value": "adx_14",
+                     "operator": "GT", "right_operand_type": "SCALAR", "right_operand_value": "25"}
+                ]
+            }
+        }
+
+        result = evaluate_expression(df, groups, "oversold && trending")
+        # Returns True when RSI < 30 AND ADX > 25
+
+    Supported operators in expression:
+        - && or & : AND
+        - || or | : OR
+        - ! or ~ : NOT
+        - () : Grouping
+
+    Expression examples:
+        - "A && B" : A AND B
+        - "A || B" : A OR B
+        - "(A && B) || C" : (A AND B) OR C
+        - "A && (B || C)" : A AND (B OR C)
+        - "!A && B" : NOT A AND B
+        - "(A || B) && (C || D)" : (A OR B) AND (C OR D)
+    """
+    if df.empty:
+        return pd.Series([], dtype=bool, index=df.index)
+
+    if not condition_groups:
+        raise ValueError("condition_groups cannot be empty")
+
+    if not expression or not expression.strip():
+        raise ValueError("expression cannot be empty")
+
+    # Step 1: Normalize operators (convert && to &, || to |, ! to ~)
+    normalized_expr = expression.replace("&&", "&").replace("||", "|").replace("!", "~")
+
+    # Step 2: Validate expression contains only safe characters
+    # Allowed: alphanumeric, underscore, operators (&|~), parentheses, whitespace
+    if not re.match(r'^[A-Za-z0-9_&|~()\s]+$', normalized_expr):
+        raise ValueError(
+            f"Invalid characters in expression: '{expression}'. "
+            f"Only alphanumeric, _, &&, ||, !, and () are allowed."
+        )
+
+    # Step 3: Extract variable names from expression
+    var_names = re.findall(r'[A-Za-z_][A-Za-z0-9_]*', normalized_expr)
+
+    # Step 4: Validate all referenced groups exist
+    missing = set(var_names) - set(condition_groups.keys())
+    if missing:
+        raise ValueError(
+            f"Expression references undefined condition groups: {sorted(missing)}. "
+            f"Available groups: {sorted(condition_groups.keys())}"
+        )
+
+    # Step 5: Evaluate each condition group
+    evaluated_groups: dict[str, pd.Series] = {}
+    for name in var_names:
+        if name not in evaluated_groups:  # Avoid re-evaluating same group
+            group = condition_groups[name]
+            evaluated_groups[name] = evaluate_conditions(df, group)
+
+    # Step 6: Build safe namespace for eval (only the evaluated Series)
+    namespace = {name: evaluated_groups[name] for name in var_names}
+
+    # Step 7: Safely evaluate expression
+    try:
+        result = eval(normalized_expr, {"__builtins__": {}}, namespace)
+    except Exception as e:
+        raise ValueError(
+            f"Failed to evaluate expression: '{expression}'. Error: {e}"
+        ) from e
+
+    # Step 8: Validate result is a boolean Series
+    if not isinstance(result, pd.Series):
+        raise ValueError(
+            f"Expression must evaluate to a boolean Series. Got: {type(result)}"
+        )
+
+    return result.fillna(False).astype(bool)
