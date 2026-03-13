@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
-from app.engine.condition_engine import evaluate_conditions
+from app.engine.condition_engine import evaluate_conditions, evaluate_expression
 from app.engine.data_layer import fetch_ohlcv_async
 from app.engine.indicator_layer import compute_indicators, trim_warmup_period
 from app.engine.report_generator import generate_report, calculate_buy_and_hold_equity
@@ -82,12 +82,27 @@ async def _run_backtest_async(run_id: str) -> None:
                     f"Need at least 30 bars. Try extending the date range or using shorter indicator periods."
                 )
 
-            entry_group = _group_to_payload(strategy, "ENTRY")
-            exit_group = _group_to_payload(strategy, "EXIT")
-
+            # Evaluate entry/exit signals
             logger.info("Evaluating conditions")
-            entry_signal = evaluate_conditions(df, entry_group)
-            exit_signal = evaluate_conditions(df, exit_group)
+
+            # Check if strategy uses expressions
+            if strategy.entry_expression:
+                # Use expression-based evaluation
+                entry_groups_dict = _build_groups_dict(strategy, "ENTRY")
+                entry_signal = evaluate_expression(df, entry_groups_dict, strategy.entry_expression)
+            else:
+                # Legacy: single entry group
+                entry_group = _group_to_payload(strategy, "ENTRY")
+                entry_signal = evaluate_conditions(df, entry_group)
+
+            if strategy.exit_expression:
+                # Use expression-based evaluation
+                exit_groups_dict = _build_groups_dict(strategy, "EXIT")
+                exit_signal = evaluate_expression(df, exit_groups_dict, strategy.exit_expression)
+            else:
+                # Legacy: single exit group
+                exit_group = _group_to_payload(strategy, "EXIT")
+                exit_signal = evaluate_conditions(df, exit_group)
 
             logger.info("Running backtest")
             trades, equity_curve = run_backtest(
@@ -161,9 +176,49 @@ def _group_to_payload(strategy: Strategy, group_type: str) -> dict[str, Any]:
                 "right_operand_type": c.right_operand_type,
                 "right_operand_value": c.right_operand_value,
             }
-            for c in sorted(group.conditions, key=lambda x: x.display_order)
+            for c in group.conditions
         ],
     }
+
+
+def _build_groups_dict(strategy: Strategy, group_type: str) -> dict[str, dict[str, Any]]:
+    """
+    Build a dictionary of named condition groups for expression evaluation.
+
+    Args:
+        strategy: Strategy with condition groups
+        group_type: "ENTRY" or "EXIT"
+
+    Returns:
+        Dictionary mapping group names to condition group definitions
+    """
+    groups_dict = {}
+
+    for group in strategy.condition_groups:
+        if group.group_type != group_type:
+            continue
+
+        if not group.group_name:
+            raise ValueError(
+                f"Condition group of type {group_type} is missing group_name. "
+                f"When using expressions, all groups must have names."
+            )
+
+        groups_dict[group.group_name] = {
+            "logic": group.logic,
+            "conditions": [
+                {
+                    "left_operand_type": c.left_operand_type,
+                    "left_operand_value": c.left_operand_value,
+                    "operator": c.operator,
+                    "right_operand_type": c.right_operand_type,
+                    "right_operand_value": c.right_operand_value,
+                }
+                for c in group.conditions
+            ],
+        }
+
+    return groups_dict
 
 
 def _persist_trades(
