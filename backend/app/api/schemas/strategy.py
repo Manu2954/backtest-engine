@@ -23,6 +23,7 @@ class ConditionCreate(BaseModel):
 
 
 class ConditionGroupCreate(BaseModel):
+    group_name: str | None = None  # Optional name for expression-based groups
     logic: str
     conditions: list[ConditionCreate]
 
@@ -31,8 +32,16 @@ class StrategyCreate(BaseModel):
     name: str
     description: str | None = None
     indicators: list[IndicatorCreate] = Field(default_factory=list)
-    entry: ConditionGroupCreate
-    exit: ConditionGroupCreate
+
+    # Legacy: single entry/exit groups (backward compatible)
+    entry: ConditionGroupCreate | None = None
+    exit: ConditionGroupCreate | None = None
+
+    # New: named groups with expressions
+    entry_groups: dict[str, ConditionGroupCreate] | None = None
+    exit_groups: dict[str, ConditionGroupCreate] | None = None
+    entry_expression: str | None = None
+    exit_expression: str | None = None
 
 
 class StrategyUpdate(StrategyCreate):
@@ -66,6 +75,7 @@ class ConditionGroupOut(BaseModel):
 
     id: UUID
     group_type: str
+    group_name: str | None  # NEW: group name for expressions
     logic: str
     conditions: list[ConditionOut]
 
@@ -76,5 +86,7 @@ class StrategyOut(BaseModel):
     id: UUID
     name: str
     description: str | None
+    entry_expression: str | None  # NEW
+    exit_expression: str | None   # NEW
     indicators: list[IndicatorOut]
     condition_groups: list[ConditionGroupOut]

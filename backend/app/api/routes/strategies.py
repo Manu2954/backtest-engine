@@ -41,7 +41,12 @@ async def create_strategy(
     payload: StrategyCreate,
     session: AsyncSession = Depends(get_session),
 ) -> Strategy:
-    strategy = Strategy(name=payload.name, description=payload.description)
+    strategy = Strategy(
+        name=payload.name,
+        description=payload.description,
+        entry_expression=payload.entry_expression,
+        exit_expression=payload.exit_expression,
+    )
 
     for idx, indicator in enumerate(payload.indicators):
         strategy.indicators.append(
@@ -53,9 +58,22 @@ async def create_strategy(
             )
         )
 
-    entry_group = _build_group("ENTRY", payload.entry)
-    exit_group = _build_group("EXIT", payload.exit)
-    strategy.condition_groups.extend([entry_group, exit_group])
+    # Handle legacy single entry/exit groups (backward compatible)
+    if payload.entry and payload.exit:
+        entry_group = _build_group("ENTRY", payload.entry, group_name=None)
+        exit_group = _build_group("EXIT", payload.exit, group_name=None)
+        strategy.condition_groups.extend([entry_group, exit_group])
+
+    # Handle new expression-based groups
+    if payload.entry_groups:
+        for group_name, group_def in payload.entry_groups.items():
+            group = _build_group("ENTRY", group_def, group_name=group_name)
+            strategy.condition_groups.append(group)
+
+    if payload.exit_groups:
+        for group_name, group_def in payload.exit_groups.items():
+            group = _build_group("EXIT", group_def, group_name=group_name)
+            strategy.condition_groups.append(group)
 
     session.add(strategy)
     await session.commit()
@@ -85,6 +103,8 @@ async def update_strategy(
 
     strategy.name = payload.name
     strategy.description = payload.description
+    strategy.entry_expression = payload.entry_expression
+    strategy.exit_expression = payload.exit_expression
 
     # Replace indicators and condition groups
     strategy.indicators.clear()
@@ -100,9 +120,22 @@ async def update_strategy(
             )
         )
 
-    entry_group = _build_group("ENTRY", payload.entry)
-    exit_group = _build_group("EXIT", payload.exit)
-    strategy.condition_groups.extend([entry_group, exit_group])
+    # Handle legacy single entry/exit groups (backward compatible)
+    if payload.entry and payload.exit:
+        entry_group = _build_group("ENTRY", payload.entry, group_name=None)
+        exit_group = _build_group("EXIT", payload.exit, group_name=None)
+        strategy.condition_groups.extend([entry_group, exit_group])
+
+    # Handle new expression-based groups
+    if payload.entry_groups:
+        for group_name, group_def in payload.entry_groups.items():
+            group = _build_group("ENTRY", group_def, group_name=group_name)
+            strategy.condition_groups.append(group)
+
+    if payload.exit_groups:
+        for group_name, group_def in payload.exit_groups.items():
+            group = _build_group("EXIT", group_def, group_name=group_name)
+            strategy.condition_groups.append(group)
 
     await session.commit()
     return await _fetch_strategy(session, strategy.id)
@@ -133,8 +166,12 @@ async def _fetch_strategy(session: AsyncSession, strategy_id: str) -> Strategy |
     return result.scalar_one_or_none()
 
 
-def _build_group(group_type: str, group: ConditionGroupCreate) -> ConditionGroup:
-    condition_group = ConditionGroup(group_type=group_type, logic=group.logic)
+def _build_group(group_type: str, group: ConditionGroupCreate, group_name: str | None = None) -> ConditionGroup:
+    condition_group = ConditionGroup(
+        group_type=group_type,
+        logic=group.logic,
+        group_name=group_name or group.group_name,
+    )
     for idx, cond in enumerate(group.conditions):
         condition_group.conditions.append(_build_condition(cond, idx))
     return condition_group
