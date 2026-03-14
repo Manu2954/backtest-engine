@@ -191,35 +191,53 @@ Files to modify:
                           PRIORITY: MEDIUM
 ================================================================================
 
-4. CONDITION BUILDER UX IMPROVEMENTS
-------------------------------------
-Issues:
-  a) IS_RISING/IS_FALLING operators don't need right operand but UI shows it
-  b) LOOKBACK placeholder text hard to understand
-  c) No validation that LOOKBACK format is correct
-  d) No auto-suggestion for LOOKBACK column names
+3. CONDITION BUILDER UX IMPROVEMENTS ✅ COMPLETED
+--------------------------------------------------------------------
+Status: ✅ COMPLETED
+Commit: [pending]
 
-Files to modify:
-  - StrategyBuilder.tsx: Hide right operand for IS_RISING/IS_FALLING
-  - Add LOOKBACK format validator
-  - Add LOOKBACK column autocomplete
+Implementation:
+  - Right operand fields hidden for IS_RISING/IS_FALLING operators
+  - LOOKBACK format validation with red border for invalid format
+  - Error message showing correct format "column:-offset (e.g., close:-10)"
+  - Applied to all condition sections: entry simple, exit simple, entry advanced, exit advanced
+  - validateLookbackFormat helper function checks format with regex
 
+Files modified:
+  - frontend/src/pages/StrategyBuilder.tsx: All condition builder sections updated
 
-5. INDICATOR HELP TEXT (MISSING)
---------------------------------
-Backend: Guide documents indicator parameters and outputs
-
-Frontend Gap:
-  - No tooltips/help text explaining indicator parameters
-  - No indication of what columns each indicator creates
-  - Users don't know default values
-
-Files to modify:
-  - StrategyBuilder.tsx: Add info icons with tooltips
-  - Add indicator description map
+Note: LOOKBACK column autocomplete is optional and not implemented in this phase.
 
 
-6. STRATEGY REVIEW PAGE INCOMPLETE
+4. INDICATOR HELP TEXT ✅ COMPLETED
+--------------------------------------------------------------------
+Status: ✅ COMPLETED
+Commit: [pending]
+
+Implementation:
+  - indicatorHelpText map with description for each indicator
+  - Shows what columns each indicator creates (with alias substitution)
+  - Help text displayed in notice box below indicator configuration
+  - Includes practical information about overbought/oversold levels
+  - Output column format dynamically shows alias substitution
+
+Files modified:
+  - frontend/src/pages/StrategyBuilder.tsx: Added indicatorHelpText and UI display
+
+Indicators covered:
+  - RSI: Single column, overbought/oversold levels
+  - EMA/SMA: Single column, trend identification
+  - MACD: Three columns (macd, signal, hist)
+  - BB: Three columns (upper, mid, lower)
+  - ATR: Single column, volatility measure
+  - STOCH: Two columns (k, d), overbought/oversold levels
+  - ADX: Three columns (adx, dmp, dmn), trend strength
+  - ICHIMOKU: Five columns (tenkan, kijun, span_a, span_b, chikou)
+  - ROC: Single column, momentum
+  - OBV: Single column, volume-based
+
+
+5. STRATEGY REVIEW PAGE INCOMPLETE
 -----------------------------------
 Backend: Full strategy details available
 
@@ -334,10 +352,10 @@ PHASE 2 - High Priority (CURRENT)
 
 PHASE 3 - Medium Priority
 --------------------------
-[ ] 4. Improve condition builder UX
-[ ] 5. Add indicator help text
-[ ] 6. Enhance Review step
-[ ] 7. Add provider selection
+✅ 3. Improve condition builder UX
+✅ 4. Add indicator help text
+[ ] 5. Enhance Review step
+[ ] 6. Add provider selection
 
 PHASE 4 - Polish
 ----------------
