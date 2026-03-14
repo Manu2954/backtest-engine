@@ -58,6 +58,10 @@ async def _run_backtest_async(run_id: str) -> None:
                 session=session,
             )
 
+            # Store original OHLCV data for benchmark calculation (before warmup trim)
+            logger.info("Storing original OHLCV for benchmark")
+            df_original = df[["open", "high", "low", "close", "volume"]].copy()
+
             logger.info("Computing indicators")
             indicators = [
                 {
@@ -127,10 +131,11 @@ async def _run_backtest_async(run_id: str) -> None:
             logger.info("Generating report and persisting trades")
             _persist_trades(session, run.id, trades)
 
-            # Calculate buy-and-hold benchmark
-            logger.info("Calculating buy-and-hold benchmark")
+            # Calculate buy-and-hold benchmark using ORIGINAL data (not trimmed)
+            # This ensures benchmark buys at the actual start date, not after warmup trim
+            logger.info("Calculating buy-and-hold benchmark from original OHLCV")
             benchmark_equity = calculate_buy_and_hold_equity(
-                df, float(run.initial_capital), asset_class=run.asset_class
+                df_original, float(run.initial_capital), asset_class=run.asset_class
             )
 
             report = generate_report(

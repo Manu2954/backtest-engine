@@ -12,35 +12,49 @@ def calculate_buy_and_hold_equity(
     asset_class: str = "STOCK",
 ) -> pd.Series:
     """
-    Calculate buy-and-hold equity curve.
+    Calculate buy-and-hold equity curve using percentage returns.
 
-    Buys at the first bar's open price and holds until the end.
+    This represents tracking the asset's performance without share constraints.
+    Works for all assets regardless of price (handles high-priced indices like
+    ^NSEI, ^DJI, BRK.A, etc.).
 
     Args:
         df: OHLCV DataFrame
         initial_capital: Starting capital
-        asset_class: "STOCK" or "CRYPTO" (affects fractional shares)
+        asset_class: "STOCK" or "CRYPTO" (not used, kept for API compatibility)
 
     Returns:
         Equity curve Series aligned with df.index
+
+    Algorithm:
+        1. Entry at first bar's open price
+        2. Calculate percentage change from entry to each bar's close
+        3. Apply percentage returns to initial capital
+        4. Result: equity_curve[i] = initial_capital * (close[i] / open[0])
+
+    Example:
+        - Initial capital: $10,000
+        - Entry price (open[0]): 100
+        - Close prices: [101, 102, 110, 95]
+        - Returns: [1.01, 1.02, 1.10, 0.95]
+        - Equity: [$10,100, $10,200, $11,000, $9,500]
     """
     if df.empty or "open" not in df.columns or "close" not in df.columns:
         return pd.Series([], dtype=float, name="benchmark_equity")
 
-    # Buy at first bar's open
+    # Entry at first bar's open price
     entry_price = float(df.iloc[0]["open"])
 
-    # Calculate shares
-    allow_fractional = asset_class.upper() != "STOCK"
-    raw_shares = initial_capital / entry_price if entry_price > 0 else 0.0
-    shares = raw_shares if allow_fractional else float(int(raw_shares))
-
-    if shares == 0:
-        # Not enough capital to buy even 1 share
+    if entry_price <= 0:
+        # Invalid entry price - return flat equity at initial capital
         return pd.Series([initial_capital] * len(df), index=df.index, name="benchmark_equity")
 
-    # Mark-to-market at each bar's close
-    equity_curve = df["close"] * shares
+    # Calculate percentage returns from entry price to each bar's close
+    # pct_return = close / entry_price (e.g., close=110, entry=100 -> 1.10 = +10%)
+    pct_returns = df["close"] / entry_price
+
+    # Apply percentage returns to initial capital
+    equity_curve = initial_capital * pct_returns
 
     return pd.Series(equity_curve, index=df.index, name="benchmark_equity")
 
@@ -120,12 +134,17 @@ def _calculate_benchmark_stats(
 
     Args:
         strategy_equity: Strategy equity curve
-        benchmark_equity: Buy-and-hold equity curve
+        benchmark_equity: Buy-and-hold equity curve (FULL period, including warmup)
         initial_capital: Starting capital
         strategy_daily_returns: Strategy daily returns (already calculated)
 
     Returns:
         Dictionary with benchmark comparison stats
+
+    Note:
+        Benchmark represents buy-and-hold for the FULL requested period (original start to end),
+        while strategy may only trade during a subset (after warmup trim).
+        We calculate benchmark stats from the full period for accurate representation.
     """
     benchmark_equity = _to_series(benchmark_equity).dropna()
     benchmark_equity = _ensure_datetime_index(benchmark_equity)
@@ -133,16 +152,22 @@ def _calculate_benchmark_stats(
     if benchmark_equity.empty:
         return {}
 
-    # Benchmark final capital and return
+    # Benchmark return from FULL period (original start to end)
+    # This is what users expect: "What if I bought and held from day 1?"
+    benchmark_initial = float(benchmark_equity.iloc[0])
     benchmark_final = float(benchmark_equity.iloc[-1])
-    benchmark_return_pct = _safe_div(benchmark_final - initial_capital, initial_capital) * 100
+    benchmark_return_pct = _safe_div(benchmark_final - benchmark_initial, benchmark_initial) * 100
 
-    # Alpha: Strategy return - Benchmark return
+    # Strategy return from when it started trading (after warmup)
     strategy_final = float(strategy_equity.iloc[-1])
     strategy_return_pct = _safe_div(strategy_final - initial_capital, initial_capital) * 100
+
+    # Alpha: Strategy return - Benchmark return
+    # Note: This compares strategy's partial period against benchmark's full period
+    # This is correct because it shows if the strategy's active trading beat simple buy-and-hold
     alpha = strategy_return_pct - benchmark_return_pct
 
-    # Benchmark Sharpe ratio
+    # Benchmark Sharpe ratio (from full period)
     benchmark_daily_returns = benchmark_equity.pct_change().dropna()
     if not benchmark_daily_returns.empty and benchmark_daily_returns.std() != 0:
         benchmark_sharpe = (benchmark_daily_returns.mean() / benchmark_daily_returns.std()) * (252 ** 0.5)
@@ -150,7 +175,7 @@ def _calculate_benchmark_stats(
         benchmark_sharpe = 0.0
 
     # Beta: Correlation between strategy and benchmark returns
-    # Align the two series
+    # Align the two series to overlapping period only
     aligned_strategy, aligned_benchmark = strategy_daily_returns.align(benchmark_daily_returns, join="inner")
 
     if len(aligned_strategy) > 1 and aligned_benchmark.std() != 0:
@@ -160,7 +185,7 @@ def _calculate_benchmark_stats(
     else:
         beta = 0.0
 
-    # Benchmark max drawdown
+    # Benchmark max drawdown (from full period)
     benchmark_max_dd = _max_drawdown(benchmark_equity)
 
     return {
