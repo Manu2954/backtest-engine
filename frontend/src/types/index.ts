@@ -5,12 +5,18 @@ export type IndicatorType =
   | "MACD"
   | "BB"
   | "ATR"
-  | "STOCH";
+  | "STOCH"
+  | "ADX"
+  | "ICHIMOKU"
+  | "ROC"
+  | "OBV";
 
-export type OperandType = "INDICATOR" | "OHLCV" | "SCALAR";
+export type OperandType = "INDICATOR" | "OHLCV" | "SCALAR" | "LOOKBACK";
 export type OperatorType =
   | "CROSSES_ABOVE"
   | "CROSSES_BELOW"
+  | "IS_RISING"
+  | "IS_FALLING"
   | "GT"
   | "LT"
   | "EQ"
@@ -67,6 +73,14 @@ export interface BacktestCreate {
   end_date: string;
   bar_resolution: string;
   initial_capital: number;
+  position_size_type?: string;
+  position_size_value?: number;
+  stop_loss_pct?: number | null;
+  take_profit_pct?: number | null;
+  dynamic_stop_column?: string | null;
+  commission_per_trade?: number;
+  commission_pct?: number;
+  slippage_pct?: number;
   periodic_contribution?: {
     amount: number;
     frequency: "daily" | "weekly" | "monthly" | "interval_days";
@@ -88,6 +102,14 @@ export interface BacktestOut {
   celery_task_id?: string | null;
   error_message?: string | null;
   report?: Record<string, number> | null;
+  position_size_type?: string;
+  position_size_value?: number;
+  stop_loss_pct?: number | null;
+  take_profit_pct?: number | null;
+  commission_per_trade?: number;
+  commission_pct?: number;
+  slippage_pct?: number;
+  dynamic_stop_column?: string | null;
   periodic_contribution?: {
     amount: number;
     frequency: "daily" | "weekly" | "monthly" | "interval_days";
@@ -107,4 +129,5 @@ export interface TradeLog {
   pnl: number;
   pnl_pct: number;
   trade_duration_days: number;
+  exit_reason?: string;
 }

@@ -19,6 +19,8 @@ const sourceOptions = ["open", "high", "low", "close", "volume"];
 const operatorOptions = [
   "CROSSES_ABOVE",
   "CROSSES_BELOW",
+  "IS_RISING",
+  "IS_FALLING",
   "GT",
   "LT",
   "EQ",
@@ -55,6 +57,17 @@ const indicatorParamConfig: Record<IndicatorType, Array<{ key: string; label: st
     { key: "k_period", label: "K Period", type: "number" },
     { key: "d_period", label: "D Period", type: "number" },
   ],
+  ADX: [{ key: "period", label: "Period", type: "number" }],
+  ICHIMOKU: [
+    { key: "tenkan", label: "Tenkan", type: "number" },
+    { key: "kijun", label: "Kijun", type: "number" },
+    { key: "senkou", label: "Senkou", type: "number" },
+  ],
+  ROC: [
+    { key: "period", label: "Period", type: "number" },
+    { key: "source", label: "Source", type: "select" },
+  ],
+  OBV: [],
 };
 
 const indicatorDefaults: Record<IndicatorType, Record<string, number | string>> = {
@@ -65,6 +78,10 @@ const indicatorDefaults: Record<IndicatorType, Record<string, number | string>> 
   BB: { period: 20, std_dev: 2, source: "close" },
   ATR: { period: 14 },
   STOCH: { k_period: 14, d_period: 3 },
+  ADX: { period: 14 },
+  ICHIMOKU: { tenkan: 9, kijun: 26, senkou: 52 },
+  ROC: { period: 12, source: "close" },
+  OBV: {},
 };
 
 const steps = ["Indicators", "Entry Rules", "Exit Rules", "Backtest", "Review"];
@@ -111,7 +128,43 @@ export default function StrategyBuilder() {
   const [intervalDays, setIntervalDays] = useState("30");
   const [includeStart, setIncludeStart] = useState(false);
 
-  const indicatorAliases = useMemo(() => indicators.map((ind) => ind.alias), [indicators]);
+  // Advanced backtest options
+  const [positionSizeType, setPositionSizeType] = useState<"full_capital" | "percent_capital" | "fixed_amount" | "risk_based">("full_capital");
+  const [positionSizeValue, setPositionSizeValue] = useState("100");
+  const [stopLossPct, setStopLossPct] = useState("");
+  const [takeProfitPct, setTakeProfitPct] = useState("");
+  const [dynamicStopColumn, setDynamicStopColumn] = useState("");
+  const [commissionPerTrade, setCommissionPerTrade] = useState("0");
+  const [commissionPct, setCommissionPct] = useState("0");
+  const [slippagePct, setSlippagePct] = useState("0");
+
+
+  // Generate all indicator column names including multi-output indicators
+  const indicatorAliases = useMemo(() => {
+    const aliases: string[] = [];
+    indicators.forEach((ind) => {
+      const type = ind.indicator_type;
+      const alias = ind.alias;
+
+      // Add base alias
+      aliases.push(alias);
+
+      // Add sub-columns for multi-output indicators
+      if (type === "MACD") {
+        aliases.push(`${alias}_macd`, `${alias}_signal`, `${alias}_hist`);
+      } else if (type === "BB") {
+        aliases.push(`${alias}_upper`, `${alias}_mid`, `${alias}_lower`);
+      } else if (type === "STOCH") {
+        aliases.push(`${alias}_k`, `${alias}_d`);
+      } else if (type === "ADX") {
+        aliases.push(`${alias}_dmp`, `${alias}_dmn`);
+      } else if (type === "ICHIMOKU") {
+        aliases.push(`${alias}_tenkan`, `${alias}_kijun`, `${alias}_span_a`, `${alias}_span_b`, `${alias}_chikou`);
+      }
+    });
+    return aliases;
+  }, [indicators]);
+
   const resolutionOptions =
     assetClass === "CRYPTO"
       ? ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1mo"]
@@ -278,6 +331,14 @@ export default function StrategyBuilder() {
         end_date: endDate,
         bar_resolution: resolution,
         initial_capital: Number(initialCapital),
+        position_size_type: positionSizeType,
+        position_size_value: Number(positionSizeValue),
+        stop_loss_pct: stopLossPct ? Number(stopLossPct) : null,
+        take_profit_pct: takeProfitPct ? Number(takeProfitPct) : null,
+        dynamic_stop_column: dynamicStopColumn || null,
+        commission_per_trade: Number(commissionPerTrade),
+        commission_pct: Number(commissionPct),
+        slippage_pct: Number(slippagePct),
         periodic_contribution: periodicContribution,
       });
       navigate(`/backtests/${backtest.id}`);
@@ -437,12 +498,14 @@ export default function StrategyBuilder() {
                     <option value="INDICATOR">INDICATOR</option>
                     <option value="OHLCV">OHLCV</option>
                     <option value="SCALAR">SCALAR</option>
+                    <option value="LOOKBACK">LOOKBACK</option>
                   </select>
                 </div>
                 <div>
                   <label>Left Value</label>
-                  {condition.left_operand_type === "SCALAR" ? (
+                  {condition.left_operand_type === "SCALAR" || condition.left_operand_type === "LOOKBACK" ? (
                     <input
+                      placeholder={condition.left_operand_type === "LOOKBACK" ? "e.g., adx:-3" : ""}
                       value={condition.left_operand_value}
                       onChange={(e) =>
                         updateCondition("entry", idx, { left_operand_value: e.target.value })
@@ -494,12 +557,14 @@ export default function StrategyBuilder() {
                     <option value="INDICATOR">INDICATOR</option>
                     <option value="OHLCV">OHLCV</option>
                     <option value="SCALAR">SCALAR</option>
+                    <option value="LOOKBACK">LOOKBACK</option>
                   </select>
                 </div>
                 <div>
                   <label>Right Value</label>
-                  {condition.right_operand_type === "SCALAR" ? (
+                  {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
                     <input
+                      placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
                       value={condition.right_operand_value}
                       onChange={(e) =>
                         updateCondition("entry", idx, { right_operand_value: e.target.value })
@@ -565,12 +630,14 @@ export default function StrategyBuilder() {
                     <option value="INDICATOR">INDICATOR</option>
                     <option value="OHLCV">OHLCV</option>
                     <option value="SCALAR">SCALAR</option>
+                    <option value="LOOKBACK">LOOKBACK</option>
                   </select>
                 </div>
                 <div>
                   <label>Left Value</label>
-                  {condition.left_operand_type === "SCALAR" ? (
+                  {condition.left_operand_type === "SCALAR" || condition.left_operand_type === "LOOKBACK" ? (
                     <input
+                      placeholder={condition.left_operand_type === "LOOKBACK" ? "e.g., adx:-3" : ""}
                       value={condition.left_operand_value}
                       onChange={(e) =>
                         updateCondition("exit", idx, { left_operand_value: e.target.value })
@@ -622,12 +689,14 @@ export default function StrategyBuilder() {
                     <option value="INDICATOR">INDICATOR</option>
                     <option value="OHLCV">OHLCV</option>
                     <option value="SCALAR">SCALAR</option>
+                    <option value="LOOKBACK">LOOKBACK</option>
                   </select>
                 </div>
                 <div>
                   <label>Right Value</label>
-                  {condition.right_operand_type === "SCALAR" ? (
+                  {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
                     <input
+                      placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
                       value={condition.right_operand_value}
                       onChange={(e) =>
                         updateCondition("exit", idx, { right_operand_value: e.target.value })
@@ -709,6 +778,113 @@ export default function StrategyBuilder() {
               </select>
             </div>
           </div>
+
+          <div className="card" style={{ marginTop: "16px" }}>
+            <h4>Position Sizing & Risk Management</h4>
+            <div className="row">
+              <div>
+                <label>Position Sizing Type</label>
+                <select
+                  value={positionSizeType}
+                  onChange={(e) => setPositionSizeType(e.target.value as any)}
+                >
+                  <option value="full_capital">Full Capital</option>
+                  <option value="percent_capital">Percent of Capital</option>
+                  <option value="fixed_amount">Fixed Amount</option>
+                  <option value="risk_based">Risk-Based</option>
+                </select>
+              </div>
+              {positionSizeType !== "full_capital" && (
+                <div>
+                  <label>
+                    {positionSizeType === "percent_capital" ? "Percentage (%)" : positionSizeType === "fixed_amount" ? "Fixed Amount ($)" : "Risk Percentage (%)"}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={positionSizeValue}
+                    onChange={(e) => setPositionSizeValue(e.target.value)}
+                    placeholder={positionSizeType === "percent_capital" ? "e.g., 50" : positionSizeType === "fixed_amount" ? "e.g., 10000" : "e.g., 1.0"}
+                  />
+                </div>
+              )}
+            </div>
+            <div className="row" style={{ marginTop: "12px" }}>
+              <div>
+                <label>Stop Loss (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={stopLossPct}
+                  onChange={(e) => setStopLossPct(e.target.value)}
+                  placeholder="Optional, e.g., 5"
+                />
+              </div>
+              <div>
+                <label>Take Profit (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={takeProfitPct}
+                  onChange={(e) => setTakeProfitPct(e.target.value)}
+                  placeholder="Optional, e.g., 15"
+                />
+              </div>
+              <div>
+                <label>Dynamic Stop (Indicator-based)</label>
+                <select
+                  value={dynamicStopColumn}
+                  onChange={(e) => setDynamicStopColumn(e.target.value)}
+                >
+                  <option value="">None</option>
+                  {indicatorAliases.map((alias) => (
+                    <option key={alias} value={alias}>
+                      {alias}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="notice" style={{ marginTop: "12px", fontSize: "0.85rem" }}>
+              <strong>Dynamic Stop:</strong> Select an indicator column to use as a trailing stop.
+              Exit when price crosses below the indicator value (e.g., ATR-based stop, Kijun-sen).
+              Takes priority over fixed percentage stops.
+            </div>
+          </div>
+
+          <div className="card" style={{ marginTop: "16px" }}>
+            <h4>Transaction Costs</h4>
+            <div className="row">
+              <div>
+                <label>Commission per Trade ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={commissionPerTrade}
+                  onChange={(e) => setCommissionPerTrade(e.target.value)}
+                />
+              </div>
+              <div>
+                <label>Commission (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={commissionPct}
+                  onChange={(e) => setCommissionPct(e.target.value)}
+                />
+              </div>
+              <div>
+                <label>Slippage (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={slippagePct}
+                  onChange={(e) => setSlippagePct(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="row" style={{ marginTop: "12px" }}>
             <button className="btn secondary" onClick={handleValidateTicker}>
               Validate Ticker
