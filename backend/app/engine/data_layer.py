@@ -313,6 +313,7 @@ async def fetch_ohlcv_async(
     asset_class: str = "STOCK",
     session: AsyncSession | None = None,
     provider: str | None = None,
+    timezone: str = "Asia/Kolkata",
 ) -> pd.DataFrame:
     """
     Fetch OHLCV data from cache, database, or external API.
@@ -330,8 +331,11 @@ async def fetch_ohlcv_async(
         asset_class: "STOCK" or "CRYPTO"
         session: Optional database session
         provider: Data provider to use (optional)
-                 Supported: "yfinance"
-                 If None, defaults to "yfinance"
+                 Supported: "yfinance", "binance"
+                 If None, defaults to:
+                   - "yfinance" for STOCK
+                   - "binance" for CRYPTO
+        timezone: Timezone for date range interpretation (default: "Asia/Kolkata" = IST)
 
     Returns:
         DataFrame with OHLCV data
@@ -408,11 +412,11 @@ async def fetch_ohlcv_async(
         if asset == "STOCK":
             # Always use provider system
             if provider is None:
-                provider = "yfinance"  # Default provider
+                provider = "yfinance"  # Default provider for stocks
 
             from app.providers.factory import ProviderFactory
 
-            data_provider = ProviderFactory.create_provider(provider)
+            data_provider = ProviderFactory.create_provider(provider, timezone=timezone)
             start_dt = datetime.combine(start_date, datetime.min.time())
             end_dt = datetime.combine(end_date, datetime.min.time())
             df = await data_provider.fetch_ohlcv(
@@ -421,11 +425,11 @@ async def fetch_ohlcv_async(
         else:
             # CRYPTO asset class
             if provider is None:
-                provider = "yfinance"  # Default provider (handles crypto via yfinance)
+                provider = "binance"  # Default provider for crypto
 
             from app.providers.factory import ProviderFactory
 
-            data_provider = ProviderFactory.create_provider(provider)
+            data_provider = ProviderFactory.create_provider(provider, timezone=timezone)
             start_dt = datetime.combine(start_date, datetime.min.time())
             end_dt = datetime.combine(end_date, datetime.min.time())
             df = await data_provider.fetch_ohlcv(
@@ -455,6 +459,7 @@ def fetch_ohlcv(
     resolution: str = "1d",
     asset_class: str = "STOCK",
     provider: str | None = None,
+    timezone: str = "Asia/Kolkata",
 ) -> pd.DataFrame:
     import asyncio
 
@@ -463,7 +468,13 @@ def fetch_ohlcv(
     except RuntimeError:
         return asyncio.run(
             fetch_ohlcv_async(
-                ticker, start, end, resolution=resolution, asset_class=asset_class, provider=provider
+                ticker,
+                start,
+                end,
+                resolution=resolution,
+                asset_class=asset_class,
+                provider=provider,
+                timezone=timezone,
             )
         )
     raise RuntimeError("fetch_ohlcv cannot be called from an active event loop; use fetch_ohlcv_async.")

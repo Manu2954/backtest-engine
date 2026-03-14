@@ -12,7 +12,12 @@ import pandas as pd
 
 
 class DataProvider(ABC):
-    """Abstract base class for market data providers."""
+    """
+    Abstract base class for market data providers.
+
+    All providers should accept a timezone parameter in their __init__ method
+    to properly interpret date ranges. Default should be "Asia/Kolkata" (IST).
+    """
 
     @abstractmethod
     async def fetch_ohlcv(

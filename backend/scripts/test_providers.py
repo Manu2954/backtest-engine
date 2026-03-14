@@ -24,17 +24,30 @@ async def test_providers():
     print("=" * 80)
 
     # Test configuration
-    ticker = "AAPL"
+    test_cases = {
+        "yfinance": {
+            "ticker": "AAPL",
+            "asset_class": "STOCK",
+        },
+        "binance": {
+            "ticker": "BTCUSDT",
+            "asset_class": "CRYPTO",
+        },
+    }
     start_date = datetime(2024, 1, 1)
     end_date = datetime(2024, 1, 31)
     intervals_to_test = ["1d"]  # Start with daily, can add intraday later
-    asset_class = "STOCK"  # Test with stocks
 
     providers_to_test = [
         "yfinance",
+        "binance",  # Test Binance for crypto
     ]
 
     for provider_name in providers_to_test:
+        test_config = test_cases[provider_name]
+        ticker = test_config["ticker"]
+        asset_class = test_config["asset_class"]
+
         for interval in intervals_to_test:
             print(f"\n{'=' * 80}")
             print(f"Testing Provider: {provider_name} | Interval: {interval} | Asset: {asset_class}")
