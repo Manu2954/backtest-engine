@@ -312,6 +312,7 @@ async def fetch_ohlcv_async(
     resolution: str = "1d",
     asset_class: str = "STOCK",
     session: AsyncSession | None = None,
+    provider: str | None = None,
 ) -> pd.DataFrame:
     """
     Fetch OHLCV data from cache, database, or external API.
@@ -328,6 +329,9 @@ async def fetch_ohlcv_async(
         resolution: Time resolution (e.g., "1d", "1h")
         asset_class: "STOCK" or "CRYPTO"
         session: Optional database session
+        provider: Data provider to use (optional)
+                 Supported: "yfinance"
+                 If None, defaults to "yfinance"
 
     Returns:
         DataFrame with OHLCV data
@@ -402,17 +406,31 @@ async def fetch_ohlcv_async(
                 )
 
         if asset == "STOCK":
-            df = yf.download(
-                tickers=ticker,
-                start=start_date.isoformat(),
-                end=end_date.isoformat(),
-                interval=resolution,
-                auto_adjust=True,
-                progress=False,
+            # Always use provider system
+            if provider is None:
+                provider = "yfinance"  # Default provider
+
+            from app.providers.factory import ProviderFactory
+
+            data_provider = ProviderFactory.create_provider(provider)
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            end_dt = datetime.combine(end_date, datetime.min.time())
+            df = await data_provider.fetch_ohlcv(
+                ticker, start_dt, end_dt, interval=resolution, asset_class=asset
             )
         else:
-            symbol = _binance_symbol(ticker)
-            df = _fetch_binance_ohlcv(symbol, start_date, end_date, resolution)
+            # CRYPTO asset class
+            if provider is None:
+                provider = "yfinance"  # Default provider (handles crypto via yfinance)
+
+            from app.providers.factory import ProviderFactory
+
+            data_provider = ProviderFactory.create_provider(provider)
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            end_dt = datetime.combine(end_date, datetime.min.time())
+            df = await data_provider.fetch_ohlcv(
+                ticker, start_dt, end_dt, interval=resolution, asset_class=asset
+            )
 
         df = _normalize_df(df)
         if df.empty:
@@ -436,6 +454,7 @@ def fetch_ohlcv(
     end: str | date | datetime,
     resolution: str = "1d",
     asset_class: str = "STOCK",
+    provider: str | None = None,
 ) -> pd.DataFrame:
     import asyncio
 
@@ -443,39 +462,38 @@ def fetch_ohlcv(
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(
-            fetch_ohlcv_async(ticker, start, end, resolution=resolution, asset_class=asset_class)
+            fetch_ohlcv_async(
+                ticker, start, end, resolution=resolution, asset_class=asset_class, provider=provider
+            )
         )
     raise RuntimeError("fetch_ohlcv cannot be called from an active event loop; use fetch_ohlcv_async.")
 
 
 def validate_ticker(ticker: str, asset_class: str = "STOCK") -> bool:
-    asset = asset_class.upper()
-    if asset == "CRYPTO":
-        symbol = _binance_symbol(ticker)
-        try:
-            response = httpx.get(f"{BINANCE_URL}/exchangeInfo", timeout=10.0)
-            response.raise_for_status()
-            symbols = response.json().get("symbols", [])
-            return any(s.get("symbol") == symbol for s in symbols)
-        except Exception:
-            return False
-    if asset != "STOCK":
-        return False
+    """
+    Validate that a ticker symbol is valid and returns data.
 
+    Uses the provider system to attempt fetching recent data.
+
+    Args:
+        ticker: Ticker symbol to validate
+        asset_class: "STOCK" or "CRYPTO"
+
+    Returns:
+        True if ticker is valid, False otherwise
+    """
     end_date = datetime.utcnow().date()
     start_date = end_date - timedelta(days=7)
 
     try:
-        df = yf.download(
-            tickers=ticker,
-            start=start_date.isoformat(),
-            end=end_date.isoformat(),
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
+        # Use fetch_ohlcv which goes through provider system
+        df = fetch_ohlcv(
+            ticker=ticker,
+            start=start_date,
+            end=end_date,
+            resolution="1d",
+            asset_class=asset_class,
         )
-        df = _normalize_df(df)
+        return not df.empty
     except Exception:
         return False
-
-    return not df.empty
