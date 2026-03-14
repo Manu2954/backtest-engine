@@ -277,19 +277,46 @@ Files to modify:
   - StrategyBuilder.tsx: Enhance Review step with all settings
 
 
-7. PROVIDER SELECTION (MISSING)
---------------------------------
+7. PROVIDER SELECTION ✅ COMPLETED
+-----------------------------------
+Status: ✅ COMPLETED
+Commit: [pending]
+
 Backend: Supports multiple providers (yfinance, binance)
          Auto-selects based on asset class but can be overridden
 
-Frontend Gap:
-  - No way to explicitly select data provider
-  - Auto-selection not explained to user
+Implementation:
+  Frontend:
+  - Added provider field to BacktestCreate type
+  - Added provider state variable to StrategyBuilder
+  - Added provider dropdown in Backtest Config step (step 3)
+  - Options: Auto (default), Yahoo Finance, Binance
+  - Added help text explaining auto-selection behavior
+  - Added provider display in Review step
+  - Provider passed to createBacktest API call
 
-Files to modify:
-  - types/index.ts: Add provider field to BacktestCreate
-  - StrategyBuilder.tsx: Add optional provider dropdown
-  - Add note about auto-selection behavior
+  Backend:
+  - Added provider field to BacktestCreate schema (optional)
+  - Added provider column to BacktestRun model
+  - Added provider field to BacktestOut schema
+  - Updated create_backtest endpoint to save provider
+  - Updated backtest task to pass provider to fetch_ohlcv_async
+  - Created database migration (6151cbef3598)
+
+Files modified:
+  - frontend/src/types/index.ts: Added provider field
+  - frontend/src/pages/StrategyBuilder.tsx: Added provider UI and logic
+  - backend/app/api/schemas/backtest.py: Added provider fields
+  - backend/app/models/backtest.py: Added provider column
+  - backend/app/api/routes/backtests.py: Save all backtest fields
+  - backend/app/tasks/backtest_task.py: Pass provider to data layer
+  - backend/alembic/versions/6151cbef3598_*.py: Migration file
+
+User experience:
+  - Default "Auto" option uses yfinance for stocks, binance for crypto
+  - User can override to use yfinance for crypto (e.g., BTC-USD)
+  - Clear explanation shown in help text
+  - Provider choice displayed in review before submission
 
 
 ================================================================================
@@ -376,12 +403,12 @@ PHASE 2 - High Priority (CURRENT)
 [ ] 2. Complete BacktestReport metrics (largest win/loss, benchmark comparison)
 [ ] 3. Complete BacktestOut type
 
-PHASE 3 - Medium Priority
---------------------------
+PHASE 3 - Medium Priority ✅ COMPLETED
+----------------------------------------
 ✅ 3. Improve condition builder UX
 ✅ 4. Add indicator help text
 ✅ 5. Enhance Review step
-[ ] 6. Add provider selection
+✅ 6. Add provider selection
 
 PHASE 4 - Polish
 ----------------

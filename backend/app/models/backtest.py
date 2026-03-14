@@ -19,6 +19,7 @@ class BacktestRun(Base):
     )
     ticker: Mapped[str] = mapped_column(String(32), nullable=False)
     asset_class: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
     start_date: Mapped[str] = mapped_column(Date, nullable=False)
     end_date: Mapped[str] = mapped_column(Date, nullable=False)
     bar_resolution: Mapped[str] = mapped_column(String(8), nullable=False)

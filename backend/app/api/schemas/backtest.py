@@ -15,6 +15,7 @@ class BacktestCreate(BaseModel):
     end_date: date
     bar_resolution: str = "1d"
     initial_capital: float
+    provider: str | None = None  # Data provider: "yfinance" or "binance" (auto-selected if None)
     periodic_contribution: dict[str, Any] | None = None
     # Position sizing parameters
     position_size_type: str = "full_capital"  # "full_capital" | "percent_capital" | "fixed_amount"
@@ -35,6 +36,7 @@ class BacktestOut(BaseModel):
     strategy_id: UUID
     ticker: str
     asset_class: str
+    provider: str | None
     start_date: date
     end_date: date
     bar_resolution: str

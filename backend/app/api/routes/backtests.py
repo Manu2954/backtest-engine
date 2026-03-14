@@ -28,12 +28,20 @@ async def create_backtest(
         strategy_id=payload.strategy_id,
         ticker=payload.ticker,
         asset_class=payload.asset_class,
+        provider=payload.provider,
         start_date=payload.start_date,
         end_date=payload.end_date,
         bar_resolution=payload.bar_resolution,
         initial_capital=payload.initial_capital,
         status="PENDING",
         periodic_contribution=payload.periodic_contribution,
+        position_size_type=payload.position_size_type,
+        position_size_value=payload.position_size_value,
+        stop_loss_pct=payload.stop_loss_pct,
+        take_profit_pct=payload.take_profit_pct,
+        commission_per_trade=payload.commission_per_trade,
+        commission_pct=payload.commission_pct,
+        slippage_pct=payload.slippage_pct,
     )
     session.add(run)
     await session.commit()

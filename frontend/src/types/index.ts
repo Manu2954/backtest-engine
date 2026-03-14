@@ -85,6 +85,7 @@ export interface BacktestCreate {
   end_date: string;
   bar_resolution: string;
   initial_capital: number;
+  provider?: string | null;
   position_size_type?: string;
   position_size_value?: number;
   stop_loss_pct?: number | null;

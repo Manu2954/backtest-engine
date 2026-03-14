@@ -176,6 +176,7 @@ export default function StrategyBuilder() {
 
   const [ticker, setTicker] = useState("AAPL");
   const [assetClass, setAssetClass] = useState<"STOCK" | "CRYPTO">("STOCK");
+  const [provider, setProvider] = useState<string>("");
   const [startDate, setStartDate] = useState("2020-01-01");
   const [endDate, setEndDate] = useState("2023-12-31");
   const [initialCapital, setInitialCapital] = useState("10000");
@@ -573,6 +574,7 @@ export default function StrategyBuilder() {
         strategy_id: strategy.id,
         ticker,
         asset_class: assetClass,
+        provider: provider || null,
         start_date: startDate,
         end_date: endDate,
         bar_resolution: resolution,
@@ -1522,6 +1524,17 @@ export default function StrategyBuilder() {
               </select>
             </div>
             <div>
+              <label>Data Provider</label>
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+              >
+                <option value="">Auto (default)</option>
+                <option value="yfinance">Yahoo Finance</option>
+                <option value="binance">Binance</option>
+              </select>
+            </div>
+            <div>
               <label>Initial Capital</label>
               <input
                 type="number"
@@ -1529,6 +1542,10 @@ export default function StrategyBuilder() {
                 onChange={(e) => setInitialCapital(e.target.value)}
               />
             </div>
+          </div>
+          <div className="notice" style={{ marginTop: "8px", fontSize: "0.85rem" }}>
+            <strong>Data Provider:</strong> Leave as "Auto" to use yfinance for stocks and binance for crypto.
+            You can override this if needed (e.g., use yfinance for crypto tickers like BTC-USD).
           </div>
           <div className="row" style={{ marginTop: "12px" }}>
             <div>
@@ -1772,6 +1789,7 @@ export default function StrategyBuilder() {
               <p><strong>Ticker:</strong> {ticker} ({assetClass})</p>
               <p><strong>Period:</strong> {startDate} → {endDate}</p>
               <p><strong>Resolution:</strong> {resolution}</p>
+              <p><strong>Data Provider:</strong> {provider || "Auto (yfinance for stocks, binance for crypto)"}</p>
               <p><strong>Initial Capital:</strong> ${Number(initialCapital).toLocaleString()}</p>
               {contributionEnabled && (
                 <p><strong>Periodic Contribution:</strong> ${Number(contributionAmount).toLocaleString()} ({contributionFrequency})</p>

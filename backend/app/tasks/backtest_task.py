@@ -56,6 +56,7 @@ async def _run_backtest_async(run_id: str) -> None:
                 run.bar_resolution,
                 run.asset_class,
                 session=session,
+                provider=run.provider,
             )
 
             # Store original OHLCV data for benchmark calculation (before warmup trim)
