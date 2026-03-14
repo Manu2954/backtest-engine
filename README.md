@@ -523,13 +523,20 @@ For detailed limitations and V2 roadmap, see `docs/V1_LIMITATIONS.txt`
 
 ## Documentation
 
-Comprehensive guides for all features:
+### Complete System Guide
+- **[BACKTEST_ENGINE_COMPREHENSIVE_GUIDE.txt](docs/BACKTEST_ENGINE_COMPREHENSIVE_GUIDE.txt)** - Complete system documentation covering:
+  - User perspective (what it is, how to use it, creating strategies, running backtests, understanding results)
+  - Developer perspective (architecture, data flow, engine modules, database models, API layer, provider system)
+  - Practical applications (use cases, strategy development workflow, performance optimization, extending the system)
+  - Example strategies and complete API reference
 
+### Feature-Specific Guides
 - **[POSITION_SIZING.txt](docs/POSITION_SIZING.txt)** - Complete guide to position sizing methods (full_capital, percent_capital, fixed_amount, risk_based)
 - **[INDICATORS.txt](docs/INDICATORS.txt)** - All 11 supported indicators with parameters, examples, and common uses
 - **[OPERATORS.txt](docs/OPERATORS.txt)** - Condition operators reference (GT, LT, CROSSES_ABOVE, IS_RISING, LOOKBACK, etc.)
-- **[COMPARISON.txt](docs/COMPARISON.txt)** - Comparison with commercial platforms (Zerodha Streak, TradingView, QuantConnect)
 - **[V1_LIMITATIONS.txt](docs/V1_LIMITATIONS.txt)** - Known limitations and V2 roadmap
+
+### Development
 - **[CLAUDE.md](CLAUDE.md)** - Development guidelines and project conventions
 
 ## Contributing

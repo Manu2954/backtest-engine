@@ -1,0 +1,1432 @@
+================================================================================
+                    BACKTEST ENGINE - COMPREHENSIVE GUIDE
+================================================================================
+
+                            Table of Contents
+                            -----------------
+
+PART I:   USER PERSPECTIVE
+          1.1  What is the BacktestEngine?
+          1.2  Core Concepts
+          1.3  Creating a Trading Strategy
+          1.4  Running a Backtest
+          1.5  Understanding Results
+          1.6  Supported Features
+
+PART II:  DEVELOPER PERSPECTIVE
+          2.1  Architecture Overview
+          2.2  Data Flow Pipeline
+          2.3  Core Engine Modules
+          2.4  Database Models
+          2.5  API Layer
+          2.6  Provider System
+          2.7  Task Processing
+
+PART III: PRACTICAL APPLICATIONS
+          3.1  Use Cases
+          3.2  Strategy Development Workflow
+          3.3  Performance Optimization
+          3.4  Extending the System
+
+================================================================================
+                        PART I: USER PERSPECTIVE
+================================================================================
+
+
+1.1 WHAT IS THE BACKTEST ENGINE?
+--------------------------------
+
+The BacktestEngine is a full-stack application for evaluating technical
+indicator-based trading strategies using historical market data. It allows
+traders and quantitative analysts to:
+
+  - Define trading strategies using technical indicators
+  - Test strategies against historical data
+  - Analyze performance metrics
+  - Compare strategies against buy-and-hold benchmarks
+  - Simulate realistic trading conditions (commissions, slippage, position sizing)
+
+The system supports both stocks (via Yahoo Finance) and cryptocurrencies
+(via Binance), making it versatile for different asset classes.
+
+
+1.2 CORE CONCEPTS
+-----------------
+
+A. STRATEGY
+   A strategy is a complete trading plan consisting of:
+   - Technical indicators (e.g., RSI, MACD, EMA)
+   - Entry conditions (when to buy)
+   - Exit conditions (when to sell)
+
+B. INDICATORS
+   Mathematical calculations applied to price/volume data to identify
+   trading opportunities. Each indicator has:
+   - Type: RSI, SMA, EMA, MACD, Bollinger Bands, ATR, Stochastic, ADX,
+           Ichimoku Cloud, ROC, OBV
+   - Alias: A unique name for referencing in conditions (e.g., "rsi_14")
+   - Parameters: Settings like period, source column, etc.
+
+C. CONDITIONS
+   Rules that determine when to enter or exit trades. Each condition has:
+   - Left operand: The value being compared (indicator, OHLCV, scalar, lookback)
+   - Operator: How to compare (GT, LT, CROSSES_ABOVE, IS_RISING, etc.)
+   - Right operand: What to compare against
+
+D. CONDITION GROUPS
+   Collections of conditions combined with AND/OR logic.
+
+E. BACKTEST RUN
+   A single test of a strategy against historical data for a specific:
+   - Ticker symbol
+   - Date range
+   - Initial capital
+   - Position sizing rules
+   - Risk management settings
+
+
+1.3 CREATING A TRADING STRATEGY
+-------------------------------
+
+A strategy is created by defining indicators and entry/exit conditions.
+
+STEP 1: DEFINE INDICATORS
+-------------------------
+Each indicator requires:
+  - indicator_type: The type of indicator
+  - alias: A unique identifier
+  - params: Indicator-specific parameters
+
+Example indicators:
+
+  RSI (Relative Strength Index):
+    {
+      "indicator_type": "RSI",
+      "alias": "rsi_14",
+      "params": {"period": 14, "source": "close"}
+    }
+
+  EMA (Exponential Moving Average):
+    {
+      "indicator_type": "EMA",
+      "alias": "ema_20",
+      "params": {"period": 20, "source": "close"}
+    }
+
+  MACD (Moving Average Convergence Divergence):
+    {
+      "indicator_type": "MACD",
+      "alias": "macd_12_26_9",
+      "params": {"fast": 12, "slow": 26, "signal": 9}
+    }
+    Note: Creates three columns: macd_12_26_9_macd, macd_12_26_9_signal,
+          macd_12_26_9_hist
+
+  Bollinger Bands:
+    {
+      "indicator_type": "BB",
+      "alias": "bb_20",
+      "params": {"period": 20, "std_dev": 2.0}
+    }
+    Note: Creates three columns: bb_20_upper, bb_20_mid, bb_20_lower
+
+  ATR (Average True Range):
+    {
+      "indicator_type": "ATR",
+      "alias": "atr_14",
+      "params": {"period": 14}
+    }
+
+  ADX (Average Directional Index):
+    {
+      "indicator_type": "ADX",
+      "alias": "adx_14",
+      "params": {"period": 14}
+    }
+    Note: Creates three columns: adx_14, adx_14_dmp (+DI), adx_14_dmn (-DI)
+
+  Ichimoku Cloud:
+    {
+      "indicator_type": "ICHIMOKU",
+      "alias": "ichi",
+      "params": {"tenkan": 9, "kijun": 26, "senkou": 52}
+    }
+    Note: Creates five columns: ichi_tenkan, ichi_kijun, ichi_span_a,
+          ichi_span_b, ichi_chikou
+
+
+STEP 2: DEFINE ENTRY CONDITIONS
+-------------------------------
+Entry conditions determine when to open a position. They consist of:
+
+OPERAND TYPES:
+  - INDICATOR: Reference to a computed indicator (e.g., "rsi_14")
+  - OHLCV: Price data columns ("open", "high", "low", "close", "volume")
+  - SCALAR: Constant numeric value (e.g., "30", "50.5")
+  - LOOKBACK: Historical value ("column:-N" for N bars ago)
+
+OPERATORS:
+  - GT:            Greater than
+  - LT:            Less than
+  - EQ:            Equal to
+  - GTE:           Greater than or equal
+  - LTE:           Less than or equal
+  - CROSSES_ABOVE: Left crosses above right (requires two series)
+  - CROSSES_BELOW: Left crosses below right (requires two series)
+  - IS_RISING:     Current value > previous value (single series)
+  - IS_FALLING:    Current value < previous value (single series)
+
+Example Entry Condition (RSI below 30):
+  {
+    "logic": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "INDICATOR",
+        "left_operand_value": "rsi_14",
+        "operator": "LT",
+        "right_operand_type": "SCALAR",
+        "right_operand_value": "30"
+      }
+    ]
+  }
+
+Example Entry Condition (Price crosses above EMA):
+  {
+    "logic": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "OHLCV",
+        "left_operand_value": "close",
+        "operator": "CROSSES_ABOVE",
+        "right_operand_type": "INDICATOR",
+        "right_operand_value": "ema_20"
+      }
+    ]
+  }
+
+Example Entry Condition with LOOKBACK (ADX rising over 3 bars):
+  {
+    "logic": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "INDICATOR",
+        "left_operand_value": "adx_14",
+        "operator": "GT",
+        "right_operand_type": "LOOKBACK",
+        "right_operand_value": "adx_14:-3"
+      }
+    ]
+  }
+
+
+STEP 3: DEFINE EXIT CONDITIONS
+------------------------------
+Exit conditions determine when to close a position. They use the same
+format as entry conditions but are evaluated while in a position.
+
+
+STEP 4: COMBINE WITH EXPRESSIONS (ADVANCED)
+-------------------------------------------
+For complex strategies, you can define multiple named condition groups
+and combine them with boolean expressions.
+
+Example Expression-Based Strategy:
+  Entry Groups:
+    "oversold": RSI < 30
+    "trending": ADX > 25
+    "bullish_cross": MACD crosses above signal
+
+  Entry Expression: "(oversold && trending) || bullish_cross"
+
+This enters when EITHER:
+  - RSI is below 30 AND ADX is above 25
+  - OR MACD crosses above its signal line
+
+Supported Expression Operators:
+  - && or & : AND
+  - || or | : OR
+  - ! or ~  : NOT
+  - ()      : Grouping
+
+
+1.4 RUNNING A BACKTEST
+----------------------
+
+A backtest is executed by providing:
+
+REQUIRED PARAMETERS:
+  - strategy_id:      UUID of the strategy to test
+  - ticker:           Symbol to trade (e.g., "AAPL", "BTCUSDT")
+  - asset_class:      "STOCK" or "CRYPTO"
+  - start_date:       Start of test period
+  - end_date:         End of test period
+  - initial_capital:  Starting capital amount
+
+OPTIONAL PARAMETERS:
+
+  Bar Resolution (bar_resolution):
+    - "1m", "5m", "15m", "30m", "1h" (intraday)
+    - "1d" (daily - default)
+    - "1wk" (weekly)
+    - "1mo" (monthly)
+
+  Position Sizing (position_size_type, position_size_value):
+    - "full_capital": Use all available cash (default)
+    - "percent_capital": Use X% of total capital (value = percentage)
+    - "fixed_amount": Use fixed dollar amount per trade (value = dollars)
+    - "risk_based": Size based on risk percentage and stop distance
+
+  Risk Management:
+    - stop_loss_pct:    Exit if price drops X% from entry
+    - take_profit_pct:  Exit if price rises X% from entry
+
+  Transaction Costs:
+    - commission_per_trade: Fixed cost per trade (e.g., $5)
+    - commission_pct:       Percentage of trade value (e.g., 0.1%)
+    - slippage_pct:         Price slippage on execution (e.g., 0.05%)
+
+  Periodic Contributions:
+    - amount:       Dollar amount to add
+    - frequency:    "daily", "weekly", "monthly", "interval_days"
+    - interval_days: Custom interval (if frequency = "interval_days")
+    - include_start: Whether to contribute on first bar
+
+
+1.5 UNDERSTANDING RESULTS
+-------------------------
+
+A completed backtest produces a comprehensive report:
+
+PERFORMANCE METRICS:
+  - total_return_pct:       Total percentage return
+  - cagr:                   Compound Annual Growth Rate
+  - sharpe_ratio:           Risk-adjusted return (annualized)
+  - max_drawdown_pct:       Maximum peak-to-trough decline
+  - longest_drawdown_days:  Longest time in drawdown
+
+TRADE STATISTICS:
+  - total_trades:           Number of completed trades
+  - win_rate:               Percentage of profitable trades
+  - avg_win:                Average profit on winning trades
+  - avg_loss:               Average loss on losing trades
+  - avg_win_loss:           Ratio of avg win to avg loss
+  - profit_factor:          Gross profit / gross loss
+  - largest_win:            Biggest single winning trade
+  - largest_loss:           Biggest single losing trade
+  - avg_trade_duration_days: Average time in a trade
+
+FINAL VALUES:
+  - final_capital:          Ending portfolio value
+
+BENCHMARK COMPARISON:
+  - benchmark_return_pct:      Buy-and-hold return
+  - benchmark_final_capital:   Buy-and-hold ending value
+  - benchmark_sharpe_ratio:    Buy-and-hold Sharpe ratio
+  - benchmark_max_drawdown_pct: Buy-and-hold max drawdown
+  - alpha:                     Strategy return - benchmark return
+  - beta:                      Correlation with benchmark
+
+TRADE LOG:
+Each trade records:
+  - entry_date, entry_price
+  - exit_date, exit_price
+  - shares traded
+  - pnl (profit/loss in dollars)
+  - pnl_pct (profit/loss percentage)
+  - trade_duration_days
+  - exit_reason: "signal", "stop_loss", "take_profit", "trailing_stop",
+                 "force_close"
+
+
+1.6 SUPPORTED FEATURES
+----------------------
+
+A. ASSET CLASSES
+   - STOCK: Equities (via Yahoo Finance)
+   - CRYPTO: Cryptocurrencies (via Binance)
+
+B. DATA PROVIDERS
+   - YFinance: Stocks, ETFs, indices, and crypto (BTC-USD format)
+   - Binance: Cryptocurrency pairs (BTCUSDT format)
+
+C. TIME RESOLUTIONS
+   Stocks: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
+   Crypto: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1mo
+
+D. TECHNICAL INDICATORS
+   - RSI (Relative Strength Index)
+   - SMA (Simple Moving Average)
+   - EMA (Exponential Moving Average)
+   - MACD (Moving Average Convergence Divergence)
+   - Bollinger Bands
+   - ATR (Average True Range)
+   - Stochastic Oscillator
+   - ADX (Average Directional Index)
+   - Ichimoku Cloud
+   - ROC (Rate of Change)
+   - OBV (On-Balance Volume)
+
+E. POSITION SIZING METHODS
+   - Full capital
+   - Percentage of capital
+   - Fixed dollar amount
+   - Risk-based (Kelly-style)
+
+F. RISK MANAGEMENT
+   - Fixed stop loss (percentage)
+   - Fixed take profit (percentage)
+   - Dynamic trailing stop (indicator-based)
+
+G. TRANSACTION COSTS
+   - Fixed commission per trade
+   - Percentage commission
+   - Slippage simulation
+
+H. PERIODIC CONTRIBUTIONS
+   - Daily, weekly, monthly, or custom interval
+   - Simulates regular investing/DCA
+
+
+================================================================================
+                      PART II: DEVELOPER PERSPECTIVE
+================================================================================
+
+
+2.1 ARCHITECTURE OVERVIEW
+-------------------------
+
+The BacktestEngine follows a layered architecture:
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │                     PRESENTATION LAYER                       │
+    │  React Frontend (Port 5173) + FastAPI REST API (Port 8000)  │
+    └─────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                       API LAYER                              │
+    │   /strategies (CRUD) + /backtests (execute, results)        │
+    │   Pydantic schemas for validation                            │
+    └─────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                      TASK LAYER                              │
+    │   Celery workers for async backtest execution                │
+    │   Redis as message broker                                    │
+    └─────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                     ENGINE LAYER                             │
+    │   data_layer → indicator_layer → condition_engine →         │
+    │   state_machine → report_generator                          │
+    └─────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                    PROVIDER LAYER                            │
+    │   DataProvider interface + YFinance/Binance implementations │
+    └─────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                    PERSISTENCE LAYER                         │
+    │   PostgreSQL (strategies, backtests, trades)                 │
+    │   Redis (OHLCV cache)                                        │
+    └─────────────────────────────────────────────────────────────┘
+
+
+TECHNOLOGY STACK:
+  - Backend: Python 3.12+, FastAPI, SQLAlchemy (async), Celery
+  - Frontend: React, TypeScript
+  - Database: PostgreSQL
+  - Cache/Broker: Redis
+  - Data Analysis: pandas, pandas-ta
+  - Data Sources: yfinance, Binance API
+
+
+2.2 DATA FLOW PIPELINE
+----------------------
+
+When a backtest is executed, data flows through these stages:
+
+STAGE 1: DATA FETCHING (data_layer.py)
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  1. Check Redis cache for exact date range match                       │
+│     └─ Hit? Return cached DataFrame                                    │
+│                                                                        │
+│  2. Check PostgreSQL for stored OHLCV bars                             │
+│     └─ Covers range with sufficient bars? Return + cache               │
+│                                                                        │
+│  3. Fetch from external provider (yfinance/binance)                    │
+│     └─ Normalize to standard format                                    │
+│     └─ Store in PostgreSQL                                             │
+│     └─ Cache in Redis                                                  │
+│     └─ Return DataFrame                                                │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+STAGE 2: INDICATOR COMPUTATION (indicator_layer.py)
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  1. Validate OHLCV columns present                                     │
+│                                                                        │
+│  2. For each indicator definition:                                     │
+│     └─ Dispatch to pandas-ta function based on type                    │
+│     └─ Handle multi-column outputs (MACD, BB, etc.)                    │
+│     └─ Append to DataFrame with alias names                            │
+│                                                                        │
+│  3. Track indicator columns in DataFrame metadata                      │
+│                                                                        │
+│  4. Determine warmup period (first bar where all indicators valid)     │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+STAGE 3: WARMUP TRIMMING (indicator_layer.py)
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  1. Find first bar where ALL indicator columns have valid values       │
+│     (not NaN)                                                          │
+│                                                                        │
+│  2. Trim DataFrame to remove warmup period                             │
+│                                                                        │
+│  3. Validate sufficient bars remain (minimum 30)                       │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+STAGE 4: CONDITION EVALUATION (condition_engine.py)
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  1. For each condition in a group:                                     │
+│     └─ Resolve left operand to Series/scalar                           │
+│     └─ Resolve right operand to Series/scalar                          │
+│     └─ Apply operator → Boolean Series                                 │
+│                                                                        │
+│  2. Combine conditions with group logic (AND/OR)                       │
+│                                                                        │
+│  3. If using expressions:                                              │
+│     └─ Evaluate each named group                                       │
+│     └─ Build namespace for safe eval                                   │
+│     └─ Execute boolean expression                                      │
+│                                                                        │
+│  Output: entry_signal (Boolean Series), exit_signal (Boolean Series)   │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+STAGE 5: BACKTEST SIMULATION (state_machine.py)
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  STATE MACHINE:                                                        │
+│    NO_POSITION ──entry_signal──▶ PENDING_ENTRY                         │
+│    PENDING_ENTRY ──next bar──▶ IN_POSITION (fill at open)              │
+│    IN_POSITION ──exit_signal/stop/profit──▶ PENDING_EXIT               │
+│    PENDING_EXIT ──next bar──▶ NO_POSITION (fill at open)               │
+│                                                                        │
+│  For each bar:                                                         │
+│    1. Apply periodic contributions (if configured)                     │
+│    2. Fill pending entry at bar open (with slippage/commission)        │
+│    3. Fill pending exit at bar open (with slippage/commission)         │
+│    4. Check risk management (stop loss, take profit, dynamic stop)     │
+│    5. Calculate mark-to-market equity at bar close                     │
+│    6. Evaluate signals for next bar                                    │
+│                                                                        │
+│  At end:                                                               │
+│    - Handle pending entries on last bar                                │
+│    - Force-close open positions at last bar close                      │
+│                                                                        │
+│  Output: trade_log (list of TradeRecord), equity_curve (Series)        │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+STAGE 6: REPORT GENERATION (report_generator.py)
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  1. Calculate performance metrics from equity curve                    │
+│     └─ Total return, CAGR, Sharpe ratio, max drawdown                  │
+│                                                                        │
+│  2. Calculate trade statistics from trade log                          │
+│     └─ Win rate, avg win/loss, profit factor, durations                │
+│                                                                        │
+│  3. Calculate buy-and-hold benchmark                                   │
+│     └─ Alpha, beta, benchmark comparison                               │
+│                                                                        │
+│  Output: report (dict with all metrics)                                │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+
+2.3 CORE ENGINE MODULES
+-----------------------
+
+A. DATA LAYER (app/engine/data_layer.py)
+----------------------------------------
+Purpose: Fetch, cache, and normalize OHLCV data
+
+Key Functions:
+  fetch_ohlcv_async(ticker, start, end, resolution, asset_class, provider)
+    - Primary function to get OHLCV data
+    - Implements 3-tier caching: Redis → PostgreSQL → Provider
+    - Returns DataFrame with columns: open, high, low, close, volume
+    - Index: DatetimeIndex named "date"
+
+  get_cache_key(ticker, resolution, start, end)
+    - Generates unique cache key for Redis
+
+  serialize_df(df) / deserialize_df(blob)
+    - MessagePack serialization for Redis storage
+
+  validate_ticker(ticker, asset_class)
+    - Validates ticker by attempting to fetch recent data
+
+Caching Strategy:
+  - Redis: Fast lookup for exact range matches (TTL configurable)
+  - PostgreSQL: Persistent storage, handles partial range queries
+  - Gap Detection: Validates cached data has sufficient bar count
+
+
+B. INDICATOR LAYER (app/engine/indicator_layer.py)
+--------------------------------------------------
+Purpose: Compute technical indicators using pandas-ta
+
+Key Functions:
+  compute_indicators(df, indicators)
+    - Main entry point
+    - Takes OHLCV DataFrame and list of indicator definitions
+    - Returns DataFrame with indicator columns appended
+    - Tracks indicator column names in df.attrs["indicator_columns"]
+
+  get_warmup_period(df)
+    - Finds first bar where all indicators have valid values
+    - Returns number of bars to skip
+
+  trim_warmup_period(df)
+    - Removes warmup bars from DataFrame
+    - Returns (trimmed_df, bars_skipped)
+
+Supported Indicators:
+  - RSI: ta.rsi(close, length=period)
+  - SMA: ta.sma(close, length=period)
+  - EMA: ta.ema(close, length=period)
+  - MACD: ta.macd(close, fast, slow, signal) → 3 columns
+  - BB: ta.bbands(close, length, std) → 3 columns (upper, mid, lower)
+  - ATR: ta.atr(high, low, close, length)
+  - STOCH: ta.stoch(high, low, close, k, d) → 2 columns (k, d)
+  - ADX: ta.adx(high, low, close, length) → 3 columns (adx, dmp, dmn)
+  - ICHIMOKU: ta.ichimoku(high, low, close, tenkan, kijun, senkou) → 5 columns
+  - ROC: ta.roc(close, length)
+  - OBV: ta.obv(close, volume)
+
+
+C. CONDITION ENGINE (app/engine/condition_engine.py)
+----------------------------------------------------
+Purpose: Evaluate entry/exit conditions against data
+
+Key Functions:
+  evaluate_conditions(df, condition_group)
+    - Evaluates a single condition group
+    - Returns Boolean Series (True where conditions met)
+
+  evaluate_expression(df, condition_groups, expression)
+    - Evaluates multiple named groups combined with expression
+    - Safely parses and executes boolean expression
+    - Returns Boolean Series
+
+Internal Functions:
+  _get_operand(df, operand_type, value)
+    - Resolves operand to Series or scalar
+    - Handles INDICATOR, OHLCV, SCALAR, LOOKBACK types
+
+  _apply_operator(left, right, operator)
+    - Applies comparison/crossover operator
+    - Returns Boolean Series
+
+  _parse_lookback(value)
+    - Parses "column:offset" format
+    - Returns (column_name, offset)
+
+  _get_lookback_series(df, value)
+    - Returns shifted Series for lookback comparisons
+
+Operator Details:
+  - GT, LT, EQ, GTE, LTE: Simple comparisons, work with any operands
+  - CROSSES_ABOVE: (prev_left < prev_right) AND (curr_left > curr_right)
+  - CROSSES_BELOW: (prev_left > prev_right) AND (curr_left < curr_right)
+  - IS_RISING: current_value > previous_value (ignores right operand)
+  - IS_FALLING: current_value < previous_value (ignores right operand)
+
+
+D. STATE MACHINE (app/engine/state_machine.py)
+----------------------------------------------
+Purpose: Simulate trade execution with realistic fills
+
+Main Function:
+  run_backtest(df, entry_signal, exit_signal, initial_capital, ...)
+    - Returns (trade_log, equity_curve)
+
+Key Parameters:
+  - asset_class: "STOCK" (whole shares) or "CRYPTO" (fractional)
+  - position_size_type/value: How to size positions
+  - stop_loss_pct, take_profit_pct: Risk management
+  - dynamic_stop_column: Indicator-based trailing stop
+  - commission_per_trade, commission_pct: Transaction costs
+  - slippage_pct: Price slippage simulation
+  - periodic_contribution: Regular cash additions
+
+State Machine Logic:
+  1. NO_POSITION: Check for entry signal
+     → If True, set pending_entry = True
+
+  2. PENDING_ENTRY: At next bar open
+     → Calculate position size
+     → Apply slippage to price
+     → Deduct cost + commission from cash
+     → Record entry_date, entry_price, shares
+
+  3. IN_POSITION: Check for exit conditions
+     a. Strategy exit signal
+     b. Stop loss triggered (price dropped X%)
+     c. Take profit triggered (price gained X%)
+     d. Dynamic stop triggered (price < indicator value)
+     → Set pending_exit = True
+
+  4. PENDING_EXIT: At next bar open
+     → Apply slippage to exit price
+     → Deduct commission
+     → Add proceeds to cash
+     → Record trade in trade_log
+
+Position Sizing Logic:
+  - full_capital: shares = cash / price
+  - percent_capital: shares = (total_capital * pct / 100) / price
+  - fixed_amount: shares = fixed_dollars / price
+  - risk_based: shares = (equity * risk_pct) / (entry - stop)
+
+Commission Handling:
+  - Fixed: commission_per_trade
+  - Percentage: commission_pct / 100 * (shares * price)
+  - Total: fixed + percentage
+  - Applied on both entry and exit
+
+Slippage Handling:
+  - Entry: execution_price = open * (1 + slippage_pct / 100)
+  - Exit: execution_price = open * (1 - slippage_pct / 100)
+
+TradeRecord Structure:
+  @dataclass
+  class TradeRecord:
+      entry_date: pd.Timestamp
+      entry_price: float
+      exit_date: pd.Timestamp
+      exit_price: float
+      shares: float
+      pnl: float              # (exit - entry) * shares - commissions
+      pnl_pct: float          # pnl / cost * 100
+      trade_duration_days: int
+      exit_reason: str        # signal, stop_loss, take_profit, etc.
+      entry_commission: float
+      exit_commission: float
+      total_commission: float
+
+
+E. REPORT GENERATOR (app/engine/report_generator.py)
+----------------------------------------------------
+Purpose: Calculate comprehensive performance metrics
+
+Main Function:
+  generate_report(trade_log, equity_curve, initial_capital, benchmark_equity)
+    - Returns dict with all performance metrics
+
+Supporting Functions:
+  calculate_buy_and_hold_equity(df, initial_capital, asset_class)
+    - Simulates buy-and-hold strategy
+    - Returns benchmark equity curve
+
+  _max_drawdown(equity)
+    - Calculates maximum peak-to-trough decline
+    - Returns percentage as negative number
+
+  _longest_drawdown_days(equity)
+    - Finds longest period below previous high
+    - Returns days
+
+  _calculate_benchmark_stats(strategy_equity, benchmark_equity, ...)
+    - Calculates alpha, beta, benchmark comparison
+
+Metric Calculations:
+  - total_return_pct: (final - initial) / initial * 100
+  - cagr: (final / initial)^(1/years) - 1
+  - sharpe_ratio: (mean_daily_return / std_daily_return) * sqrt(252)
+  - win_rate: len(wins) / total_trades * 100
+  - profit_factor: gross_profit / gross_loss
+  - alpha: strategy_return - benchmark_return
+  - beta: cov(strategy, benchmark) / var(benchmark)
+
+
+2.4 DATABASE MODELS
+-------------------
+
+A. STRATEGY MODEL (app/models/strategy.py)
+------------------------------------------
+
+  class Strategy:
+      id: UUID (primary key)
+      user_id: UUID (foreign key, optional)
+      name: str
+      description: str (optional)
+      entry_expression: str (optional, for complex conditions)
+      exit_expression: str (optional, for complex conditions)
+      created_at: datetime
+      updated_at: datetime
+
+      # Relationships
+      indicators: list[Indicator]
+      condition_groups: list[ConditionGroup]
+      backtest_runs: list[BacktestRun]
+
+
+  class Indicator:
+      id: UUID
+      strategy_id: UUID (foreign key)
+      alias: str (unique within strategy)
+      indicator_type: str
+      params: JSONB (dict)
+      display_order: int
+
+
+  class ConditionGroup:
+      id: UUID
+      strategy_id: UUID (foreign key)
+      group_type: str ("ENTRY" or "EXIT")
+      group_name: str (optional, for expressions)
+      logic: str ("AND" or "OR")
+
+      # Relationship
+      conditions: list[Condition]
+
+
+  class Condition:
+      id: UUID
+      group_id: UUID (foreign key)
+      left_operand_type: str
+      left_operand_value: str
+      operator: str
+      right_operand_type: str
+      right_operand_value: str
+      display_order: int
+
+
+B. BACKTEST MODEL (app/models/backtest.py)
+------------------------------------------
+
+  class BacktestRun:
+      id: UUID (primary key)
+      strategy_id: UUID (foreign key, CASCADE delete)
+      ticker: str
+      asset_class: str
+      start_date: date
+      end_date: date
+      bar_resolution: str
+      initial_capital: Decimal
+      status: str ("PENDING", "RUNNING", "COMPLETE", "FAILED")
+      celery_task_id: str (optional)
+      created_at: datetime
+      completed_at: datetime (optional)
+      error_message: str (optional)
+      report: JSONB (dict, optional)
+      periodic_contribution: JSONB (dict, optional)
+      position_size_type: str
+      position_size_value: Decimal
+      stop_loss_pct: Decimal (optional)
+      take_profit_pct: Decimal (optional)
+      commission_per_trade: Decimal
+      commission_pct: Decimal
+      slippage_pct: Decimal
+
+      # Relationship
+      trades: list[TradeLog]
+
+
+  class TradeLog:
+      id: UUID (primary key)
+      run_id: UUID (foreign key)
+      entry_date: date
+      entry_price: Decimal
+      exit_date: date
+      exit_price: Decimal
+      shares: Decimal
+      pnl: Decimal
+      pnl_pct: Decimal
+      trade_duration_days: int
+      exit_reason: str (optional)
+
+
+C. OHLCV MODEL (app/models/ohlcv.py)
+------------------------------------
+
+  class OhlcvBar:
+      ticker: str (composite key)
+      asset_class: str (composite key)
+      resolution: str (composite key)
+      ts: datetime (composite key)
+      open: Decimal
+      high: Decimal
+      low: Decimal
+      close: Decimal
+      volume: Decimal
+
+
+2.5 API LAYER
+-------------
+
+A. STRATEGY ROUTES (app/api/routes/strategies.py)
+-------------------------------------------------
+
+  POST /strategies
+    - Create new strategy
+    - Body: StrategyCreate schema
+    - Returns: StrategyOut
+
+  GET /strategies
+    - List strategies
+    - Query: user_id, limit, offset
+    - Returns: list[StrategyOut]
+
+  GET /strategies/{strategy_id}
+    - Get single strategy
+    - Returns: StrategyOut
+
+  PUT /strategies/{strategy_id}
+    - Update strategy
+    - Body: StrategyUpdate schema
+    - Returns: StrategyOut
+
+  DELETE /strategies/{strategy_id}
+    - Delete strategy (cascades to backtests)
+    - Returns: {"status": "deleted"}
+
+
+B. BACKTEST ROUTES (app/api/routes/backtests.py)
+------------------------------------------------
+
+  POST /backtests
+    - Create and queue backtest
+    - Body: BacktestCreate schema
+    - Returns: BacktestOut (status="PENDING")
+    - Side effect: Queues Celery task
+
+  GET /backtests
+    - List backtests
+    - Query: user_id, strategy_id, limit, offset
+    - Returns: list[BacktestOut]
+
+  GET /backtests/{run_id}
+    - Get single backtest
+    - Returns: BacktestOut
+
+  GET /backtests/{run_id}/trades
+    - Get trades for backtest
+    - Query: limit, offset
+    - Returns: list[TradeLogOut]
+
+
+C. API SCHEMAS (app/api/schemas/)
+---------------------------------
+
+  StrategyCreate:
+    - name: str
+    - description: str | None
+    - indicators: list[IndicatorCreate]
+    - entry: ConditionGroupCreate | None (legacy)
+    - exit: ConditionGroupCreate | None (legacy)
+    - entry_groups: dict[str, ConditionGroupCreate] | None (expression-based)
+    - exit_groups: dict[str, ConditionGroupCreate] | None (expression-based)
+    - entry_expression: str | None
+    - exit_expression: str | None
+
+  BacktestCreate:
+    - strategy_id: UUID
+    - ticker: str
+    - asset_class: str
+    - start_date: date
+    - end_date: date
+    - bar_resolution: str = "1d"
+    - initial_capital: float
+    - periodic_contribution: dict | None
+    - position_size_type: str = "full_capital"
+    - position_size_value: float = 100.0
+    - stop_loss_pct: float | None
+    - take_profit_pct: float | None
+    - commission_per_trade: float = 0.0
+    - commission_pct: float = 0.0
+    - slippage_pct: float = 0.0
+
+
+2.6 PROVIDER SYSTEM
+-------------------
+
+A. BASE INTERFACE (app/providers/base.py)
+-----------------------------------------
+
+  class DataProvider(ABC):
+      """
+      Abstract base class for market data providers.
+      All providers should accept a timezone parameter (default: "Asia/Kolkata").
+      """
+
+      @abstractmethod
+      async def fetch_ohlcv(
+          self,
+          ticker: str,
+          start_date: datetime,
+          end_date: datetime,
+          interval: str = "1d",
+          asset_class: str = "STOCK",
+      ) -> pd.DataFrame:
+          """
+          Fetch OHLCV data for a ticker symbol.
+
+          Returns:
+              DataFrame with columns: date, open, high, low, close, volume
+              Index: DatetimeIndex
+              All column names lowercase
+          """
+
+      @abstractmethod
+      def get_provider_name(self) -> str:
+          """Return provider identifier."""
+
+
+B. YFINANCE PROVIDER (app/providers/yfinance_provider.py)
+---------------------------------------------------------
+
+  class YFinanceProvider(DataProvider):
+      - Uses yfinance library
+      - Supports: STOCK, CRYPTO (via -USD suffix)
+      - Handles MultiIndex columns from yfinance
+      - Auto-adjusts for splits/dividends
+
+
+C. BINANCE PROVIDER (app/providers/binance_provider.py)
+-------------------------------------------------------
+
+  class BinanceProvider(DataProvider):
+      - Uses Binance public API (no key required)
+      - Supports: CRYPTO only
+      - Handles pagination (1000 bar limit per request)
+      - Converts UTC timestamps to user timezone
+      - Normalizes symbol format (BTC-USD → BTCUSDT)
+
+
+D. PROVIDER FACTORY (app/providers/factory.py)
+----------------------------------------------
+
+  class ProviderFactory:
+      @staticmethod
+      def create_provider(provider_name: str, timezone: str) -> DataProvider:
+          - "yfinance" → YFinanceProvider
+          - "binance" → BinanceProvider
+
+      @staticmethod
+      def get_default_provider(timezone: str) -> DataProvider:
+          - Returns YFinanceProvider
+
+Default Provider by Asset Class:
+  - STOCK → yfinance
+  - CRYPTO → binance
+
+
+2.7 TASK PROCESSING
+-------------------
+
+A. CELERY CONFIGURATION (app/celery_app.py)
+-------------------------------------------
+  - Broker: Redis (CELERY_BROKER_URL)
+  - Backend: Redis (CELERY_BACKEND_URL)
+  - Task registration: "backtest.run"
+
+
+B. BACKTEST TASK (app/tasks/backtest_task.py)
+---------------------------------------------
+
+  @celery_app.task(name="backtest.run")
+  def run_backtest_task(run_id: str) -> None:
+      """
+      Celery task entry point for backtest execution.
+      Wraps async execution in asyncio.run().
+      """
+
+  async def _run_backtest_async(run_id: str) -> None:
+      """
+      Main backtest execution logic.
+
+      Steps:
+      1. Load BacktestRun from database
+      2. Set status = "RUNNING"
+      3. Load Strategy with indicators and conditions
+      4. Fetch OHLCV data
+      5. Compute indicators
+      6. Trim warmup period
+      7. Evaluate entry/exit signals
+      8. Run backtest simulation
+      9. Persist trades to database
+      10. Generate report
+      11. Set status = "COMPLETE" or "FAILED"
+      """
+
+
+TASK LIFECYCLE:
+  1. API endpoint creates BacktestRun (status=PENDING)
+  2. API calls run_backtest_task.delay(run_id)
+  3. Celery worker picks up task
+  4. Task updates status to RUNNING
+  5. Task executes backtest pipeline
+  6. On success: status=COMPLETE, report saved
+  7. On failure: status=FAILED, error_message saved
+
+
+================================================================================
+                     PART III: PRACTICAL APPLICATIONS
+================================================================================
+
+
+3.1 USE CASES
+-------------
+
+A. RETAIL TRADERS
+   - Validate trading ideas before risking capital
+   - Compare different indicator combinations
+   - Find optimal indicator parameters
+   - Test strategies across different market conditions
+
+B. QUANTITATIVE ANALYSTS
+   - Rapid prototyping of trading strategies
+   - Statistical analysis of strategy performance
+   - Risk-adjusted return comparisons
+   - Alpha generation research
+
+C. PORTFOLIO MANAGERS
+   - Evaluate systematic strategies
+   - Compare active vs passive approaches
+   - Test position sizing methods
+   - Analyze transaction cost impact
+
+D. FINANCIAL EDUCATORS
+   - Demonstrate technical analysis concepts
+   - Show importance of risk management
+   - Illustrate effects of transaction costs
+   - Compare different asset classes
+
+E. ALGORITHMIC TRADERS
+   - Strategy development before live deployment
+   - Parameter optimization
+   - Stress testing under various conditions
+   - Benchmarking against buy-and-hold
+
+
+3.2 STRATEGY DEVELOPMENT WORKFLOW
+---------------------------------
+
+STEP 1: HYPOTHESIS FORMATION
+   - Identify market inefficiency or pattern
+   - Define entry/exit logic conceptually
+   - Select appropriate indicators
+
+STEP 2: STRATEGY DEFINITION
+   - Create strategy via API
+   - Define indicator parameters
+   - Specify entry/exit conditions
+   - Start with simple conditions, add complexity later
+
+STEP 3: INITIAL BACKTEST
+   - Run backtest on historical data
+   - Use default position sizing (full_capital)
+   - No transaction costs initially
+
+STEP 4: RESULTS ANALYSIS
+   - Review total return, Sharpe ratio, max drawdown
+   - Examine trade log for patterns
+   - Compare against buy-and-hold benchmark
+   - Check win rate and profit factor
+
+STEP 5: REFINEMENT
+   - Adjust indicator parameters
+   - Add/remove conditions
+   - Try different expression combinations
+   - Test across multiple time periods
+
+STEP 6: REALISTIC SIMULATION
+   - Add transaction costs (commissions, slippage)
+   - Test different position sizing methods
+   - Add stop loss and take profit
+   - Include periodic contributions
+
+STEP 7: ROBUSTNESS TESTING
+   - Test on different tickers
+   - Test on different time periods
+   - Test on different asset classes
+   - Check for overfitting
+
+
+3.3 PERFORMANCE OPTIMIZATION
+----------------------------
+
+A. DATA LAYER
+   - Increase Redis cache TTL for stable data
+   - Pre-populate PostgreSQL with frequently used tickers
+   - Use appropriate resolution (daily vs intraday)
+
+B. INDICATOR LAYER
+   - Minimize warmup by using shorter indicator periods
+   - Avoid excessive indicator combinations
+   - Use simpler indicators when possible
+
+C. TASK PROCESSING
+   - Scale Celery workers horizontally
+   - Use Redis connection pooling
+   - Monitor task queue depth
+
+D. DATABASE
+   - Index OHLCV bars by ticker/asset_class/resolution
+   - Partition large trade_logs tables
+   - Use connection pooling
+
+
+3.4 EXTENDING THE SYSTEM
+------------------------
+
+A. ADDING NEW INDICATORS
+   1. Add indicator type to indicator_layer.py
+   2. Implement using pandas-ta or custom logic
+   3. Handle multi-column outputs (like MACD)
+   4. Add to warmup tracking if needed
+   5. Write unit tests
+
+B. ADDING NEW OPERATORS
+   1. Add operator to OPERATORS set in condition_engine.py
+   2. Implement in _apply_operator function
+   3. Handle edge cases (first bar, NaN values)
+   4. Write unit tests
+
+C. ADDING NEW DATA PROVIDERS
+   1. Create new class implementing DataProvider interface
+   2. Implement fetch_ohlcv with proper normalization
+   3. Handle rate limiting and pagination
+   4. Add to ProviderFactory
+   5. Write integration tests
+
+D. ADDING NEW POSITION SIZING METHODS
+   1. Add to _calculate_position_size in state_machine.py
+   2. Add validation in run_backtest
+   3. Update BacktestRun model if needed
+   4. Update API schemas
+   5. Write unit tests
+
+E. ADDING NEW RISK MANAGEMENT FEATURES
+   1. Add parameters to run_backtest function
+   2. Implement exit logic in state machine
+   3. Track exit reason properly
+   4. Update models and schemas
+   5. Write unit tests
+
+
+================================================================================
+                              APPENDIX
+================================================================================
+
+
+A. EXAMPLE STRATEGY: RSI MEAN REVERSION
+---------------------------------------
+
+{
+  "name": "RSI Mean Reversion",
+  "description": "Buy when RSI oversold, sell when overbought",
+  "indicators": [
+    {
+      "indicator_type": "RSI",
+      "alias": "rsi_14",
+      "params": {"period": 14}
+    }
+  ],
+  "entry": {
+    "logic": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "INDICATOR",
+        "left_operand_value": "rsi_14",
+        "operator": "LT",
+        "right_operand_type": "SCALAR",
+        "right_operand_value": "30"
+      }
+    ]
+  },
+  "exit": {
+    "logic": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "INDICATOR",
+        "left_operand_value": "rsi_14",
+        "operator": "GT",
+        "right_operand_type": "SCALAR",
+        "right_operand_value": "70"
+      }
+    ]
+  }
+}
+
+
+B. EXAMPLE STRATEGY: DUAL MOVING AVERAGE CROSSOVER
+--------------------------------------------------
+
+{
+  "name": "Dual MA Crossover",
+  "description": "Enter on golden cross, exit on death cross",
+  "indicators": [
+    {
+      "indicator_type": "EMA",
+      "alias": "ema_50",
+      "params": {"period": 50}
+    },
+    {
+      "indicator_type": "EMA",
+      "alias": "ema_200",
+      "params": {"period": 200}
+    }
+  ],
+  "entry": {
+    "logic": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "INDICATOR",
+        "left_operand_value": "ema_50",
+        "operator": "CROSSES_ABOVE",
+        "right_operand_type": "INDICATOR",
+        "right_operand_value": "ema_200"
+      }
+    ]
+  },
+  "exit": {
+    "logic": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "INDICATOR",
+        "left_operand_value": "ema_50",
+        "operator": "CROSSES_BELOW",
+        "right_operand_type": "INDICATOR",
+        "right_operand_value": "ema_200"
+      }
+    ]
+  }
+}
+
+
+C. EXAMPLE STRATEGY: COMPLEX EXPRESSION-BASED
+---------------------------------------------
+
+{
+  "name": "Multi-Factor Strategy",
+  "description": "Complex entry with multiple condition groups",
+  "indicators": [
+    {"indicator_type": "RSI", "alias": "rsi_14", "params": {"period": 14}},
+    {"indicator_type": "ADX", "alias": "adx_14", "params": {"period": 14}},
+    {"indicator_type": "MACD", "alias": "macd", "params": {"fast": 12, "slow": 26, "signal": 9}}
+  ],
+  "entry_groups": {
+    "oversold": {
+      "logic": "AND",
+      "conditions": [
+        {
+          "left_operand_type": "INDICATOR",
+          "left_operand_value": "rsi_14",
+          "operator": "LT",
+          "right_operand_type": "SCALAR",
+          "right_operand_value": "30"
+        }
+      ]
+    },
+    "trending": {
+      "logic": "AND",
+      "conditions": [
+        {
+          "left_operand_type": "INDICATOR",
+          "left_operand_value": "adx_14",
+          "operator": "GT",
+          "right_operand_type": "SCALAR",
+          "right_operand_value": "25"
+        }
+      ]
+    },
+    "macd_bullish": {
+      "logic": "AND",
+      "conditions": [
+        {
+          "left_operand_type": "INDICATOR",
+          "left_operand_value": "macd_macd",
+          "operator": "CROSSES_ABOVE",
+          "right_operand_type": "INDICATOR",
+          "right_operand_value": "macd_signal"
+        }
+      ]
+    }
+  },
+  "entry_expression": "(oversold && trending) || macd_bullish",
+  "exit_groups": {
+    "overbought": {
+      "logic": "AND",
+      "conditions": [
+        {
+          "left_operand_type": "INDICATOR",
+          "left_operand_value": "rsi_14",
+          "operator": "GT",
+          "right_operand_type": "SCALAR",
+          "right_operand_value": "70"
+        }
+      ]
+    },
+    "macd_bearish": {
+      "logic": "AND",
+      "conditions": [
+        {
+          "left_operand_type": "INDICATOR",
+          "left_operand_value": "macd_macd",
+          "operator": "CROSSES_BELOW",
+          "right_operand_type": "INDICATOR",
+          "right_operand_value": "macd_signal"
+        }
+      ]
+    }
+  },
+  "exit_expression": "overbought || macd_bearish"
+}
+
+
+D. EXAMPLE BACKTEST REQUEST
+---------------------------
+
+{
+  "strategy_id": "550e8400-e29b-41d4-a716-446655440000",
+  "ticker": "AAPL",
+  "asset_class": "STOCK",
+  "start_date": "2020-01-01",
+  "end_date": "2024-01-01",
+  "bar_resolution": "1d",
+  "initial_capital": 100000.0,
+  "position_size_type": "percent_capital",
+  "position_size_value": 50.0,
+  "stop_loss_pct": 5.0,
+  "take_profit_pct": 15.0,
+  "commission_per_trade": 5.0,
+  "commission_pct": 0.1,
+  "slippage_pct": 0.05,
+  "periodic_contribution": {
+    "amount": 1000.0,
+    "frequency": "monthly",
+    "include_start": true
+  }
+}
+
+
+================================================================================
+                           END OF DOCUMENT
+================================================================================
