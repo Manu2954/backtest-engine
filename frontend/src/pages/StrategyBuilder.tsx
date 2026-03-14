@@ -84,6 +84,53 @@ const indicatorDefaults: Record<IndicatorType, Record<string, number | string>> 
   OBV: {},
 };
 
+const indicatorHelpText: Record<IndicatorType, { description: string; outputs: string }> = {
+  RSI: {
+    description: "Relative Strength Index - Momentum oscillator measuring speed and magnitude of price changes. Values range 0-100. Traditionally overbought >70, oversold <30.",
+    outputs: "Single column: {alias}"
+  },
+  EMA: {
+    description: "Exponential Moving Average - Weighted moving average that gives more weight to recent prices. Responds faster to price changes than SMA.",
+    outputs: "Single column: {alias}"
+  },
+  SMA: {
+    description: "Simple Moving Average - Average price over a specified period. Used to identify trends and support/resistance levels.",
+    outputs: "Single column: {alias}"
+  },
+  MACD: {
+    description: "Moving Average Convergence Divergence - Trend-following momentum indicator showing relationship between two moving averages.",
+    outputs: "Three columns: {alias}_macd, {alias}_signal, {alias}_hist"
+  },
+  BB: {
+    description: "Bollinger Bands - Volatility indicator with upper and lower bands around a moving average. Prices typically stay within bands.",
+    outputs: "Three columns: {alias}_upper, {alias}_mid, {alias}_lower"
+  },
+  ATR: {
+    description: "Average True Range - Volatility indicator measuring degree of price movement. Higher values indicate more volatility.",
+    outputs: "Single column: {alias}"
+  },
+  STOCH: {
+    description: "Stochastic Oscillator - Momentum indicator comparing closing price to price range. Values 0-100. Overbought >80, oversold <20.",
+    outputs: "Two columns: {alias}_k, {alias}_d"
+  },
+  ADX: {
+    description: "Average Directional Index - Measures strength of trend regardless of direction. Values >25 indicate strong trend.",
+    outputs: "Three columns: {alias}_adx, {alias}_dmp, {alias}_dmn"
+  },
+  ICHIMOKU: {
+    description: "Ichimoku Cloud - Comprehensive indicator showing support/resistance, trend direction, and momentum in one glance.",
+    outputs: "Five columns: {alias}_tenkan, {alias}_kijun, {alias}_span_a, {alias}_span_b, {alias}_chikou"
+  },
+  ROC: {
+    description: "Rate of Change - Momentum oscillator measuring percentage change in price between current and N periods ago.",
+    outputs: "Single column: {alias}"
+  },
+  OBV: {
+    description: "On-Balance Volume - Volume-based indicator that shows buying/selling pressure by adding volume on up days and subtracting on down days.",
+    outputs: "Single column: {alias}"
+  },
+};
+
 const steps = ["Indicators", "Entry Rules", "Exit Rules", "Backtest", "Review"];
 
 const emptyGroup = (): ConditionGroupInput => ({
@@ -99,6 +146,12 @@ const emptyCondition = (aliases: string[]): ConditionInput => ({
   right_operand_value: "0",
   display_order: 0,
 });
+
+// Validate LOOKBACK format: column:-offset (e.g., close:-10)
+const validateLookbackFormat = (value: string): boolean => {
+  if (!value) return true; // Empty is acceptable
+  return /^[\w_]+:-\d+$/.test(value);
+};
 
 export default function StrategyBuilder() {
   const { id } = useParams();
@@ -614,6 +667,13 @@ export default function StrategyBuilder() {
                   </div>
                 </div>
 
+                {/* Indicator Help Text */}
+                <div className="notice" style={{ marginTop: "8px", fontSize: "0.85rem" }}>
+                  <strong>{indicator.indicator_type}:</strong> {indicatorHelpText[indicator.indicator_type].description}
+                  <br />
+                  <strong>Output columns:</strong> {indicatorHelpText[indicator.indicator_type].outputs.replace(/\{alias\}/g, indicator.alias)}
+                </div>
+
                 <div className="row" style={{ marginTop: "12px" }}>
                   {indicatorParamConfig[indicator.indicator_type].map((field) => (
                     <div key={field.key}>
@@ -760,50 +820,69 @@ export default function StrategyBuilder() {
                         ))}
                       </select>
                     </div>
-                    <div>
-                      <label>Right Type</label>
-                      <select
-                        value={condition.right_operand_type}
-                        onChange={(e) =>
-                          updateCondition("entry", idx, {
-                            right_operand_type: e.target.value as any,
-                          })
-                        }
-                      >
-                        <option value="INDICATOR">INDICATOR</option>
-                        <option value="OHLCV">OHLCV</option>
-                        <option value="SCALAR">SCALAR</option>
-                        <option value="LOOKBACK">LOOKBACK</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label>Right Value</label>
-                      {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
-                        <input
-                          placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
-                          value={condition.right_operand_value}
-                          onChange={(e) =>
-                            updateCondition("entry", idx, { right_operand_value: e.target.value })
-                          }
-                        />
-                      ) : (
-                        <select
-                          value={condition.right_operand_value}
-                          onChange={(e) =>
-                            updateCondition("entry", idx, { right_operand_value: e.target.value })
-                          }
-                        >
-                          {(condition.right_operand_type === "INDICATOR"
-                            ? indicatorAliases
-                            : sourceOptions
-                          ).map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
+
+                    {/* Hide right operand for unary operators (IS_RISING, IS_FALLING) */}
+                    {condition.operator !== "IS_RISING" && condition.operator !== "IS_FALLING" && (
+                      <>
+                        <div>
+                          <label>Right Type</label>
+                          <select
+                            value={condition.right_operand_type}
+                            onChange={(e) =>
+                              updateCondition("entry", idx, {
+                                right_operand_type: e.target.value as any,
+                              })
+                            }
+                          >
+                            <option value="INDICATOR">INDICATOR</option>
+                            <option value="OHLCV">OHLCV</option>
+                            <option value="SCALAR">SCALAR</option>
+                            <option value="LOOKBACK">LOOKBACK</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label>Right Value</label>
+                          {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
+                            <input
+                              placeholder={condition.right_operand_type === "LOOKBACK" ? "column:-offset (e.g., close:-10)" : ""}
+                              value={condition.right_operand_value}
+                              onChange={(e) =>
+                                updateCondition("entry", idx, { right_operand_value: e.target.value })
+                              }
+                              style={
+                                condition.right_operand_type === "LOOKBACK" &&
+                                !validateLookbackFormat(condition.right_operand_value)
+                                  ? { border: "1px solid var(--danger)" }
+                                  : {}
+                              }
+                            />
+                          ) : (
+                            <select
+                              value={condition.right_operand_value}
+                              onChange={(e) =>
+                                updateCondition("entry", idx, { right_operand_value: e.target.value })
+                              }
+                            >
+                              {(condition.right_operand_type === "INDICATOR"
+                                ? indicatorAliases
+                                : sourceOptions
+                              ).map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          {condition.right_operand_type === "LOOKBACK" &&
+                            condition.right_operand_value &&
+                            !validateLookbackFormat(condition.right_operand_value) && (
+                              <div style={{ fontSize: "0.8rem", color: "var(--danger)", marginTop: "4px" }}>
+                                Invalid format. Use "column:-offset" (e.g., close:-10)
+                              </div>
+                            )}
+                        </div>
+                      </>
+                    )}
                   </div>
                   <button className="btn secondary" onClick={() => removeCondition("entry", idx)}>
                     Remove
@@ -916,50 +995,68 @@ export default function StrategyBuilder() {
                             ))}
                           </select>
                         </div>
-                        <div>
-                          <label>Right Type</label>
-                          <select
-                            value={condition.right_operand_type}
-                            onChange={(e) =>
-                              updateConditionInGroup("entry", groupName, idx, {
-                                right_operand_type: e.target.value as any,
-                              })
-                            }
-                          >
-                            <option value="INDICATOR">INDICATOR</option>
-                            <option value="OHLCV">OHLCV</option>
-                            <option value="SCALAR">SCALAR</option>
-                            <option value="LOOKBACK">LOOKBACK</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label>Right Value</label>
-                          {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
-                            <input
-                              placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
-                              value={condition.right_operand_value}
-                              onChange={(e) =>
-                                updateConditionInGroup("entry", groupName, idx, { right_operand_value: e.target.value })
-                              }
-                            />
-                          ) : (
-                            <select
-                              value={condition.right_operand_value}
-                              onChange={(e) =>
-                                updateConditionInGroup("entry", groupName, idx, { right_operand_value: e.target.value })
-                              }
-                            >
-                              {(condition.right_operand_type === "INDICATOR"
-                                ? indicatorAliases
-                                : sourceOptions
-                              ).map((opt) => (
-                                <option key={opt} value={opt}>
-                                  {opt}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
+                        {condition.operator !== "IS_RISING" && condition.operator !== "IS_FALLING" && (
+                          <>
+                            <div>
+                              <label>Right Type</label>
+                              <select
+                                value={condition.right_operand_type}
+                                onChange={(e) =>
+                                  updateConditionInGroup("entry", groupName, idx, {
+                                    right_operand_type: e.target.value as any,
+                                  })
+                                }
+                              >
+                                <option value="INDICATOR">INDICATOR</option>
+                                <option value="OHLCV">OHLCV</option>
+                                <option value="SCALAR">SCALAR</option>
+                                <option value="LOOKBACK">LOOKBACK</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label>Right Value</label>
+                              {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
+                                <>
+                                  <input
+                                    placeholder={condition.right_operand_type === "LOOKBACK" ? "column:-offset (e.g., close:-10)" : ""}
+                                    value={condition.right_operand_value}
+                                    onChange={(e) =>
+                                      updateConditionInGroup("entry", groupName, idx, { right_operand_value: e.target.value })
+                                    }
+                                    style={
+                                      condition.right_operand_type === "LOOKBACK" &&
+                                      !validateLookbackFormat(condition.right_operand_value)
+                                        ? { border: "1px solid var(--danger)" }
+                                        : {}
+                                    }
+                                  />
+                                  {condition.right_operand_type === "LOOKBACK" &&
+                                    !validateLookbackFormat(condition.right_operand_value) && (
+                                      <div style={{ color: "var(--danger)", fontSize: "0.85rem", marginTop: "4px" }}>
+                                        Invalid format. Use "column:-offset" (e.g., close:-10)
+                                      </div>
+                                    )}
+                                </>
+                              ) : (
+                                <select
+                                  value={condition.right_operand_value}
+                                  onChange={(e) =>
+                                    updateConditionInGroup("entry", groupName, idx, { right_operand_value: e.target.value })
+                                  }
+                                >
+                                  {(condition.right_operand_type === "INDICATOR"
+                                    ? indicatorAliases
+                                    : sourceOptions
+                                  ).map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                          </>
+                        )}
                       </div>
                       <button className="btn secondary" onClick={() => removeConditionFromGroup("entry", groupName, idx)}>
                         Remove
@@ -1115,50 +1212,68 @@ export default function StrategyBuilder() {
                         ))}
                       </select>
                     </div>
-                    <div>
-                      <label>Right Type</label>
-                      <select
-                        value={condition.right_operand_type}
-                        onChange={(e) =>
-                          updateCondition("exit", idx, {
-                            right_operand_type: e.target.value as any,
-                          })
-                        }
-                      >
-                        <option value="INDICATOR">INDICATOR</option>
-                        <option value="OHLCV">OHLCV</option>
-                        <option value="SCALAR">SCALAR</option>
-                        <option value="LOOKBACK">LOOKBACK</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label>Right Value</label>
-                      {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
-                        <input
-                          placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
-                          value={condition.right_operand_value}
-                          onChange={(e) =>
-                            updateCondition("exit", idx, { right_operand_value: e.target.value })
-                          }
-                        />
-                      ) : (
-                        <select
-                          value={condition.right_operand_value}
-                          onChange={(e) =>
-                            updateCondition("exit", idx, { right_operand_value: e.target.value })
-                          }
-                        >
-                          {(condition.right_operand_type === "INDICATOR"
-                            ? indicatorAliases
-                            : sourceOptions
-                          ).map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
+                    {condition.operator !== "IS_RISING" && condition.operator !== "IS_FALLING" && (
+                      <>
+                        <div>
+                          <label>Right Type</label>
+                          <select
+                            value={condition.right_operand_type}
+                            onChange={(e) =>
+                              updateCondition("exit", idx, {
+                                right_operand_type: e.target.value as any,
+                              })
+                            }
+                          >
+                            <option value="INDICATOR">INDICATOR</option>
+                            <option value="OHLCV">OHLCV</option>
+                            <option value="SCALAR">SCALAR</option>
+                            <option value="LOOKBACK">LOOKBACK</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label>Right Value</label>
+                          {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
+                            <>
+                              <input
+                                placeholder={condition.right_operand_type === "LOOKBACK" ? "column:-offset (e.g., close:-10)" : ""}
+                                value={condition.right_operand_value}
+                                onChange={(e) =>
+                                  updateCondition("exit", idx, { right_operand_value: e.target.value })
+                                }
+                                style={
+                                  condition.right_operand_type === "LOOKBACK" &&
+                                  !validateLookbackFormat(condition.right_operand_value)
+                                    ? { border: "1px solid var(--danger)" }
+                                    : {}
+                                }
+                              />
+                              {condition.right_operand_type === "LOOKBACK" &&
+                                !validateLookbackFormat(condition.right_operand_value) && (
+                                  <div style={{ color: "var(--danger)", fontSize: "0.85rem", marginTop: "4px" }}>
+                                    Invalid format. Use "column:-offset" (e.g., close:-10)
+                                  </div>
+                                )}
+                            </>
+                          ) : (
+                            <select
+                              value={condition.right_operand_value}
+                              onChange={(e) =>
+                                updateCondition("exit", idx, { right_operand_value: e.target.value })
+                              }
+                            >
+                              {(condition.right_operand_type === "INDICATOR"
+                                ? indicatorAliases
+                                : sourceOptions
+                              ).map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                   <button className="btn secondary" onClick={() => removeCondition("exit", idx)}>
                     Remove
@@ -1271,50 +1386,68 @@ export default function StrategyBuilder() {
                             ))}
                           </select>
                         </div>
-                        <div>
-                          <label>Right Type</label>
-                          <select
-                            value={condition.right_operand_type}
-                            onChange={(e) =>
-                              updateConditionInGroup("exit", groupName, idx, {
-                                right_operand_type: e.target.value as any,
-                              })
-                            }
-                          >
-                            <option value="INDICATOR">INDICATOR</option>
-                            <option value="OHLCV">OHLCV</option>
-                            <option value="SCALAR">SCALAR</option>
-                            <option value="LOOKBACK">LOOKBACK</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label>Right Value</label>
-                          {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
-                            <input
-                              placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
-                              value={condition.right_operand_value}
-                              onChange={(e) =>
-                                updateConditionInGroup("exit", groupName, idx, { right_operand_value: e.target.value })
-                              }
-                            />
-                          ) : (
-                            <select
-                              value={condition.right_operand_value}
-                              onChange={(e) =>
-                                updateConditionInGroup("exit", groupName, idx, { right_operand_value: e.target.value })
-                              }
-                            >
-                              {(condition.right_operand_type === "INDICATOR"
-                                ? indicatorAliases
-                                : sourceOptions
-                              ).map((opt) => (
-                                <option key={opt} value={opt}>
-                                  {opt}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
+                        {condition.operator !== "IS_RISING" && condition.operator !== "IS_FALLING" && (
+                          <>
+                            <div>
+                              <label>Right Type</label>
+                              <select
+                                value={condition.right_operand_type}
+                                onChange={(e) =>
+                                  updateConditionInGroup("exit", groupName, idx, {
+                                    right_operand_type: e.target.value as any,
+                                  })
+                                }
+                              >
+                                <option value="INDICATOR">INDICATOR</option>
+                                <option value="OHLCV">OHLCV</option>
+                                <option value="SCALAR">SCALAR</option>
+                                <option value="LOOKBACK">LOOKBACK</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label>Right Value</label>
+                              {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
+                                <>
+                                  <input
+                                    placeholder={condition.right_operand_type === "LOOKBACK" ? "column:-offset (e.g., close:-10)" : ""}
+                                    value={condition.right_operand_value}
+                                    onChange={(e) =>
+                                      updateConditionInGroup("exit", groupName, idx, { right_operand_value: e.target.value })
+                                    }
+                                    style={
+                                      condition.right_operand_type === "LOOKBACK" &&
+                                      !validateLookbackFormat(condition.right_operand_value)
+                                        ? { border: "1px solid var(--danger)" }
+                                        : {}
+                                    }
+                                  />
+                                  {condition.right_operand_type === "LOOKBACK" &&
+                                    !validateLookbackFormat(condition.right_operand_value) && (
+                                      <div style={{ color: "var(--danger)", fontSize: "0.85rem", marginTop: "4px" }}>
+                                        Invalid format. Use "column:-offset" (e.g., close:-10)
+                                      </div>
+                                    )}
+                                </>
+                              ) : (
+                                <select
+                                  value={condition.right_operand_value}
+                                  onChange={(e) =>
+                                    updateConditionInGroup("exit", groupName, idx, { right_operand_value: e.target.value })
+                                  }
+                                >
+                                  {(condition.right_operand_type === "INDICATOR"
+                                    ? indicatorAliases
+                                    : sourceOptions
+                                  ).map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                          </>
+                        )}
                       </div>
                       <button className="btn secondary" onClick={() => removeConditionFromGroup("exit", groupName, idx)}>
                         Remove
