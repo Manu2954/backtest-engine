@@ -332,7 +332,9 @@ async def fetch_ohlcv_async(
         session: Optional database session
         provider: Data provider to use (optional)
                  Supported: "yfinance", "binance"
-                 If None, defaults to "yfinance"
+                 If None, defaults to:
+                   - "yfinance" for STOCK
+                   - "binance" for CRYPTO
         timezone: Timezone for date range interpretation (default: "Asia/Kolkata" = IST)
 
     Returns:
@@ -410,7 +412,7 @@ async def fetch_ohlcv_async(
         if asset == "STOCK":
             # Always use provider system
             if provider is None:
-                provider = "yfinance"  # Default provider
+                provider = "yfinance"  # Default provider for stocks
 
             from app.providers.factory import ProviderFactory
 
@@ -423,7 +425,7 @@ async def fetch_ohlcv_async(
         else:
             # CRYPTO asset class
             if provider is None:
-                provider = "yfinance"  # Default provider (handles crypto via yfinance)
+                provider = "binance"  # Default provider for crypto
 
             from app.providers.factory import ProviderFactory
 
