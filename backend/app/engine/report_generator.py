@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pandas as pd
@@ -209,8 +210,9 @@ def generate_report(
     if avg_loss != 0:
         avg_win_loss = _safe_div(avg_win, abs(avg_loss))
     elif avg_win > 0:
-        # No losses but have wins - perfect strategy (infinite ratio)
-        avg_win_loss = float('inf')
+        # No losses but have wins - perfect strategy (very large ratio)
+        # Use 999999 instead of infinity (PostgreSQL JSONB doesn't support inf)
+        avg_win_loss = 999999.0
     else:
         # No wins and no losses (no trades)
         avg_win_loss = 0.0
@@ -255,5 +257,15 @@ def generate_report(
             equity, benchmark_equity, initial_capital, daily_returns
         )
         report.update(benchmark_stats)
+
+    # Sanitize report: Replace any NaN or Infinity values with safe defaults
+    # PostgreSQL JSONB doesn't support NaN or Infinity
+    for key, value in report.items():
+        if isinstance(value, float):
+            if math.isnan(value):
+                report[key] = 0.0
+            elif math.isinf(value):
+                # Use large finite number instead of infinity
+                report[key] = 999999.0 if value > 0 else -999999.0
 
     return report

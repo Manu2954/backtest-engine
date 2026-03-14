@@ -40,6 +40,7 @@ export interface ConditionInput {
 }
 
 export interface ConditionGroupInput {
+  group_name?: string | null;
   logic: "AND" | "OR";
   conditions: ConditionInput[];
 }
@@ -48,18 +49,29 @@ export interface StrategyCreate {
   name: string;
   description?: string | null;
   indicators: IndicatorInput[];
-  entry: ConditionGroupInput;
-  exit: ConditionGroupInput;
+
+  // Legacy: single entry/exit groups (backward compatible)
+  entry?: ConditionGroupInput | null;
+  exit?: ConditionGroupInput | null;
+
+  // New: named groups with expressions
+  entry_groups?: Record<string, ConditionGroupInput> | null;
+  exit_groups?: Record<string, ConditionGroupInput> | null;
+  entry_expression?: string | null;
+  exit_expression?: string | null;
 }
 
 export interface StrategyOut {
   id: string;
   name: string;
   description?: string | null;
+  entry_expression?: string | null;
+  exit_expression?: string | null;
   indicators: IndicatorInput[];
   condition_groups: Array<{
     id: string;
     group_type: "ENTRY" | "EXIT";
+    group_name?: string | null;
     logic: "AND" | "OR";
     conditions: ConditionInput[];
   }>;

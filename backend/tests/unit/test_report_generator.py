@@ -45,7 +45,7 @@ def test_report_basic_metrics() -> None:
     assert report["total_return_pct"] == 20.0
     assert report["win_rate"] == 50.0
     assert report["profit_factor"] == 1.0
-    assert report["avg_trade_duration"] == 1
+    assert report["avg_trade_duration_days"] == 1
     assert report["max_drawdown_pct"] <= 0
 
 
@@ -57,15 +57,16 @@ def test_report_empty() -> None:
     assert report["total_return_pct"] == 0.0
     assert report["win_rate"] == 0.0
     assert report["profit_factor"] == 0.0
-    assert report["avg_trade_duration"] == 0.0
+    assert report["avg_trade_duration_days"] == 0.0
 
 
 def test_perfect_strategy_avg_win_loss() -> None:
     """
-    Bug Fix Test #7: Perfect strategy (no losses) should return inf for avg_win_loss.
+    Bug Fix Test #7: Perfect strategy (no losses) should return 999999.0 for avg_win_loss.
 
     When a strategy has 100% win rate (no losses), the avg_win_loss ratio
-    should be infinity, not 0.0.
+    should be very large (999999.0), not 0.0 or infinity.
+    Note: We use 999999.0 instead of infinity because PostgreSQL JSONB doesn't support inf.
     """
     index = pd.date_range("2020-01-01", periods=5, freq="D")
     equity = pd.Series([100, 110, 120, 130, 140], index=index)
@@ -97,8 +98,9 @@ def test_perfect_strategy_avg_win_loss() -> None:
     # Should have 100% win rate
     assert report["win_rate"] == 100.0
 
-    # avg_win_loss should be infinity (no losses to divide by)
-    assert report["avg_win_loss"] == float('inf')
+    # avg_win_loss should be 999999.0 (no losses to divide by)
+    # We use finite number instead of infinity for PostgreSQL JSONB compatibility
+    assert report["avg_win_loss"] == 999999.0
 
     # avg_win should be calculated
     assert report["avg_win"] == 15.0  # (10 + 20) / 2

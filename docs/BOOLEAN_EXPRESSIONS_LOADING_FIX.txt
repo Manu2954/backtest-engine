@@ -1,0 +1,284 @@
+================================================================================
+        BOOLEAN EXPRESSIONS - LOADING EXISTING STRATEGIES FIX
+================================================================================
+Date: 2026-03-15
+Status: FIXED
+
+================================================================================
+                                THE PROBLEM
+================================================================================
+
+SYMPTOM:
+When viewing or editing an existing strategy that uses boolean expressions:
+- Named groups were not displayed
+- Expressions were not shown
+- UI defaulted to Simple mode even for Advanced strategies
+- User could only see empty Advanced mode UI
+
+ROOT CAUSE:
+The useEffect hook that loads strategies only handled legacy format:
+- It looked for single ENTRY/EXIT condition groups
+- It didn't check for entry_expression/exit_expression fields
+- It didn't parse named groups from condition_groups array
+- It never set useExpressions = true
+
+CODE LOCATION:
+frontend/src/pages/StrategyBuilder.tsx, lines 186-237
+The strategy loading logic only handled Simple mode format.
+
+================================================================================
+                                THE SOLUTION
+================================================================================
+
+UPDATED STRATEGY LOADING LOGIC:
+
+1. Detect if strategy uses expressions:
+   ```typescript
+   const hasExpressions = !!(strategy.entry_expression || strategy.exit_expression);
+   ```
+
+2. If expressions exist (Advanced mode):
+   - Set useExpressions = true
+   - Parse entry groups from condition_groups where group_type === "ENTRY" and group_name exists
+   - Parse exit groups from condition_groups where group_type === "EXIT" and group_name exists
+   - Reconstruct Record<string, ConditionGroupInput> format
+   - Load entry_expression and exit_expression strings
+
+3. If no expressions (Simple mode):
+   - Set useExpressions = false
+   - Load single entry/exit groups (legacy behavior)
+
+IMPLEMENTATION:
+
+```typescript
+if (hasExpressions) {
+  // Advanced mode: Load named groups and expressions
+  setUseExpressions(true);
+
+  // Parse entry groups
+  const entryGroupsObj: Record<string, ConditionGroupInput> = {};
+  strategy.condition_groups
+    .filter((g) => g.group_type === "ENTRY" && g.group_name)
+    .forEach((g) => {
+      entryGroupsObj[g.group_name!] = {
+        group_name: g.group_name,
+        logic: g.logic as "AND" | "OR",
+        conditions: [...],
+      };
+    });
+
+  setEntryGroups(entryGroupsObj);
+  setExitGroups(exitGroupsObj);
+  setEntryExpression(strategy.entry_expression || "");
+  setExitExpression(strategy.exit_expression || "");
+} else {
+  // Simple mode: Load single entry/exit groups (legacy format)
+  setUseExpressions(false);
+  // ... existing logic
+}
+```
+
+FILES MODIFIED:
+- frontend/src/pages/StrategyBuilder.tsx (useEffect hook, lines 186-290)
+
+================================================================================
+                            HOW IT WORKS
+================================================================================
+
+BACKEND STORAGE FORMAT:
+When a strategy with expressions is saved, the backend stores:
+
+1. condition_groups array with multiple entries:
+   [
+     {
+       id: "...",
+       group_type: "ENTRY",
+       group_name: "oversold",  // ← Key difference from Simple mode
+       logic: "AND",
+       conditions: [...]
+     },
+     {
+       id: "...",
+       group_type: "ENTRY",
+       group_name: "trending",
+       logic: "AND",
+       conditions: [...]
+     },
+     ...
+   ]
+
+2. expression fields:
+   {
+     entry_expression: "(oversold && trending) || bullish",
+     exit_expression: "profit_target || stop_loss"
+   }
+
+LOADING PROCESS:
+
+Simple Mode Strategy:
+- entry_expression: null or undefined
+- exit_expression: null or undefined
+- condition_groups: Single ENTRY and single EXIT (no group_name)
+→ Loads into entry/exit state, useExpressions = false
+
+Advanced Mode Strategy:
+- entry_expression: "oversold && trending"
+- exit_expression: "profit || stop"
+- condition_groups: Multiple groups with group_name set
+→ Loads into entryGroups/exitGroups/expressions, useExpressions = true
+
+================================================================================
+                            TESTING VERIFICATION
+================================================================================
+
+TEST SCENARIO 1: Load Simple Mode Strategy
+☐ Create strategy in Simple mode
+☐ Save it
+☐ Navigate away
+☐ Click "Edit" on the strategy
+✓ Should load with Simple mode active
+✓ Should show conditions correctly
+✓ Mode toggle should show Simple selected
+
+TEST SCENARIO 2: Load Advanced Mode Strategy
+☐ Create strategy in Advanced mode
+☐ Add named groups: "oversold", "trending"
+☐ Set expression: "oversold && trending"
+☐ Save it
+☐ Navigate away
+☐ Click "Edit" on the strategy
+✓ Should load with Advanced mode active
+✓ Should show both groups with their conditions
+✓ Should show expression text
+✓ Mode toggle should show Advanced selected
+
+TEST SCENARIO 3: Edit Advanced Mode Strategy
+☐ Load advanced strategy (per scenario 2)
+✓ Verify all groups are visible
+☐ Add new group "overbought"
+☐ Update expression to include new group
+☐ Save
+☐ Reload
+✓ All three groups should be visible
+✓ Updated expression should be shown
+
+TEST SCENARIO 4: Convert Simple to Advanced
+☐ Load simple strategy
+☐ Click "Advanced" toggle
+✓ Should switch to Advanced mode
+✓ Groups should be empty (Simple conditions not converted)
+☐ Create new groups and expression
+☐ Save
+✓ Should save as Advanced mode strategy
+
+TEST SCENARIO 5: View-Only Mode
+☐ Navigate to Strategy List
+☐ Click "View" on an advanced strategy
+✓ Should show groups and expressions
+✓ Should be in Advanced mode
+✓ UI should be read-only (if view mode implemented)
+
+================================================================================
+                            BACKWARD COMPATIBILITY
+================================================================================
+
+FULLY BACKWARD COMPATIBLE:
+✅ Simple mode strategies load correctly (existing behavior)
+✅ Advanced mode strategies now load correctly (NEW)
+✅ No database changes required
+✅ No API changes required
+✅ Existing simple strategies unaffected
+
+MIGRATION:
+- No migration needed
+- Existing strategies work as before
+- New advanced strategies now editable
+
+================================================================================
+                            KNOWN LIMITATIONS
+================================================================================
+
+1. NO AUTOMATIC CONVERSION:
+   When loading a Simple strategy and switching to Advanced mode, the
+   simple conditions are NOT automatically converted to named groups.
+
+   Reason: Complex conversion logic would be error-prone.
+   Workaround: User recreates conditions in Advanced mode.
+
+2. GROUP NAME COLLISION:
+   If backend returns multiple groups with same group_name, last one wins.
+
+   Reason: Record<string, ...> structure uses name as key.
+   Mitigation: Backend should enforce unique group names.
+
+3. MISSING GROUP_NAME:
+   If a condition_group in Advanced strategy is missing group_name,
+   it will be skipped during loading.
+
+   Reason: Named groups require names to be referenced in expressions.
+   Mitigation: Backend validation should enforce group_name when expressions exist.
+
+================================================================================
+                            DEBUGGING TIPS
+================================================================================
+
+IF GROUPS DON'T LOAD:
+
+1. Check browser console for errors
+2. Check network response for /strategies/:id
+3. Verify response has:
+   - entry_expression or exit_expression (not null/undefined)
+   - condition_groups with group_name fields
+4. Add console.log in useEffect to see parsed data:
+   ```typescript
+   console.log("hasExpressions:", hasExpressions);
+   console.log("entryGroupsObj:", entryGroupsObj);
+   console.log("expressions:", {entry: entryExpression, exit: exitExpression});
+   ```
+
+IF MODE TOGGLE SHOWS WRONG STATE:
+
+1. Check useExpressions state after loading
+2. Verify setUseExpressions(true) is called for advanced strategies
+3. Check if entry_expression/exit_expression are actually present in API response
+
+IF CONDITIONS ARE EMPTY:
+
+1. Verify condition_groups array in API response
+2. Check group_type matches "ENTRY" or "EXIT"
+3. Check group_name is not null/undefined
+4. Verify conditions array has items
+
+================================================================================
+                            RELATED ISSUES FIXED
+================================================================================
+
+This fix also addresses:
+- Editing advanced strategies after creation
+- Viewing advanced strategy details
+- Reusing advanced strategies as templates
+- Updating expressions on existing strategies
+
+================================================================================
+                            DEPLOYMENT NOTES
+================================================================================
+
+STEPS TO DEPLOY:
+1. ✅ Code changes made
+2. ✅ Frontend built successfully
+3. ⚠️  REQUIRED: Clear browser cache or hard refresh (Ctrl+Shift+R)
+4. ⚠️  RECOMMENDED: Test loading both simple and advanced strategies
+
+NO BACKEND CHANGES:
+- Backend API already returns correct data
+- Only frontend parsing logic was updated
+
+VERIFICATION:
+1. Create advanced strategy with groups
+2. Navigate away (go to Dashboard)
+3. Return to strategy (click Edit)
+4. Verify groups and expressions are visible
+
+================================================================================
+                            END OF DOCUMENT
+================================================================================
