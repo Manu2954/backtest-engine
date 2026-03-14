@@ -28,6 +28,7 @@ async def test_providers():
     start_date = datetime(2024, 1, 1)
     end_date = datetime(2024, 1, 31)
     intervals_to_test = ["1d"]  # Start with daily, can add intraday later
+    asset_class = "STOCK"  # Test with stocks
 
     providers_to_test = [
         "yfinance",
@@ -37,7 +38,7 @@ async def test_providers():
     for provider_name in providers_to_test:
         for interval in intervals_to_test:
             print(f"\n{'=' * 80}")
-            print(f"Testing Provider: {provider_name} | Interval: {interval}")
+            print(f"Testing Provider: {provider_name} | Interval: {interval} | Asset: {asset_class}")
             print("=" * 80)
 
             try:
@@ -47,8 +48,10 @@ async def test_providers():
                 print(f"✅ Provider created: {provider.get_provider_name()}")
 
                 # Fetch data
-                print(f"\n2. Fetching {ticker} data ({start_date.date()} to {end_date.date()}, {interval})...")
-                df = await provider.fetch_ohlcv(ticker, start_date, end_date, interval=interval)
+                print(f"\n2. Fetching {ticker} data ({start_date.date()} to {end_date.date()}, {interval}, {asset_class})...")
+                df = await provider.fetch_ohlcv(
+                    ticker, start_date, end_date, interval=interval, asset_class=asset_class
+                )
 
                 if df.empty:
                     print(f"❌ No data returned!")

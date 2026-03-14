@@ -26,6 +26,7 @@ class YFinanceProvider(DataProvider):
         start_date: datetime,
         end_date: datetime,
         interval: str = "1d",
+        asset_class: str = "STOCK",
     ) -> pd.DataFrame:
         """
         Fetch OHLCV data from Yahoo Finance.
@@ -37,6 +38,9 @@ class YFinanceProvider(DataProvider):
             interval: Time interval (default: "1d")
                      Supported: "1m", "2m", "5m", "15m", "30m", "60m", "90m",
                                "1h", "1d", "5d", "1wk", "1mo", "3mo"
+            asset_class: Asset class (default: "STOCK")
+                        Note: yfinance handles both stocks and crypto through same API,
+                        just use appropriate ticker format (e.g., "BTC-USD" for crypto)
 
         Returns:
             DataFrame with columns: date, open, high, low, close, volume

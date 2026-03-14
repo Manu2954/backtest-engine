@@ -35,6 +35,7 @@ class OpenBBProvider(DataProvider):
         start_date: datetime,
         end_date: datetime,
         interval: str = "1d",
+        asset_class: str = "STOCK",
     ) -> pd.DataFrame:
         """
         Fetch OHLCV data from OpenBB Platform.
@@ -47,6 +48,9 @@ class OpenBBProvider(DataProvider):
                      Note: OpenBB uses 'timeseries_period' parameter.
                      Supported values depend on the underlying provider.
                      Common: "1d" (daily), "1h" (hourly), "1m" (1-minute)
+            asset_class: Asset class (default: "STOCK")
+                        - "STOCK": Use obb.equity.price.historical()
+                        - "CRYPTO": Use obb.crypto.price.historical()
 
         Returns:
             DataFrame with columns: date, open, high, low, close, volume
@@ -75,15 +79,29 @@ class OpenBBProvider(DataProvider):
             # Use mapped interval or pass through if already in correct format
             obb_interval = interval_map.get(interval, interval)
 
-            # Fetch historical data
-            # Note: timeseries_period support varies by provider
-            result = obb.equity.price.historical(
-                symbol=ticker,
-                start_date=start_date.strftime("%Y-%m-%d"),
-                end_date=end_date.strftime("%Y-%m-%d"),
-                provider=self.openbb_provider,
-                timeseries_period=obb_interval if obb_interval != "1d" else None,
-            )
+            # Select appropriate OpenBB endpoint based on asset class
+            asset = asset_class.upper()
+
+            if asset == "STOCK":
+                # Fetch equity data
+                result = obb.equity.price.historical(
+                    symbol=ticker,
+                    start_date=start_date.strftime("%Y-%m-%d"),
+                    end_date=end_date.strftime("%Y-%m-%d"),
+                    provider=self.openbb_provider,
+                    timeseries_period=obb_interval if obb_interval != "1d" else None,
+                )
+            elif asset == "CRYPTO":
+                # Fetch crypto data
+                result = obb.crypto.price.historical(
+                    symbol=ticker,
+                    start_date=start_date.strftime("%Y-%m-%d"),
+                    end_date=end_date.strftime("%Y-%m-%d"),
+                    provider=self.openbb_provider,
+                    timeseries_period=obb_interval if obb_interval != "1d" else None,
+                )
+            else:
+                raise ValueError(f"Unsupported asset class: {asset}. Use 'STOCK' or 'CRYPTO'")
 
             if not result or not hasattr(result, "results") or not result.results:
                 raise ValueError(f"No data returned for ticker '{ticker}'")
@@ -124,5 +142,5 @@ class OpenBBProvider(DataProvider):
             if isinstance(e, ValueError):
                 raise
             raise RuntimeError(
-                f"OpenBB fetch failed for '{ticker}' (provider={self.openbb_provider}): {e}"
+                f"OpenBB fetch failed for '{ticker}' (provider={self.openbb_provider}, asset={asset_class}): {e}"
             ) from e

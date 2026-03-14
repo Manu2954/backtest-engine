@@ -21,6 +21,7 @@ class DataProvider(ABC):
         start_date: datetime,
         end_date: datetime,
         interval: str = "1d",
+        asset_class: str = "STOCK",
     ) -> pd.DataFrame:
         """
         Fetch OHLCV data for a ticker symbol.
@@ -36,6 +37,9 @@ class DataProvider(ABC):
                      - "1d" (daily)
                      - "1wk" (weekly)
                      - "1mo" (monthly)
+            asset_class: Asset class (default: "STOCK")
+                        - "STOCK": Equities
+                        - "CRYPTO": Cryptocurrencies
 
         Returns:
             DataFrame with columns: date, open, high, low, close, volume

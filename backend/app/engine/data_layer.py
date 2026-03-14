@@ -413,7 +413,9 @@ async def fetch_ohlcv_async(
                 data_provider = ProviderFactory.create_provider(provider)
                 start_dt = datetime.combine(start_date, datetime.min.time())
                 end_dt = datetime.combine(end_date, datetime.min.time())
-                df = await data_provider.fetch_ohlcv(ticker, start_dt, end_dt, interval=resolution)
+                df = await data_provider.fetch_ohlcv(
+                    ticker, start_dt, end_dt, interval=resolution, asset_class=asset
+                )
             else:
                 # Legacy yfinance path
                 df = yf.download(
@@ -425,8 +427,20 @@ async def fetch_ohlcv_async(
                     progress=False,
                 )
         else:
-            symbol = _binance_symbol(ticker)
-            df = _fetch_binance_ohlcv(symbol, start_date, end_date, resolution)
+            # CRYPTO asset class
+            if provider:
+                from app.providers.factory import ProviderFactory
+
+                data_provider = ProviderFactory.create_provider(provider)
+                start_dt = datetime.combine(start_date, datetime.min.time())
+                end_dt = datetime.combine(end_date, datetime.min.time())
+                df = await data_provider.fetch_ohlcv(
+                    ticker, start_dt, end_dt, interval=resolution, asset_class=asset
+                )
+            else:
+                # Legacy Binance path
+                symbol = _binance_symbol(ticker)
+                df = _fetch_binance_ohlcv(symbol, start_date, end_date, resolution)
 
         df = _normalize_df(df)
         if df.empty:
