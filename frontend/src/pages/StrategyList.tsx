@@ -11,6 +11,7 @@ export default function StrategyList() {
   const [pendingBacktest, setPendingBacktest] = useState<StrategyOut | null>(null);
   const [ticker, setTicker] = useState("AAPL");
   const [assetClass, setAssetClass] = useState<"STOCK" | "CRYPTO">("STOCK");
+  const [provider, setProvider] = useState<string>("");
   const [startDate, setStartDate] = useState("2020-01-01");
   const [endDate, setEndDate] = useState("2023-12-31");
   const [initialCapital, setInitialCapital] = useState("10000");
@@ -89,6 +90,7 @@ export default function StrategyList() {
         strategy_id: strategyId,
         ticker,
         asset_class: assetClass,
+        provider: provider || null,
         start_date: startDate,
         end_date: endDate,
         bar_resolution: resolution,
@@ -215,6 +217,17 @@ export default function StrategyList() {
                 </select>
               </div>
               <div>
+                <label>Data Provider</label>
+                <select
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value)}
+                >
+                  <option value="">Auto (default)</option>
+                  <option value="yfinance">Yahoo Finance</option>
+                  <option value="binance">Binance</option>
+                </select>
+              </div>
+              <div>
                 <label>Resolution</label>
                 <select value={resolution} onChange={(e) => setResolution(e.target.value)}>
                   {resolutionOptions.map((opt) => (
@@ -224,6 +237,9 @@ export default function StrategyList() {
                   ))}
                 </select>
               </div>
+            </div>
+            <div className="notice" style={{ marginTop: "8px", fontSize: "0.85rem" }}>
+              <strong>Data Provider:</strong> Leave as "Auto" to use yfinance for stocks and binance for crypto.
             </div>
             <div className="row" style={{ marginTop: "12px" }}>
               <div>
