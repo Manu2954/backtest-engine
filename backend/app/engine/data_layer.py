@@ -329,9 +329,9 @@ async def fetch_ohlcv_async(
         resolution: Time resolution (e.g., "1d", "1h")
         asset_class: "STOCK" or "CRYPTO"
         session: Optional database session
-        provider: Data provider to use (default: None = legacy behavior)
-                 Supported: "yfinance", "openbb:yfinance", "openbb:fmp", etc.
-                 If None, uses legacy yfinance/Binance logic
+        provider: Data provider to use (optional)
+                 Supported: "yfinance"
+                 If None, defaults to "yfinance"
 
     Returns:
         DataFrame with OHLCV data
@@ -406,41 +406,31 @@ async def fetch_ohlcv_async(
                 )
 
         if asset == "STOCK":
-            # Use provider system if specified, otherwise fallback to legacy yfinance
-            if provider:
-                from app.providers.factory import ProviderFactory
+            # Always use provider system
+            if provider is None:
+                provider = "yfinance"  # Default provider
 
-                data_provider = ProviderFactory.create_provider(provider)
-                start_dt = datetime.combine(start_date, datetime.min.time())
-                end_dt = datetime.combine(end_date, datetime.min.time())
-                df = await data_provider.fetch_ohlcv(
-                    ticker, start_dt, end_dt, interval=resolution, asset_class=asset
-                )
-            else:
-                # Legacy yfinance path
-                df = yf.download(
-                    tickers=ticker,
-                    start=start_date.isoformat(),
-                    end=end_date.isoformat(),
-                    interval=resolution,
-                    auto_adjust=True,
-                    progress=False,
-                )
+            from app.providers.factory import ProviderFactory
+
+            data_provider = ProviderFactory.create_provider(provider)
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            end_dt = datetime.combine(end_date, datetime.min.time())
+            df = await data_provider.fetch_ohlcv(
+                ticker, start_dt, end_dt, interval=resolution, asset_class=asset
+            )
         else:
             # CRYPTO asset class
-            if provider:
-                from app.providers.factory import ProviderFactory
+            if provider is None:
+                provider = "yfinance"  # Default provider (handles crypto via yfinance)
 
-                data_provider = ProviderFactory.create_provider(provider)
-                start_dt = datetime.combine(start_date, datetime.min.time())
-                end_dt = datetime.combine(end_date, datetime.min.time())
-                df = await data_provider.fetch_ohlcv(
-                    ticker, start_dt, end_dt, interval=resolution, asset_class=asset
-                )
-            else:
-                # Legacy Binance path
-                symbol = _binance_symbol(ticker)
-                df = _fetch_binance_ohlcv(symbol, start_date, end_date, resolution)
+            from app.providers.factory import ProviderFactory
+
+            data_provider = ProviderFactory.create_provider(provider)
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            end_dt = datetime.combine(end_date, datetime.min.time())
+            df = await data_provider.fetch_ohlcv(
+                ticker, start_dt, end_dt, interval=resolution, asset_class=asset
+            )
 
         df = _normalize_df(df)
         if df.empty:
@@ -480,33 +470,30 @@ def fetch_ohlcv(
 
 
 def validate_ticker(ticker: str, asset_class: str = "STOCK") -> bool:
-    asset = asset_class.upper()
-    if asset == "CRYPTO":
-        symbol = _binance_symbol(ticker)
-        try:
-            response = httpx.get(f"{BINANCE_URL}/exchangeInfo", timeout=10.0)
-            response.raise_for_status()
-            symbols = response.json().get("symbols", [])
-            return any(s.get("symbol") == symbol for s in symbols)
-        except Exception:
-            return False
-    if asset != "STOCK":
-        return False
+    """
+    Validate that a ticker symbol is valid and returns data.
 
+    Uses the provider system to attempt fetching recent data.
+
+    Args:
+        ticker: Ticker symbol to validate
+        asset_class: "STOCK" or "CRYPTO"
+
+    Returns:
+        True if ticker is valid, False otherwise
+    """
     end_date = datetime.utcnow().date()
     start_date = end_date - timedelta(days=7)
 
     try:
-        df = yf.download(
-            tickers=ticker,
-            start=start_date.isoformat(),
-            end=end_date.isoformat(),
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
+        # Use fetch_ohlcv which goes through provider system
+        df = fetch_ohlcv(
+            ticker=ticker,
+            start=start_date,
+            end=end_date,
+            resolution="1d",
+            asset_class=asset_class,
         )
-        df = _normalize_df(df)
+        return not df.empty
     except Exception:
         return False
-
-    return not df.empty
