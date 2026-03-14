@@ -99,34 +99,64 @@ Files modified:
   - Documentation: docs/BUG_FIX_BENCHMARK_HIGH_PRICED_INDICES.txt
 
 
+✅ 6. BACKTEST REPORT METRICS - COMPLETED
+-----------------------------------------
+Status: Fully implemented
+Commit: Already in master
+
+Implementation:
+  - All metrics displayed: largest_win, largest_loss
+  - Full benchmark comparison: benchmark_return_pct, benchmark_final_capital,
+    benchmark_sharpe_ratio, benchmark_max_drawdown_pct, alpha, beta
+  - Color coding for all metrics
+  - Proper formatting (currency, percentages, ratios)
+
+Files:
+  - frontend/src/pages/BacktestReport.tsx: Complete implementation
+
+
 ================================================================================
                           PRIORITY: CRITICAL
 ================================================================================
 
-1. BACKTEST LIST/STRATEGY LIST MISSING ADVANCED OPTIONS (INCOMPLETE)
+1. BACKTEST LIST/STRATEGY LIST MISSING ADVANCED OPTIONS ✅ COMPLETED
 --------------------------------------------------------------------
-Backend: Supports named condition groups with boolean expressions
-         e.g., "(oversold && trending) || bullish_cross"
+Status: ✅ COMPLETED
+Commit: e2fa104 (feat: add advanced backtest options to BacktestList and StrategyList modals)
 
-Frontend Gap:
-  - Only supports single entry/exit condition groups with AND/OR logic
-  - No support for named condition groups (entry_groups, exit_groups)
-  - No expression editor for complex boolean expressions
-  - No support for expression operators (&&, ||, !, parentheses)
+Implementation:
+  - Position sizing options (type, value) in both modals
+  - Stop loss / take profit inputs
+  - Dynamic stop dropdown (shows indicator aliases)
+  - Commission and slippage settings
+  - Modal made scrollable (max-height: 85vh, overflow-y: auto)
+  - Modal width increased to 600px
 
-Files to modify:
-  - types/index.ts: Add entry_groups, exit_groups, entry_expression, exit_expression
-  - StrategyBuilder.tsx: Add named group management and expression editor
-  - api/client.ts: Update payload structure
-
-Implementation needed:
-  a) Add UI to create multiple named condition groups
-  b) Add expression editor with syntax highlighting
-  c) Add expression validation
-  d) Support: && (AND), || (OR), ! (NOT), parentheses
+Files modified:
+  - frontend/src/pages/BacktestList.tsx: Full advanced options
+  - frontend/src/pages/StrategyList.tsx: Full advanced options
+  - frontend/src/styles.css: Modal scrolling and sizing
 
 
-2. BACKTEST REPORT MISSING METRICS (INCOMPLETE)
+2. BACKTEST OUTPUT TYPE ✅ COMPLETED
+------------------------------------
+Status: ✅ COMPLETED (Already in codebase)
+
+All fields present in BacktestOut (frontend/src/types/index.ts lines 104-131):
+  - position_size_type, position_size_value
+  - stop_loss_pct, take_profit_pct
+  - commission_per_trade, commission_pct, slippage_pct
+  - dynamic_stop_column
+  - periodic_contribution
+
+No changes needed.
+
+
+================================================================================
+                          PRIORITY: MEDIUM
+================================================================================
+
+3. CONDITION BUILDER UX IMPROVEMENTS
 --------------------------------------------------------------------
 Backend: Full backtest configuration available
 
