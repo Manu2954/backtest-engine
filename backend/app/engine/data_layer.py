@@ -312,6 +312,7 @@ async def fetch_ohlcv_async(
     resolution: str = "1d",
     asset_class: str = "STOCK",
     session: AsyncSession | None = None,
+    provider: str | None = None,
 ) -> pd.DataFrame:
     """
     Fetch OHLCV data from cache, database, or external API.
@@ -328,6 +329,9 @@ async def fetch_ohlcv_async(
         resolution: Time resolution (e.g., "1d", "1h")
         asset_class: "STOCK" or "CRYPTO"
         session: Optional database session
+        provider: Data provider to use (default: None = legacy behavior)
+                 Supported: "yfinance", "openbb:yfinance", "openbb:fmp", etc.
+                 If None, uses legacy yfinance/Binance logic
 
     Returns:
         DataFrame with OHLCV data
@@ -402,14 +406,24 @@ async def fetch_ohlcv_async(
                 )
 
         if asset == "STOCK":
-            df = yf.download(
-                tickers=ticker,
-                start=start_date.isoformat(),
-                end=end_date.isoformat(),
-                interval=resolution,
-                auto_adjust=True,
-                progress=False,
-            )
+            # Use provider system if specified, otherwise fallback to legacy yfinance
+            if provider:
+                from app.providers.factory import ProviderFactory
+
+                data_provider = ProviderFactory.create_provider(provider)
+                start_dt = datetime.combine(start_date, datetime.min.time())
+                end_dt = datetime.combine(end_date, datetime.min.time())
+                df = await data_provider.fetch_ohlcv(ticker, start_dt, end_dt, interval=resolution)
+            else:
+                # Legacy yfinance path
+                df = yf.download(
+                    tickers=ticker,
+                    start=start_date.isoformat(),
+                    end=end_date.isoformat(),
+                    interval=resolution,
+                    auto_adjust=True,
+                    progress=False,
+                )
         else:
             symbol = _binance_symbol(ticker)
             df = _fetch_binance_ohlcv(symbol, start_date, end_date, resolution)
@@ -436,6 +450,7 @@ def fetch_ohlcv(
     end: str | date | datetime,
     resolution: str = "1d",
     asset_class: str = "STOCK",
+    provider: str | None = None,
 ) -> pd.DataFrame:
     import asyncio
 
@@ -443,7 +458,9 @@ def fetch_ohlcv(
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(
-            fetch_ohlcv_async(ticker, start, end, resolution=resolution, asset_class=asset_class)
+            fetch_ohlcv_async(
+                ticker, start, end, resolution=resolution, asset_class=asset_class, provider=provider
+            )
         )
     raise RuntimeError("fetch_ohlcv cannot be called from an active event loop; use fetch_ohlcv_async.")
 
