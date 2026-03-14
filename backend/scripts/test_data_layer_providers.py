@@ -50,7 +50,7 @@ async def test_data_layer_provider_integration():
 
     # Test 2: With yfinance provider
     print("\n" + "=" * 80)
-    print("Test 2: With yfinance provider")
+    print("Test 2: With yfinance provider (explicit)")
     print("=" * 80)
 
     try:
@@ -71,84 +71,48 @@ async def test_data_layer_provider_integration():
         import traceback
         traceback.print_exc()
 
-    # Test 3: With OpenBB provider
+    # Test 3: Compare results
     print("\n" + "=" * 80)
-    print("Test 3: With OpenBB provider")
+    print("Test 3: Comparing provider results")
     print("=" * 80)
 
     try:
-        print(f"\nFetching {ticker} data with provider='openbb:yfinance'...")
-        df = await fetch_ohlcv_async(
-            ticker, start, end, resolution="1d", asset_class="STOCK", provider="openbb:yfinance"
-        )
-
-        if df.empty:
-            print("❌ No data returned!")
-        else:
-            print(f"✅ Fetched {len(df)} bars")
-            print(f"   Columns: {list(df.columns)}")
-            print(f"   Date range: {df.index.min().date()} to {df.index.max().date()}")
-
-    except Exception as e:
-        print(f"❌ OpenBB provider fetch failed: {e}")
-        import traceback
-        traceback.print_exc()
-
-    # Test 4: Compare results
-    print("\n" + "=" * 80)
-    print("Test 4: Comparing provider results")
-    print("=" * 80)
-
-    try:
-        print(f"\nFetching same data with different providers...")
+        print(f"\nFetching same data with different methods...")
 
         df_legacy = await fetch_ohlcv_async(ticker, start, end, resolution="1d", asset_class="STOCK")
         df_yf = await fetch_ohlcv_async(
             ticker, start, end, resolution="1d", asset_class="STOCK", provider="yfinance"
         )
-        df_obb = await fetch_ohlcv_async(
-            ticker, start, end, resolution="1d", asset_class="STOCK", provider="openbb:yfinance"
-        )
 
         print(f"\nBar counts:")
-        print(f"   Legacy:  {len(df_legacy)} bars")
+        print(f"   Legacy:   {len(df_legacy)} bars")
         print(f"   YFinance: {len(df_yf)} bars")
-        print(f"   OpenBB:   {len(df_obb)} bars")
 
-        # Check if bar counts are close (allow small differences due to data updates)
-        max_count = max(len(df_legacy), len(df_yf), len(df_obb))
-        min_count = min(len(df_legacy), len(df_yf), len(df_obb))
-
-        if max_count - min_count <= 2:
-            print(f"✅ Bar counts are consistent (within 2 bars)")
+        # Check if bar counts match
+        if len(df_legacy) == len(df_yf):
+            print(f"✅ Bar counts match")
         else:
-            print(f"⚠️  Bar counts differ by {max_count - min_count} bars")
+            print(f"⚠️  Bar counts differ by {abs(len(df_legacy) - len(df_yf))} bars")
 
-        # Check if close prices are similar (first and last bar)
-        if not df_legacy.empty and not df_yf.empty and not df_obb.empty:
-            first_date = max(
-                df_legacy.index.min(), df_yf.index.min(), df_obb.index.min()
-            )
-            last_date = min(df_legacy.index.max(), df_yf.index.max(), df_obb.index.max())
+        # Check if close prices are similar (first bar)
+        if not df_legacy.empty and not df_yf.empty:
+            first_date = max(df_legacy.index.min(), df_yf.index.min())
 
-            if first_date in df_legacy.index and first_date in df_yf.index and first_date in df_obb.index:
+            if first_date in df_legacy.index and first_date in df_yf.index:
                 close_legacy = df_legacy.loc[first_date, "close"]
                 close_yf = df_yf.loc[first_date, "close"]
-                close_obb = df_obb.loc[first_date, "close"]
 
                 print(f"\nFirst bar ({first_date.date()}) close prices:")
-                print(f"   Legacy:  ${close_legacy:.2f}")
+                print(f"   Legacy:   ${close_legacy:.2f}")
                 print(f"   YFinance: ${close_yf:.2f}")
-                print(f"   OpenBB:   ${close_obb:.2f}")
 
-                # Allow 1% difference (data sources may differ slightly)
-                diff_yf = abs(close_legacy - close_yf) / close_legacy * 100
-                diff_obb = abs(close_legacy - close_obb) / close_legacy * 100
+                # Allow small difference (data updates)
+                diff_pct = abs(close_legacy - close_yf) / close_legacy * 100
 
-                if diff_yf < 1.0 and diff_obb < 1.0:
-                    print(f"✅ Close prices are consistent (within 1%)")
+                if diff_pct < 0.01:
+                    print(f"✅ Close prices match (within 0.01%)")
                 else:
-                    print(f"⚠️  Close prices differ (YF: {diff_yf:.2f}%, OBB: {diff_obb:.2f}%)")
+                    print(f"⚠️  Close prices differ by {diff_pct:.4f}%")
 
     except Exception as e:
         print(f"❌ Comparison failed: {e}")

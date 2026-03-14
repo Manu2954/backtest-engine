@@ -10,11 +10,12 @@ The Backtest Engine is designed to help traders and investors test their technic
 
 - **Visual Strategy Builder**: Create trading strategies using technical indicators with a user-friendly interface
 - **Flexible Indicator Support**: 11 technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, ATR, Stochastic, ADX, Ichimoku Cloud, ROC, OBV) via pandas-ta
-- **Advanced Conditional Logic**: Define entry and exit conditions with complex logic (AND/OR)
+- **Advanced Conditional Logic**: Define entry and exit conditions with complex boolean expressions `(A && B) || C`
 - **Historical Comparisons (V2)**: Compare current values to historical values (lookback comparisons) for trend detection
 - **Risk-Based Position Sizing (V2)**: Automatically adjust position size based on risk percentage and stop distance
+- **Pluggable Data Providers (V2)**: Clean provider abstraction for validated, high-quality data sources
 - **Asynchronous Backtesting**: Run backtests as background jobs using Celery
-- **Historical Data**: Fetch and cache OHLCV (Open, High, Low, Close, Volume) data from Yahoo Finance
+- **Historical Data**: Fetch and cache OHLCV data with Redis caching and PostgreSQL persistence
 - **Performance Analytics**: Generate comprehensive reports with equity curves, trade logs, and key metrics
 - **Periodic Contributions**: Test dollar-cost averaging strategies with configurable contribution schedules
 - **Asset Class Support**: Handle both stocks (integer shares) and fractional assets (crypto)
@@ -22,6 +23,45 @@ The Backtest Engine is designed to help traders and investors test their technic
 - **Risk Management**: Commission modeling, slippage simulation, stop loss, and take profit
 
 ### V2 Features
+
+🔌 **Pluggable Data Provider Architecture**
+- Clean abstraction layer for swapping data sources
+- Protection from external API breaking changes
+- Independent validation and comparison of data sources
+- Currently supported: Yahoo Finance (yfinance), Binance (crypto)
+- Future: Polygon.io, Financial Modeling Prep
+
+**Design Principles:**
+- **Data Correctness**: Validate sources independently before production use
+- **No Tight Coupling**: Provider changes don't require engine rewrites
+- **Quality Over Quantity**: 2-3 validated sources > 100 untested sources
+
+**Example:**
+```python
+# Use provider abstraction
+df = await fetch_ohlcv_async(
+    ticker="AAPL",
+    start=start_date,
+    end=end_date,
+    provider="yfinance"  # Can swap to "polygon" later
+)
+```
+
+🧮 **Boolean Expression Logic**
+- Define complex conditions with natural expressions: `(A && B) || C`
+- Named condition groups for clarity and reusability
+- Unlimited nesting and complexity
+- Safe expression evaluation (no code injection)
+
+**Example:**
+```python
+entry_expression = "(oversold && trending) || golden_cross"
+entry_groups = {
+    "oversold": {"conditions": [{"left": "rsi", "operator": "LT", "right": "30"}]},
+    "trending": {"conditions": [{"left": "adx", "operator": "GT", "right": "25"}]},
+    "golden_cross": {"conditions": [{"left": "ema_50", "operator": "CROSSES_ABOVE", "right": "ema_200"}]}
+}
+```
 
 🚀 **LOOKBACK Comparisons**
 - Compare current values to historical values (N bars ago)
@@ -83,8 +123,9 @@ run_backtest(
 - **Redis**: Message broker for Celery and caching layer for OHLCV data
 - **Alembic**: Database migration management
 - **pandas**: Data manipulation and analysis
-- **pandas-ta**: Technical analysis indicator library
+- **pandas-ta**: Technical analysis indicator library (130+ indicators)
 - **yfinance**: Yahoo Finance data fetching
+- **Provider abstraction**: Pluggable data source architecture
 
 **Frontend:**
 - **React 18**: UI library
@@ -463,19 +504,20 @@ The system calculates comprehensive performance statistics:
 ✅ LOOKBACK comparisons for trend detection
 ✅ ROC and OBV indicators
 ✅ Risk-based position sizing
-✅ AND logic for exit conditions
-
-### In Progress (V2)
-- 🔄 Pattern recognition (divergence detection)
+✅ Boolean expression logic for complex conditions
+✅ Pluggable provider architecture
+✅ Asset class support (STOCK and CRYPTO)
 
 ### Planned (V2+)
 - Portfolio-level backtesting (multiple tickers)
 - Short selling support
 - Parameter optimization/scanning
 - Walk-forward analysis
-- Multiple data providers
+- Polygon.io provider integration (validated, high-quality US equities data)
+- Financial Modeling Prep provider (fundamental data support)
 - Custom indicator formulas
 - Multi-timeframe analysis
+- Pattern recognition (divergence detection)
 
 For detailed limitations and V2 roadmap, see `docs/V1_LIMITATIONS.txt`
 
@@ -486,6 +528,7 @@ Comprehensive guides for all features:
 - **[POSITION_SIZING.txt](docs/POSITION_SIZING.txt)** - Complete guide to position sizing methods (full_capital, percent_capital, fixed_amount, risk_based)
 - **[INDICATORS.txt](docs/INDICATORS.txt)** - All 11 supported indicators with parameters, examples, and common uses
 - **[OPERATORS.txt](docs/OPERATORS.txt)** - Condition operators reference (GT, LT, CROSSES_ABOVE, IS_RISING, LOOKBACK, etc.)
+- **[COMPARISON.txt](docs/COMPARISON.txt)** - Comparison with commercial platforms (Zerodha Streak, TradingView, QuantConnect)
 - **[V1_LIMITATIONS.txt](docs/V1_LIMITATIONS.txt)** - Known limitations and V2 roadmap
 - **[CLAUDE.md](CLAUDE.md)** - Development guidelines and project conventions
 
@@ -508,7 +551,7 @@ This project is licensed under the MIT License.
 
 ## Acknowledgments
 
-- **pandas-ta**: Comprehensive technical analysis library
+- **pandas-ta**: Comprehensive technical analysis library (130+ indicators)
 - **yfinance**: Yahoo Finance API wrapper
 - **FastAPI**: Modern Python web framework
 - **React**: UI library

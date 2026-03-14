@@ -41,7 +41,6 @@ async def test_asset_classes():
 
     providers_to_test = [
         "yfinance",
-        "openbb:yfinance",
     ]
 
     for provider_name in providers_to_test:

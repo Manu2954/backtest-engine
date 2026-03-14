@@ -32,7 +32,6 @@ async def test_providers():
 
     providers_to_test = [
         "yfinance",
-        "openbb:yfinance",
     ]
 
     for provider_name in providers_to_test:
