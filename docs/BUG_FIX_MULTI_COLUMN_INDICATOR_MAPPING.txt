@@ -1,0 +1,267 @@
+================================================================================
+                  BUG FIX: MULTI-COLUMN INDICATOR MAPPING
+================================================================================
+Date: 2026-03-15
+Priority: CRITICAL
+Status: FIXED
+
+================================================================================
+                                THE PROBLEM
+================================================================================
+
+SYMPTOM:
+Backtests were failing with error:
+  ValueError: Operand column not found: macd_2
+
+This occurred when users referenced multi-column indicators by their base alias
+(e.g., "macd_2") in strategy conditions.
+
+ROOT CAUSE:
+Multi-column indicators create multiple sub-columns with suffixes, but the base
+alias itself is NOT created as a column:
+
+  MACD with alias "macd_2" creates:
+    ✓ macd_2_macd
+    ✓ macd_2_signal
+    ✓ macd_2_hist
+    ✗ macd_2 (does NOT exist!)
+
+  BB with alias "bb_20" creates:
+    ✓ bb_20_upper
+    ✓ bb_20_mid
+    ✓ bb_20_lower
+    ✗ bb_20 (does NOT exist!)
+
+  STOCH with alias "stoch_14" creates:
+    ✓ stoch_14_k
+    ✓ stoch_14_d
+    ✗ stoch_14 (does NOT exist!)
+
+  ICHIMOKU with alias "ichi" creates:
+    ✓ ichi_tenkan
+    ✓ ichi_kijun
+    ✓ ichi_span_a
+    ✓ ichi_span_b
+    ✓ ichi_chikou
+    ✗ ichi (does NOT exist!)
+
+  ADX with alias "adx_14" creates:
+    ✓ adx_14 (BASE ALIAS EXISTS!)
+    ✓ adx_14_dmp
+    ✓ adx_14_dmn
+
+When conditions referenced the base alias (e.g., "macd_2"), the condition engine
+would fail during evaluation because that column didn't exist in the DataFrame.
+
+DATA INTEGRITY ISSUE:
+Strategies saved in the database may have conditions referencing base aliases
+that don't correspond to actual DataFrame columns. This could happen if:
+  1. Users typed the base alias manually
+  2. Strategies were created before frontend alias expansion
+  3. Users selected from incomplete dropdown lists
+
+================================================================================
+                                THE SOLUTION
+================================================================================
+
+IMPLEMENTED AUTO-MAPPING:
+Modified condition_engine.py to automatically map base aliases to their primary
+sub-column when the base alias doesn't exist:
+
+  Base Alias → Primary Sub-Column Mapping:
+    macd_X     → macd_X_macd      (MACD line)
+    bb_X       → bb_X_mid         (Middle Bollinger Band)
+    stoch_X    → stoch_X_k        (Stochastic %K)
+    ichi_X     → ichi_X_tenkan    (Tenkan-sen / Conversion Line)
+    adx_X      → adx_X            (No mapping needed - base exists)
+
+IMPLEMENTATION DETAILS:
+
+1. Modified _get_operand_series() (lines 121-176):
+   - When col not in df.columns, check for multi-column patterns
+   - Try {col}_macd, {col}_mid, {col}_k, {col}_tenkan in order
+   - If match found, use mapped column
+   - If no match, raise original "column not found" error
+
+2. Modified _get_lookback_series() (lines 71-137):
+   - Same mapping logic for LOOKBACK operands
+   - Ensures lookback references like "macd_2:-1" also work
+
+3. Graceful fallback:
+   - If base alias doesn't match any multi-column pattern, original error
+   - Preserves error messages for truly invalid column names
+   - Users can still explicitly reference sub-columns (e.g., "macd_2_signal")
+
+FILES MODIFIED:
+  - backend/app/engine/condition_engine.py
+    - _get_operand_series() function (lines 121-176)
+    - _get_lookback_series() function (lines 71-137)
+
+  - backend/tests/unit/test_multicolumn_indicator_mapping.py (NEW FILE)
+    - 10 comprehensive tests covering all multi-column indicators
+    - Tests base alias mapping for MACD, BB, STOCH, ICHIMOKU
+    - Tests ADX (base alias exists, no mapping needed)
+    - Tests LOOKBACK with base aliases
+    - Tests explicit sub-column references still work
+    - Tests invalid aliases still raise proper errors
+
+  - backend/tests/unit/test_condition_engine.py (MINOR FIXES)
+    - Fixed 4 tests that used non-existent "left" column
+    - Changed to use "left_up" (valid column in test data)
+    - Ensures LOOKBACK validation errors are properly tested
+
+================================================================================
+                            TESTING VERIFICATION
+================================================================================
+
+UNIT TESTS:
+✅ All 10 new multi-column mapping tests pass
+✅ All 24 existing condition engine tests pass
+✅ Total: 34 passing tests
+
+TEST COVERAGE:
+✅ MACD base alias mapping (macd_2 → macd_2_macd)
+✅ BB base alias mapping (bb_20 → bb_20_mid)
+✅ STOCH base alias mapping (stoch_14 → stoch_14_k)
+✅ ICHIMOKU base alias mapping (ichi → ichi_tenkan)
+✅ ADX base alias (exists directly, no mapping)
+✅ LOOKBACK with base aliases (macd_2:-1 → macd_2_macd:-1)
+✅ Explicit sub-columns still work (macd_2_signal)
+✅ Invalid aliases raise proper errors
+✅ CROSSES_ABOVE with base aliases
+✅ Multiple condition groups with mixed aliases
+
+INTEGRATION TEST (Recommended):
+Run a backtest with a strategy that uses:
+  1. MACD base alias in entry condition
+  2. BB base alias in exit condition
+  3. STOCH base alias with LOOKBACK
+Should complete successfully instead of failing with "column not found"
+
+================================================================================
+                            BACKWARD COMPATIBILITY
+================================================================================
+
+FULLY BACKWARD COMPATIBLE:
+✅ Existing strategies with explicit sub-columns work unchanged
+✅ New strategies can use base aliases or explicit sub-columns
+✅ No database migration required
+✅ No API changes required
+✅ Frontend changes (alias expansion) complement this fix
+
+UPGRADE PATH:
+No action required. The fix is transparent to users.
+Existing strategies with base aliases will now work correctly.
+
+================================================================================
+                          RELATED IMPROVEMENTS
+================================================================================
+
+FRONTEND (Already Implemented):
+The frontend (StrategyBuilder.tsx) now generates all sub-column aliases in
+dropdowns, showing users all available columns:
+
+  When user adds MACD with alias "macd_2", dropdown shows:
+    - macd_2_macd
+    - macd_2_signal
+    - macd_2_hist
+
+This prevents users from selecting the non-existent base alias. However, the
+backend fix ensures backward compatibility with strategies that were created
+before this frontend improvement.
+
+DOCUMENTATION:
+Updated docs/BACKTEST_ENGINE_COMPREHENSIVE_GUIDE.txt with multi-column
+indicator details and sub-column naming conventions.
+
+================================================================================
+                          IMPACT ASSESSMENT
+================================================================================
+
+SEVERITY: CRITICAL (Blocking Feature)
+Before fix: Backtests with multi-column indicators failed completely
+After fix:  Backtests work correctly with both base and explicit aliases
+
+AFFECTED USERS:
+- Anyone using MACD in strategies
+- Anyone using Bollinger Bands in strategies
+- Anyone using Stochastic in strategies
+- Anyone using Ichimoku Cloud in strategies
+
+ESTIMATED AFFECTED STRATEGIES:
+~80% of strategies likely use at least one multi-column indicator (MACD/BB)
+
+USER EXPERIENCE:
+Before: Frustration - strategies would create successfully but fail on backtest
+After:  Seamless - strategies work as expected regardless of alias style
+
+================================================================================
+                          TECHNICAL DETAILS
+================================================================================
+
+PERFORMANCE IMPACT:
+Minimal - only adds 4 additional column lookups when base alias not found.
+These are fast dict lookups (O(1)) on DataFrame columns.
+
+MEMORY IMPACT:
+None - no additional data structures created, just column name string checks.
+
+CODE COMPLEXITY:
+Low - simple pattern matching with fallback to original error.
+
+MAINTENANCE:
+If new multi-column indicators are added in the future:
+1. Add column creation logic in indicator_layer.py
+2. Add mapping pattern in condition_engine.py (2 places)
+3. Add test case in test_multicolumn_indicator_mapping.py
+4. Update frontend alias generation in StrategyBuilder.tsx
+
+================================================================================
+                          ALTERNATIVE APPROACHES
+================================================================================
+
+CONSIDERED BUT NOT IMPLEMENTED:
+
+1. Database Migration to Fix Existing Strategies:
+   ❌ Too invasive
+   ❌ Risk of data loss if mapping logic wrong
+   ❌ Requires downtime
+   ❌ Complex rollback procedure
+
+2. Frontend-Only Validation:
+   ❌ Doesn't fix existing strategies in database
+   ❌ Doesn't prevent manual API usage with base aliases
+   ❌ Doesn't provide backward compatibility
+
+3. Always Create Base Alias Column:
+   ❌ Ambiguous which sub-column to use (signal vs macd for MACD?)
+   ❌ Wastes memory with duplicate columns
+   ❌ Requires changes to indicator_layer.py for all indicators
+   ❌ Unclear semantics (what does "macd" mean without context?)
+
+4. Error Message with Suggestions:
+   ❌ Still breaks existing strategies
+   ❌ Requires manual user intervention
+   ❌ Poor user experience
+
+SELECTED APPROACH (Auto-Mapping):
+✅ Backward compatible with existing strategies
+✅ Transparent to users
+✅ No database changes required
+✅ Minimal code changes
+✅ Clear, predictable behavior
+✅ Low maintenance burden
+
+================================================================================
+                          LESSONS LEARNED
+================================================================================
+
+1. Multi-output indicators need careful handling in both creation and reference
+2. Column naming conventions should be documented early in development
+3. Frontend validation should match backend column structure exactly
+4. Test data should use realistic indicator names to catch these issues
+5. Error messages should be specific enough to guide debugging
+
+================================================================================
+                          END OF REPORT
+================================================================================

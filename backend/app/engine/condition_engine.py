@@ -98,14 +98,32 @@ def _get_lookback_series(df: pd.DataFrame, value: str) -> pd.Series:
     """
     column_name, offset = _parse_lookback(value)
 
-    # Check if column exists
+    # Check if column exists, with multi-column indicator mapping
     if column_name not in df.columns:
-        raise ValueError(
-            f"Column not found in LOOKBACK: '{column_name}'. "
-            f"Available columns: {', '.join(df.columns[:10])}..."
-            if len(df.columns) > 10
-            else f"Available columns: {', '.join(df.columns)}"
-        )
+        # Handle multi-column indicators by mapping base alias to primary sub-column
+        mapped_col = None
+
+        # Try MACD mapping
+        if f"{column_name}_macd" in df.columns:
+            mapped_col = f"{column_name}_macd"
+        # Try BB mapping
+        elif f"{column_name}_mid" in df.columns:
+            mapped_col = f"{column_name}_mid"
+        # Try STOCH mapping
+        elif f"{column_name}_k" in df.columns:
+            mapped_col = f"{column_name}_k"
+        # Try ICHIMOKU mapping
+        elif f"{column_name}_tenkan" in df.columns:
+            mapped_col = f"{column_name}_tenkan"
+
+        if mapped_col:
+            column_name = mapped_col
+        else:
+            available = ', '.join(df.columns[:10]) + "..." if len(df.columns) > 10 else ', '.join(df.columns)
+            raise ValueError(
+                f"Column not found in LOOKBACK: '{column_name}'. "
+                f"Available columns: {available}"
+            )
 
     # Get the series
     series = df[column_name]
@@ -129,7 +147,32 @@ def _get_operand_series(df: pd.DataFrame, operand_type: str, value: str) -> pd.S
         col = value
 
     if col not in df.columns:
-        raise ValueError(f"Operand column not found: {value}")
+        # Handle multi-column indicators by mapping base alias to primary sub-column
+        # MACD: base_alias -> base_alias_macd
+        # BB: base_alias -> base_alias_mid
+        # STOCH: base_alias -> base_alias_k
+        # ICHIMOKU: base_alias -> base_alias_tenkan
+        # ADX creates base alias directly, so no mapping needed
+
+        mapped_col = None
+
+        # Try MACD mapping
+        if f"{col}_macd" in df.columns:
+            mapped_col = f"{col}_macd"
+        # Try BB mapping
+        elif f"{col}_mid" in df.columns:
+            mapped_col = f"{col}_mid"
+        # Try STOCH mapping
+        elif f"{col}_k" in df.columns:
+            mapped_col = f"{col}_k"
+        # Try ICHIMOKU mapping
+        elif f"{col}_tenkan" in df.columns:
+            mapped_col = f"{col}_tenkan"
+
+        if mapped_col:
+            col = mapped_col
+        else:
+            raise ValueError(f"Operand column not found: {value}")
 
     series = df[col]
     # Ensure numeric comparison behavior (convert None/object to NaN)

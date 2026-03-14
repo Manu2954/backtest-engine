@@ -597,7 +597,7 @@ def test_lookback_invalid_format_no_colon() -> None:
         "conditions": [
             {
                 "left_operand_type": "INDICATOR",
-                "left_operand_value": "left",
+                "left_operand_value": "left_up",  # Use valid column
                 "operator": "GT",
                 "right_operand_type": "LOOKBACK",
                 "right_operand_value": "invalid_format",  # Missing ":"
@@ -624,7 +624,7 @@ def test_lookback_invalid_format_non_numeric_offset() -> None:
         "conditions": [
             {
                 "left_operand_type": "INDICATOR",
-                "left_operand_value": "left",
+                "left_operand_value": "left_up",  # Use valid column
                 "operator": "GT",
                 "right_operand_type": "LOOKBACK",
                 "right_operand_value": "left:abc",  # Non-numeric offset
@@ -651,7 +651,7 @@ def test_lookback_column_not_found() -> None:
         "conditions": [
             {
                 "left_operand_type": "INDICATOR",
-                "left_operand_value": "left",
+                "left_operand_value": "left_up",  # Use valid column
                 "operator": "GT",
                 "right_operand_type": "LOOKBACK",
                 "right_operand_value": "nonexistent:-3",
@@ -678,7 +678,7 @@ def test_lookback_offset_bounds() -> None:
         "conditions": [
             {
                 "left_operand_type": "INDICATOR",
-                "left_operand_value": "left",
+                "left_operand_value": "left_up",  # Use valid column
                 "operator": "GT",
                 "right_operand_type": "LOOKBACK",
                 "right_operand_value": "left:-2000",  # Exceeds bounds
