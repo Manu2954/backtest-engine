@@ -1,0 +1,451 @@
+================================================================================
+              BOOLEAN EXPRESSION LOGIC - IMPLEMENTATION GUIDE
+================================================================================
+Implementation Date: 2026-03-15
+Status: COMPLETE ✅
+
+This document describes the implementation of boolean expression logic for
+complex trading strategy conditions.
+
+================================================================================
+                               OVERVIEW
+================================================================================
+
+WHAT WAS IMPLEMENTED:
+Boolean expression logic allows users to create complex entry/exit rules
+using named condition groups combined with boolean operators.
+
+BEFORE (Simple Mode):
+  - Single entry condition group with AND/OR logic
+  - Single exit condition group with AND/OR logic
+  - Example: (RSI < 30 AND ADX > 25) [all conditions must use same logic]
+
+AFTER (Advanced Mode):
+  - Multiple named condition groups
+  - Boolean expressions combining groups
+  - Operators: && (AND), || (OR), ! (NOT), () (grouping)
+  - Example: (oversold && trending) || bullish_cross
+    Where:
+      - oversold = (RSI < 30 AND volume > avg_volume)
+      - trending = (ADX > 25)
+      - bullish_cross = (price CROSSES_ABOVE ema_20)
+
+================================================================================
+                            FILES MODIFIED
+================================================================================
+
+1. frontend/src/types/index.ts
+   ----------------------------
+   CHANGES:
+   - Added group_name to ConditionGroupInput
+   - Updated StrategyCreate interface:
+     * Made entry/exit optional (backward compatible)
+     * Added entry_groups, exit_groups (Record<string, ConditionGroupInput>)
+     * Added entry_expression, exit_expression (string)
+   - Updated StrategyOut interface:
+     * Added entry_expression, exit_expression fields
+     * Added group_name to condition_groups array
+
+   NEW TYPE SIGNATURE:
+   ```typescript
+   export interface StrategyCreate {
+     name: string;
+     description?: string | null;
+     indicators: IndicatorInput[];
+
+     // Legacy: single entry/exit groups (backward compatible)
+     entry?: ConditionGroupInput | null;
+     exit?: ConditionGroupInput | null;
+
+     // New: named groups with expressions
+     entry_groups?: Record<string, ConditionGroupInput> | null;
+     exit_groups?: Record<string, ConditionGroupInput> | null;
+     entry_expression?: string | null;
+     exit_expression?: string | null;
+   }
+   ```
+
+2. frontend/src/pages/StrategyBuilder.tsx
+   ----------------------------------------
+   CHANGES:
+   - Added state variables:
+     * useExpressions (boolean) - toggles between Simple/Advanced mode
+     * entryGroups, exitGroups (Record<string, ConditionGroupInput>)
+     * entryExpression, exitExpression (string)
+
+   - Added 6 new helper functions for named group management:
+     * addNamedGroup(target, groupName)
+     * removeNamedGroup(target, groupName)
+     * addConditionToGroup(target, groupName)
+     * updateConditionInGroup(target, groupName, idx, patch)
+     * removeConditionFromGroup(target, groupName, idx)
+     * updateGroupLogic(target, groupName, logic)
+
+   - Updated handleSubmit():
+     * Conditionally sends entry/exit (Simple mode)
+     * Or entry_groups/exit_groups/entry_expression/exit_expression (Advanced)
+
+   - Replaced Entry Rules UI (step 1) with:
+     * Mode toggle button (Simple / Advanced)
+     * Simple mode: Existing single-group UI
+     * Advanced mode: Named groups + expression editor
+
+   - Replaced Exit Rules UI (step 2) with:
+     * Mode toggle button (Simple / Advanced)
+     * Simple mode: Existing single-group UI
+     * Advanced mode: Named groups + expression editor
+
+================================================================================
+                           USER INTERFACE
+================================================================================
+
+SIMPLE MODE (Default):
+---------------------
+[Entry Rules]
+  Mode: [Simple] [Advanced]
+
+  Logic: AND ▼
+
+  [Condition 1]
+    Left: INDICATOR ▼ → rsi_14 ▼
+    Operator: LT ▼
+    Right: SCALAR ▼ → 30
+
+  [Add Entry Condition]
+
+ADVANCED MODE:
+-------------
+[Entry Rules]
+  Mode: [Simple] [Advanced]
+
+  ℹ Advanced Mode: Create named condition groups and combine them with
+    boolean expressions.
+    Operators: && (AND), || (OR), ! (NOT), () (grouping)
+
+  [Group: oversold]
+    Logic: AND ▼
+    [Condition 1] RSI < 30
+    [Condition 2] volume > 1000000
+    [Add Condition to oversold]
+  [Remove Group]
+
+  [Group: trending]
+    Logic: AND ▼
+    [Condition 1] ADX > 25
+    [Add Condition to trending]
+  [Remove Group]
+
+  [New Group Name: ______________________] [Add Group]
+
+  Entry Expression:
+  [(oversold && trending) || bullish_cross]
+  Combine groups using: && (AND), || (OR), ! (NOT), ()
+  Available groups: oversold, trending
+
+================================================================================
+                        EXPRESSION SYNTAX
+================================================================================
+
+SUPPORTED OPERATORS:
+  && or &   - Logical AND
+  || or |   - Logical OR
+  !  or ~   - Logical NOT
+  ()        - Grouping (precedence)
+
+VALID IDENTIFIERS:
+  - Alphanumeric + underscore
+  - Must start with letter or underscore
+  - Examples: oversold, trending, group_A, bullish_cross
+
+EXAMPLE EXPRESSIONS:
+
+1. Simple AND:
+   oversold && trending
+
+2. Simple OR:
+   oversold || trending
+
+3. Negation:
+   !overbought && trending
+
+4. Complex with grouping:
+   (oversold && trending) || (bullish_cross && volume_spike)
+
+5. Multiple conditions:
+   (A && B) || (C && D) || E
+
+VALIDATION:
+The backend validates expressions and returns errors for:
+  - Invalid syntax
+  - Undefined group names
+  - Mismatched parentheses
+  - Invalid characters
+
+================================================================================
+                        BACKEND COMPATIBILITY
+================================================================================
+
+The implementation is fully compatible with the existing backend API.
+
+BACKEND SCHEMA (backend/app/api/schemas/strategy.py):
+```python
+class StrategyCreate(BaseModel):
+    name: str
+    description: str | None = None
+    indicators: list[IndicatorCreate] = Field(default_factory=list)
+
+    # Legacy: single entry/exit groups (backward compatible)
+    entry: ConditionGroupCreate | None = None
+    exit: ConditionGroupCreate | None = None
+
+    # New: named groups with expressions
+    entry_groups: dict[str, ConditionGroupCreate] | None = None
+    exit_groups: dict[str, ConditionGroupCreate] | None = None
+    entry_expression: str | None = None
+    exit_expression: str | None = None
+```
+
+BACKEND EVALUATION (backend/app/engine/condition_engine.py):
+The backend already has evaluate_expression() function that:
+  1. Validates expression syntax
+  2. Evaluates each named group
+  3. Combines results using boolean operators
+  4. Returns a boolean Series for each bar
+
+================================================================================
+                        BACKWARD COMPATIBILITY
+================================================================================
+
+FULLY BACKWARD COMPATIBLE:
+✅ Simple mode uses legacy entry/exit fields
+✅ Existing strategies continue to work
+✅ Backend accepts both formats
+✅ No database migration required
+✅ No breaking changes
+
+MIGRATION PATH:
+Users can switch between Simple and Advanced mode at any time:
+  - Simple → Advanced: Groups are empty, must create new groups
+  - Advanced → Simple: Uses entry/exit fields, expressions ignored
+
+Note: Switching modes does NOT convert existing conditions. Users must
+recreate their strategy in the new mode.
+
+================================================================================
+                        USAGE EXAMPLES
+================================================================================
+
+EXAMPLE 1: RSI OVERSOLD + TREND CONFIRMATION
+----------------------------------------------
+Groups:
+  oversold:
+    - RSI(14) < 30
+    - Volume > avg_volume
+
+  trending:
+    - ADX(14) > 25
+
+Expression:
+  oversold && trending
+
+Result: Enters when RSI oversold AND strong trend
+
+EXAMPLE 2: MULTIPLE ENTRY SIGNALS
+-----------------------------------
+Groups:
+  bullish_cross:
+    - price CROSSES_ABOVE EMA(20)
+
+  oversold:
+    - RSI(14) < 30
+
+  volume_spike:
+    - volume > 2 * avg_volume
+
+Expression:
+  (bullish_cross && volume_spike) || oversold
+
+Result: Enters on bullish crossover with volume OR when oversold
+
+EXAMPLE 3: COMPLEX EXIT LOGIC
+-------------------------------
+Groups:
+  profit_target:
+    - PnL% > 20
+
+  overbought:
+    - RSI(14) > 70
+
+  weak_trend:
+    - ADX(14) < 20
+
+  stop_loss:
+    - PnL% < -10
+
+Expression:
+  profit_target || (overbought && weak_trend) || stop_loss
+
+Result: Exits on profit target, or overbought in weak trend, or stop loss
+
+EXAMPLE 4: ICHIMOKU STRATEGY
+-----------------------------
+Groups:
+  above_cloud:
+    - price > ichimoku_span_a
+    - price > ichimoku_span_b
+
+  tenkan_cross:
+    - ichimoku_tenkan CROSSES_ABOVE ichimoku_kijun
+
+  chikou_clear:
+    - price > price:lookback(-26)
+
+Expression:
+  above_cloud && (tenkan_cross || chikou_clear)
+
+Result: Price above cloud AND (TK cross OR chikou span clear)
+
+================================================================================
+                        TESTING CHECKLIST
+================================================================================
+
+FUNCTIONAL TESTING:
+☐ Toggle between Simple and Advanced mode
+☐ Create named groups for entry and exit
+☐ Add multiple conditions to each group
+☐ Remove groups and conditions
+☐ Enter valid boolean expressions
+☐ Test expression with &&, ||, !, ()
+☐ Submit strategy in both modes
+☐ Verify backend receives correct payload
+☐ Test backward compatibility with existing strategies
+
+EXPRESSION VALIDATION:
+☐ Test undefined group name (should error)
+☐ Test invalid syntax (should error)
+☐ Test mismatched parentheses (should error)
+☐ Test valid complex expressions (should work)
+
+UI/UX TESTING:
+☐ Verify mode toggle updates UI correctly
+☐ Verify group names are shown in expression help text
+☐ Verify conditions render correctly in groups
+☐ Verify indicator aliases populate dropdowns
+☐ Test responsive design on mobile
+
+INTEGRATION TESTING:
+☐ Create strategy in Advanced mode
+☐ Run backtest
+☐ Verify strategy executes correctly
+☐ Check trade log for correct entry/exit signals
+☐ Verify expressions evaluate as expected
+
+================================================================================
+                        KNOWN LIMITATIONS
+================================================================================
+
+1. NO CONVERSION BETWEEN MODES:
+   Switching from Simple to Advanced (or vice versa) does not convert
+   existing conditions. Users must manually recreate their strategy.
+
+   Reason: Complex expressions cannot be easily flattened to single AND/OR,
+   and vice versa.
+
+2. NO SYNTAX HIGHLIGHTING:
+   Expression editor is plain text input without syntax highlighting.
+
+   Future improvement: Add Monaco Editor or CodeMirror for better UX.
+
+3. NO EXPRESSION PREVIEW:
+   Users cannot preview how the expression evaluates on sample data.
+
+   Future improvement: Add expression debugger showing true/false per bar.
+
+4. NO GROUP REORDERING:
+   Groups are displayed in object key order (arbitrary).
+
+   Future improvement: Add drag-and-drop reordering.
+
+5. NO DUPLICATE GROUP DETECTION:
+   Users can create groups with different names but identical conditions.
+
+   Future improvement: Add duplicate detection and suggestions.
+
+================================================================================
+                        FUTURE ENHANCEMENTS
+================================================================================
+
+HIGH PRIORITY:
+1. Expression validation in frontend (before submit)
+2. Expression autocomplete for group names
+3. Syntax highlighting in expression editor
+4. Show expression evaluation preview
+
+MEDIUM PRIORITY:
+5. Convert Simple ↔ Advanced (basic conversion)
+6. Expression templates/examples
+7. Visual expression builder (drag-and-drop)
+8. Group library (save/reuse common groups)
+
+LOW PRIORITY:
+9. Expression debugger (bar-by-bar evaluation)
+10. Performance metrics per group
+11. A/B test different expressions
+12. Share expressions between strategies
+
+================================================================================
+                        TROUBLESHOOTING
+================================================================================
+
+ISSUE: "Group X already exists"
+SOLUTION: Choose a unique group name. Remove the existing group first if needed.
+
+ISSUE: "Expression references undefined groups"
+SOLUTION: Ensure all group names in the expression match created groups exactly.
+         Group names are case-sensitive.
+
+ISSUE: Expression not working as expected
+SOLUTION: Test each group independently first. Verify conditions are correct.
+         Use parentheses to ensure correct precedence.
+
+ISSUE: Cannot switch back to Simple mode
+SOLUTION: Simple mode works independent of Advanced mode. Existing expressions
+         are ignored when using Simple mode.
+
+ISSUE: Backend validation error
+SOLUTION: Check browser console for API response. Backend provides detailed
+         error messages about expression syntax issues.
+
+================================================================================
+                        DEVELOPER NOTES
+================================================================================
+
+CODE ORGANIZATION:
+- State management: React hooks (useState)
+- No external state library needed (state is local to StrategyBuilder)
+- Helper functions defined inline (could be extracted to utils later)
+
+PERFORMANCE:
+- No performance issues expected
+- Group management operations are O(1) or O(n) for small n
+- Expression evaluation happens on backend (not client-side)
+
+ACCESSIBILITY:
+- All inputs have labels
+- Buttons have clear text
+- No complex keyboard navigation needed
+- Consider adding aria-labels in future
+
+TESTING:
+- Manual testing required (no automated UI tests yet)
+- Backend has unit tests for expression evaluation
+- Frontend build passes without errors
+
+MAINTENANCE:
+- Code is straightforward and well-commented
+- No complex abstractions or patterns
+- Easy to add new features (e.g., expression validation)
+
+================================================================================
+                        END OF DOCUMENT
+================================================================================

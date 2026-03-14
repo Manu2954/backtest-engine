@@ -200,33 +200,42 @@ LOW PRIORITY (Polish):
 
 
 ================================================================================
-                      CRITICAL REMAINING: BOOLEAN EXPRESSIONS
+                      CRITICAL FEATURE: BOOLEAN EXPRESSIONS
 ================================================================================
-
-The MOST IMPORTANT feature still missing is:
+Implementation Date: 2026-03-15
+Status: IMPLEMENTED ✅
 
 BOOLEAN EXPRESSION LOGIC FOR CONDITIONS
 ----------------------------------------
 Backend supports complex expressions like:
   "(oversold && trending) || bullish_cross"
 
-Frontend currently only supports:
-  - Single entry condition group with AND/OR
-  - Single exit condition group with AND/OR
+Frontend NOW SUPPORTS:
+  ✅ Simple Mode: Single entry/exit condition groups with AND/OR logic (original)
+  ✅ Advanced Mode: Multiple named condition groups with boolean expressions
+  ✅ Expression operators: && (AND), || (OR), ! (NOT), () (grouping)
+  ✅ UI toggle between Simple and Advanced modes
+  ✅ Expression editor with help text and examples
+  ✅ Full backward compatibility with existing strategies
 
-What's needed:
-  1. Named condition groups (entry_groups, exit_groups)
-  2. Expression editor UI
-  3. Expression validation
-  4. Support for && (AND), || (OR), ! (NOT), parentheses
+IMPLEMENTATION DETAILS:
+  - Added useExpressions state toggle
+  - Added entryGroups, exitGroups state (Record<string, ConditionGroupInput>)
+  - Added entryExpression, exitExpression state (string)
+  - 6 new helper functions for named group management
+  - Updated handleSubmit() to conditionally send legacy or expression format
+  - Complete UI for creating/managing named groups
+  - Expression input with placeholder examples
+  - Real-time display of available group names
 
-This is a MAJOR feature requiring:
-  - New UI for creating/managing named groups
-  - Expression text input with validation
-  - Syntax highlighting (optional but nice)
-  - Update StrategyCreate type
-  - Update strategy submission logic
-  - Backend already supports it!
+FILES MODIFIED:
+  - frontend/src/types/index.ts (updated StrategyCreate, StrategyOut)
+  - frontend/src/pages/StrategyBuilder.tsx (added expression mode UI)
+
+DOCUMENTATION:
+  - docs/BOOLEAN_EXPRESSIONS_IMPLEMENTATION.txt (complete implementation guide)
+
+For full details, see: docs/BOOLEAN_EXPRESSIONS_IMPLEMENTATION.txt
 
 
 ================================================================================

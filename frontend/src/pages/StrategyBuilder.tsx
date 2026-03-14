@@ -114,6 +114,13 @@ export default function StrategyBuilder() {
   const [entry, setEntry] = useState<ConditionGroupInput>(emptyGroup());
   const [exit, setExit] = useState<ConditionGroupInput>(emptyGroup());
 
+  // Expression mode (Simple vs Advanced)
+  const [useExpressions, setUseExpressions] = useState(false);
+  const [entryGroups, setEntryGroups] = useState<Record<string, ConditionGroupInput>>({});
+  const [exitGroups, setExitGroups] = useState<Record<string, ConditionGroupInput>>({});
+  const [entryExpression, setEntryExpression] = useState("");
+  const [exitExpression, setExitExpression] = useState("");
+
   const [ticker, setTicker] = useState("AAPL");
   const [assetClass, setAssetClass] = useState<"STOCK" | "CRYPTO">("STOCK");
   const [startDate, setStartDate] = useState("2020-01-01");
@@ -191,13 +198,23 @@ export default function StrategyBuilder() {
             display_order: ind.display_order ?? idx,
           }))
         );
-        const entryGroup = strategy.condition_groups.find((g) => g.group_type === "ENTRY");
-        const exitGroup = strategy.condition_groups.find((g) => g.group_type === "EXIT");
-        setEntry(
-          entryGroup
-            ? {
-                logic: entryGroup.logic as "AND" | "OR",
-                conditions: entryGroup.conditions.map((c, index) => ({
+
+        // Check if strategy uses expressions (advanced mode)
+        const hasExpressions = !!(strategy.entry_expression || strategy.exit_expression);
+
+        if (hasExpressions) {
+          // Advanced mode: Load named groups and expressions
+          setUseExpressions(true);
+
+          // Parse entry groups
+          const entryGroupsObj: Record<string, ConditionGroupInput> = {};
+          strategy.condition_groups
+            .filter((g) => g.group_type === "ENTRY" && g.group_name)
+            .forEach((g) => {
+              entryGroupsObj[g.group_name!] = {
+                group_name: g.group_name,
+                logic: g.logic as "AND" | "OR",
+                conditions: g.conditions.map((c, index) => ({
                   left_operand_type: c.left_operand_type,
                   left_operand_value: c.left_operand_value,
                   operator: c.operator,
@@ -205,14 +222,18 @@ export default function StrategyBuilder() {
                   right_operand_value: c.right_operand_value,
                   display_order: c.display_order ?? index,
                 })),
-              }
-            : emptyGroup()
-        );
-        setExit(
-          exitGroup
-            ? {
-                logic: exitGroup.logic as "AND" | "OR",
-                conditions: exitGroup.conditions.map((c, index) => ({
+              };
+            });
+
+          // Parse exit groups
+          const exitGroupsObj: Record<string, ConditionGroupInput> = {};
+          strategy.condition_groups
+            .filter((g) => g.group_type === "EXIT" && g.group_name)
+            .forEach((g) => {
+              exitGroupsObj[g.group_name!] = {
+                group_name: g.group_name,
+                logic: g.logic as "AND" | "OR",
+                conditions: g.conditions.map((c, index) => ({
                   left_operand_type: c.left_operand_type,
                   left_operand_value: c.left_operand_value,
                   operator: c.operator,
@@ -220,9 +241,53 @@ export default function StrategyBuilder() {
                   right_operand_value: c.right_operand_value,
                   display_order: c.display_order ?? index,
                 })),
-              }
-            : emptyGroup()
-        );
+              };
+            });
+
+          setEntryGroups(entryGroupsObj);
+          setExitGroups(exitGroupsObj);
+          setEntryExpression(strategy.entry_expression || "");
+          setExitExpression(strategy.exit_expression || "");
+        } else {
+          // Simple mode: Load single entry/exit groups (legacy format)
+          setUseExpressions(false);
+
+          const entryGroup = strategy.condition_groups.find((g) => g.group_type === "ENTRY");
+          const exitGroup = strategy.condition_groups.find((g) => g.group_type === "EXIT");
+
+          setEntry(
+            entryGroup
+              ? {
+                  logic: entryGroup.logic as "AND" | "OR",
+                  conditions: entryGroup.conditions.map((c, index) => ({
+                    left_operand_type: c.left_operand_type,
+                    left_operand_value: c.left_operand_value,
+                    operator: c.operator,
+                    right_operand_type: c.right_operand_type,
+                    right_operand_value: c.right_operand_value,
+                    display_order: c.display_order ?? index,
+                  })),
+                }
+              : emptyGroup()
+          );
+
+          setExit(
+            exitGroup
+              ? {
+                  logic: exitGroup.logic as "AND" | "OR",
+                  conditions: exitGroup.conditions.map((c, index) => ({
+                    left_operand_type: c.left_operand_type,
+                    left_operand_value: c.left_operand_value,
+                    operator: c.operator,
+                    right_operand_type: c.right_operand_type,
+                    right_operand_value: c.right_operand_value,
+                    display_order: c.display_order ?? index,
+                  })),
+                }
+              : emptyGroup()
+          );
+        }
+
         setStep(0);
       })
       .catch((err) => setError(err.message || "Failed to load strategy"))
@@ -291,6 +356,105 @@ export default function StrategyBuilder() {
     target === "entry" ? setEntry(updated) : setExit(updated);
   };
 
+  // Named group management for expression mode
+  const addNamedGroup = (target: "entry" | "exit", groupName: string) => {
+    const groups = target === "entry" ? entryGroups : exitGroups;
+    const setter = target === "entry" ? setEntryGroups : setExitGroups;
+
+    if (groups[groupName]) {
+      setError(`Group "${groupName}" already exists`);
+      return;
+    }
+
+    setter({
+      ...groups,
+      [groupName]: emptyGroup(),
+    });
+  };
+
+  const removeNamedGroup = (target: "entry" | "exit", groupName: string) => {
+    const groups = target === "entry" ? entryGroups : exitGroups;
+    const setter = target === "entry" ? setEntryGroups : setExitGroups;
+
+    const updated = { ...groups };
+    delete updated[groupName];
+    setter(updated);
+  };
+
+  const addConditionToGroup = (target: "entry" | "exit", groupName: string) => {
+    const groups = target === "entry" ? entryGroups : exitGroups;
+    const setter = target === "entry" ? setEntryGroups : setExitGroups;
+
+    const group = groups[groupName];
+    if (!group) return;
+
+    setter({
+      ...groups,
+      [groupName]: {
+        ...group,
+        conditions: [
+          ...group.conditions,
+          { ...emptyCondition(indicatorAliases), display_order: group.conditions.length },
+        ],
+      },
+    });
+  };
+
+  const updateConditionInGroup = (
+    target: "entry" | "exit",
+    groupName: string,
+    idx: number,
+    patch: Partial<ConditionInput>
+  ) => {
+    const groups = target === "entry" ? entryGroups : exitGroups;
+    const setter = target === "entry" ? setEntryGroups : setExitGroups;
+
+    const group = groups[groupName];
+    if (!group) return;
+
+    setter({
+      ...groups,
+      [groupName]: {
+        ...group,
+        conditions: group.conditions.map((c, index) =>
+          index === idx ? { ...c, ...patch } : c
+        ),
+      },
+    });
+  };
+
+  const removeConditionFromGroup = (target: "entry" | "exit", groupName: string, idx: number) => {
+    const groups = target === "entry" ? entryGroups : exitGroups;
+    const setter = target === "entry" ? setEntryGroups : setExitGroups;
+
+    const group = groups[groupName];
+    if (!group) return;
+
+    setter({
+      ...groups,
+      [groupName]: {
+        ...group,
+        conditions: group.conditions.filter((_, index) => index !== idx),
+      },
+    });
+  };
+
+  const updateGroupLogic = (target: "entry" | "exit", groupName: string, logic: "AND" | "OR") => {
+    const groups = target === "entry" ? entryGroups : exitGroups;
+    const setter = target === "entry" ? setEntryGroups : setExitGroups;
+
+    const group = groups[groupName];
+    if (!group) return;
+
+    setter({
+      ...groups,
+      [groupName]: {
+        ...group,
+        logic,
+      },
+    });
+  };
+
   const handleValidateTicker = async () => {
     try {
       const valid = await validateTicker(ticker, assetClass);
@@ -304,12 +468,41 @@ export default function StrategyBuilder() {
     setLoading(true);
     setError(null);
     try {
+      // Validate advanced mode requirements
+      if (useExpressions) {
+        if (Object.keys(entryGroups).length === 0 && Object.keys(exitGroups).length === 0) {
+          setError("Advanced mode requires at least one entry or exit group");
+          setLoading(false);
+          return;
+        }
+        if (Object.keys(entryGroups).length > 0 && !entryExpression.trim()) {
+          setError("Entry expression is required when entry groups are defined");
+          setLoading(false);
+          return;
+        }
+        if (Object.keys(exitGroups).length > 0 && !exitExpression.trim()) {
+          setError("Exit expression is required when exit groups are defined");
+          setLoading(false);
+          return;
+        }
+      }
+
       const payload: StrategyCreate = {
         name,
         description,
         indicators,
-        entry,
-        exit,
+        // Use expression mode or legacy mode
+        ...(useExpressions
+          ? {
+              entry_groups: entryGroups,
+              exit_groups: exitGroups,
+              entry_expression: entryExpression,
+              exit_expression: exitExpression,
+            }
+          : {
+              entry,
+              exit,
+            }),
       };
       const strategy = id ? await updateStrategy(id, payload) : await createStrategy(payload);
 
@@ -469,265 +662,711 @@ export default function StrategyBuilder() {
 
       {step === 1 && (
         <div className="card">
-          <h2>Entry Rules</h2>
-          <div className="row">
-            <div>
-              <label>Logic</label>
-              <select
-                value={entry.logic}
-                onChange={(e) => setEntry({ ...entry, logic: e.target.value as "AND" | "OR" })}
+          <div className="row" style={{ alignItems: "center", marginBottom: "16px" }}>
+            <h2 style={{ margin: 0 }}>Entry Rules</h2>
+            <div style={{ marginLeft: "auto", display: "flex", gap: "8px", alignItems: "center" }}>
+              <span style={{ fontSize: "0.9rem", color: "var(--muted)" }}>Mode:</span>
+              <button
+                className={`btn ${!useExpressions ? "" : "secondary"}`}
+                style={{ padding: "4px 12px" }}
+                onClick={() => setUseExpressions(false)}
               >
-                <option value="AND">AND</option>
-                <option value="OR">OR</option>
-              </select>
-            </div>
-          </div>
-          {entry.conditions.map((condition, idx) => (
-            <div key={idx} className="card" style={{ marginTop: "12px" }}>
-              <div className="row">
-                <div>
-                  <label>Left Type</label>
-                  <select
-                    value={condition.left_operand_type}
-                    onChange={(e) =>
-                      updateCondition("entry", idx, {
-                        left_operand_type: e.target.value as any,
-                      })
-                    }
-                  >
-                    <option value="INDICATOR">INDICATOR</option>
-                    <option value="OHLCV">OHLCV</option>
-                    <option value="SCALAR">SCALAR</option>
-                    <option value="LOOKBACK">LOOKBACK</option>
-                  </select>
-                </div>
-                <div>
-                  <label>Left Value</label>
-                  {condition.left_operand_type === "SCALAR" || condition.left_operand_type === "LOOKBACK" ? (
-                    <input
-                      placeholder={condition.left_operand_type === "LOOKBACK" ? "e.g., adx:-3" : ""}
-                      value={condition.left_operand_value}
-                      onChange={(e) =>
-                        updateCondition("entry", idx, { left_operand_value: e.target.value })
-                      }
-                    />
-                  ) : (
-                    <select
-                      value={condition.left_operand_value}
-                      onChange={(e) =>
-                        updateCondition("entry", idx, { left_operand_value: e.target.value })
-                      }
-                    >
-                      {(condition.left_operand_type === "INDICATOR"
-                        ? indicatorAliases
-                        : sourceOptions
-                      ).map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-                <div>
-                  <label>Operator</label>
-                  <select
-                    value={condition.operator}
-                    onChange={(e) =>
-                      updateCondition("entry", idx, { operator: e.target.value as any })
-                    }
-                  >
-                    {operatorOptions.map((op) => (
-                      <option key={op} value={op}>
-                        {op}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label>Right Type</label>
-                  <select
-                    value={condition.right_operand_type}
-                    onChange={(e) =>
-                      updateCondition("entry", idx, {
-                        right_operand_type: e.target.value as any,
-                      })
-                    }
-                  >
-                    <option value="INDICATOR">INDICATOR</option>
-                    <option value="OHLCV">OHLCV</option>
-                    <option value="SCALAR">SCALAR</option>
-                    <option value="LOOKBACK">LOOKBACK</option>
-                  </select>
-                </div>
-                <div>
-                  <label>Right Value</label>
-                  {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
-                    <input
-                      placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
-                      value={condition.right_operand_value}
-                      onChange={(e) =>
-                        updateCondition("entry", idx, { right_operand_value: e.target.value })
-                      }
-                    />
-                  ) : (
-                    <select
-                      value={condition.right_operand_value}
-                      onChange={(e) =>
-                        updateCondition("entry", idx, { right_operand_value: e.target.value })
-                      }
-                    >
-                      {(condition.right_operand_type === "INDICATOR"
-                        ? indicatorAliases
-                        : sourceOptions
-                      ).map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              </div>
-              <button className="btn secondary" onClick={() => removeCondition("entry", idx)}>
-                Remove
+                Simple
+              </button>
+              <button
+                className={`btn ${useExpressions ? "" : "secondary"}`}
+                style={{ padding: "4px 12px" }}
+                onClick={() => setUseExpressions(true)}
+              >
+                Advanced
               </button>
             </div>
-          ))}
-          <button className="btn" onClick={() => addCondition("entry")}
-            >Add Entry Condition</button>
+          </div>
+
+          {!useExpressions ? (
+            <>
+              {/* Simple Mode - Single Group */}
+              <div className="row">
+                <div>
+                  <label>Logic</label>
+                  <select
+                    value={entry.logic}
+                    onChange={(e) => setEntry({ ...entry, logic: e.target.value as "AND" | "OR" })}
+                  >
+                    <option value="AND">AND</option>
+                    <option value="OR">OR</option>
+                  </select>
+                </div>
+              </div>
+              {entry.conditions.map((condition, idx) => (
+                <div key={idx} className="card" style={{ marginTop: "12px" }}>
+                  <div className="row">
+                    <div>
+                      <label>Left Type</label>
+                      <select
+                        value={condition.left_operand_type}
+                        onChange={(e) =>
+                          updateCondition("entry", idx, {
+                            left_operand_type: e.target.value as any,
+                          })
+                        }
+                      >
+                        <option value="INDICATOR">INDICATOR</option>
+                        <option value="OHLCV">OHLCV</option>
+                        <option value="SCALAR">SCALAR</option>
+                        <option value="LOOKBACK">LOOKBACK</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Left Value</label>
+                      {condition.left_operand_type === "SCALAR" || condition.left_operand_type === "LOOKBACK" ? (
+                        <input
+                          placeholder={condition.left_operand_type === "LOOKBACK" ? "e.g., adx:-3" : ""}
+                          value={condition.left_operand_value}
+                          onChange={(e) =>
+                            updateCondition("entry", idx, { left_operand_value: e.target.value })
+                          }
+                        />
+                      ) : (
+                        <select
+                          value={condition.left_operand_value}
+                          onChange={(e) =>
+                            updateCondition("entry", idx, { left_operand_value: e.target.value })
+                          }
+                        >
+                          {(condition.left_operand_type === "INDICATOR"
+                            ? indicatorAliases
+                            : sourceOptions
+                          ).map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <label>Operator</label>
+                      <select
+                        value={condition.operator}
+                        onChange={(e) =>
+                          updateCondition("entry", idx, { operator: e.target.value as any })
+                        }
+                      >
+                        {operatorOptions.map((op) => (
+                          <option key={op} value={op}>
+                            {op}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label>Right Type</label>
+                      <select
+                        value={condition.right_operand_type}
+                        onChange={(e) =>
+                          updateCondition("entry", idx, {
+                            right_operand_type: e.target.value as any,
+                          })
+                        }
+                      >
+                        <option value="INDICATOR">INDICATOR</option>
+                        <option value="OHLCV">OHLCV</option>
+                        <option value="SCALAR">SCALAR</option>
+                        <option value="LOOKBACK">LOOKBACK</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Right Value</label>
+                      {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
+                        <input
+                          placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
+                          value={condition.right_operand_value}
+                          onChange={(e) =>
+                            updateCondition("entry", idx, { right_operand_value: e.target.value })
+                          }
+                        />
+                      ) : (
+                        <select
+                          value={condition.right_operand_value}
+                          onChange={(e) =>
+                            updateCondition("entry", idx, { right_operand_value: e.target.value })
+                          }
+                        >
+                          {(condition.right_operand_type === "INDICATOR"
+                            ? indicatorAliases
+                            : sourceOptions
+                          ).map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                  <button className="btn secondary" onClick={() => removeCondition("entry", idx)}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button className="btn" onClick={() => addCondition("entry")}>
+                Add Entry Condition
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Advanced Mode - Named Groups + Expression */}
+              <div className="notice" style={{ marginBottom: "16px" }}>
+                <strong>Advanced Mode:</strong> Create named condition groups and combine them with boolean expressions.
+                <br />
+                Operators: <code>&&</code> (AND), <code>||</code> (OR), <code>!</code> (NOT), <code>()</code> (grouping)
+              </div>
+
+              {/* Named Groups */}
+              {Object.keys(entryGroups).length === 0 && (
+                <div className="notice">No groups yet. Add a group below to get started.</div>
+              )}
+
+              {Object.entries(entryGroups).map(([groupName, group]) => (
+                <div key={groupName} className="card" style={{ marginTop: "16px", background: "#f9f9f9" }}>
+                  <div className="row" style={{ alignItems: "center", marginBottom: "8px" }}>
+                    <h3 style={{ margin: 0 }}>Group: {groupName}</h3>
+                    <button
+                      className="btn secondary"
+                      style={{ marginLeft: "auto", padding: "4px 12px" }}
+                      onClick={() => removeNamedGroup("entry", groupName)}
+                    >
+                      Remove Group
+                    </button>
+                  </div>
+
+                  <div className="row" style={{ marginBottom: "8px" }}>
+                    <div>
+                      <label>Logic</label>
+                      <select
+                        value={group.logic}
+                        onChange={(e) => updateGroupLogic("entry", groupName, e.target.value as "AND" | "OR")}
+                      >
+                        <option value="AND">AND</option>
+                        <option value="OR">OR</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {group.conditions.map((condition, idx) => (
+                    <div key={idx} className="card" style={{ marginTop: "8px" }}>
+                      <div className="row">
+                        <div>
+                          <label>Left Type</label>
+                          <select
+                            value={condition.left_operand_type}
+                            onChange={(e) =>
+                              updateConditionInGroup("entry", groupName, idx, {
+                                left_operand_type: e.target.value as any,
+                              })
+                            }
+                          >
+                            <option value="INDICATOR">INDICATOR</option>
+                            <option value="OHLCV">OHLCV</option>
+                            <option value="SCALAR">SCALAR</option>
+                            <option value="LOOKBACK">LOOKBACK</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label>Left Value</label>
+                          {condition.left_operand_type === "SCALAR" || condition.left_operand_type === "LOOKBACK" ? (
+                            <input
+                              placeholder={condition.left_operand_type === "LOOKBACK" ? "e.g., adx:-3" : ""}
+                              value={condition.left_operand_value}
+                              onChange={(e) =>
+                                updateConditionInGroup("entry", groupName, idx, { left_operand_value: e.target.value })
+                              }
+                            />
+                          ) : (
+                            <select
+                              value={condition.left_operand_value}
+                              onChange={(e) =>
+                                updateConditionInGroup("entry", groupName, idx, { left_operand_value: e.target.value })
+                              }
+                            >
+                              {(condition.left_operand_type === "INDICATOR"
+                                ? indicatorAliases
+                                : sourceOptions
+                              ).map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                        <div>
+                          <label>Operator</label>
+                          <select
+                            value={condition.operator}
+                            onChange={(e) =>
+                              updateConditionInGroup("entry", groupName, idx, { operator: e.target.value as any })
+                            }
+                          >
+                            {operatorOptions.map((op) => (
+                              <option key={op} value={op}>
+                                {op}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label>Right Type</label>
+                          <select
+                            value={condition.right_operand_type}
+                            onChange={(e) =>
+                              updateConditionInGroup("entry", groupName, idx, {
+                                right_operand_type: e.target.value as any,
+                              })
+                            }
+                          >
+                            <option value="INDICATOR">INDICATOR</option>
+                            <option value="OHLCV">OHLCV</option>
+                            <option value="SCALAR">SCALAR</option>
+                            <option value="LOOKBACK">LOOKBACK</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label>Right Value</label>
+                          {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
+                            <input
+                              placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
+                              value={condition.right_operand_value}
+                              onChange={(e) =>
+                                updateConditionInGroup("entry", groupName, idx, { right_operand_value: e.target.value })
+                              }
+                            />
+                          ) : (
+                            <select
+                              value={condition.right_operand_value}
+                              onChange={(e) =>
+                                updateConditionInGroup("entry", groupName, idx, { right_operand_value: e.target.value })
+                              }
+                            >
+                              {(condition.right_operand_type === "INDICATOR"
+                                ? indicatorAliases
+                                : sourceOptions
+                              ).map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      </div>
+                      <button className="btn secondary" onClick={() => removeConditionFromGroup("entry", groupName, idx)}>
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+
+                  <button className="btn" onClick={() => addConditionToGroup("entry", groupName)}>
+                    Add Condition to {groupName}
+                  </button>
+                </div>
+              ))}
+
+              {/* Add New Group */}
+              <div className="row" style={{ marginTop: "16px", gap: "8px" }}>
+                <input
+                  placeholder="Group name (e.g., oversold, trending)"
+                  id="newEntryGroupName"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="btn"
+                  onClick={() => {
+                    const input = document.getElementById("newEntryGroupName") as HTMLInputElement;
+                    const groupName = input.value.trim();
+                    if (groupName) {
+                      addNamedGroup("entry", groupName);
+                      input.value = "";
+                    }
+                  }}
+                >
+                  Add Group
+                </button>
+              </div>
+
+              {/* Expression Editor */}
+              <div style={{ marginTop: "16px" }}>
+                <label>Entry Expression</label>
+                <input
+                  value={entryExpression}
+                  onChange={(e) => setEntryExpression(e.target.value)}
+                  placeholder='e.g., (oversold && trending) || bullish_cross'
+                  style={{ fontFamily: "monospace" }}
+                />
+                <p style={{ fontSize: "0.85rem", color: "var(--muted)", marginTop: "4px" }}>
+                  Combine groups using: <code>&&</code> (AND), <code>||</code> (OR), <code>!</code> (NOT), <code>()</code>
+                  <br />
+                  Available groups: {Object.keys(entryGroups).length > 0 ? Object.keys(entryGroups).join(", ") : "none"}
+                </p>
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {step === 2 && (
         <div className="card">
-          <h2>Exit Rules</h2>
-          <div className="row">
-            <div>
-              <label>Logic</label>
-              <select
-                value={exit.logic}
-                onChange={(e) => setExit({ ...exit, logic: e.target.value as "AND" | "OR" })}
+          <div className="row" style={{ alignItems: "center", marginBottom: "16px" }}>
+            <h2 style={{ margin: 0 }}>Exit Rules</h2>
+            <div style={{ marginLeft: "auto", display: "flex", gap: "8px", alignItems: "center" }}>
+              <span style={{ fontSize: "0.9rem", color: "var(--muted)" }}>Mode:</span>
+              <button
+                className={`btn ${!useExpressions ? "" : "secondary"}`}
+                style={{ padding: "4px 12px" }}
+                onClick={() => setUseExpressions(false)}
               >
-                <option value="AND">AND</option>
-                <option value="OR">OR</option>
-              </select>
-            </div>
-          </div>
-          {exit.conditions.map((condition, idx) => (
-            <div key={idx} className="card" style={{ marginTop: "12px" }}>
-              <div className="row">
-                <div>
-                  <label>Left Type</label>
-                  <select
-                    value={condition.left_operand_type}
-                    onChange={(e) =>
-                      updateCondition("exit", idx, {
-                        left_operand_type: e.target.value as any,
-                      })
-                    }
-                  >
-                    <option value="INDICATOR">INDICATOR</option>
-                    <option value="OHLCV">OHLCV</option>
-                    <option value="SCALAR">SCALAR</option>
-                    <option value="LOOKBACK">LOOKBACK</option>
-                  </select>
-                </div>
-                <div>
-                  <label>Left Value</label>
-                  {condition.left_operand_type === "SCALAR" || condition.left_operand_type === "LOOKBACK" ? (
-                    <input
-                      placeholder={condition.left_operand_type === "LOOKBACK" ? "e.g., adx:-3" : ""}
-                      value={condition.left_operand_value}
-                      onChange={(e) =>
-                        updateCondition("exit", idx, { left_operand_value: e.target.value })
-                      }
-                    />
-                  ) : (
-                    <select
-                      value={condition.left_operand_value}
-                      onChange={(e) =>
-                        updateCondition("exit", idx, { left_operand_value: e.target.value })
-                      }
-                    >
-                      {(condition.left_operand_type === "INDICATOR"
-                        ? indicatorAliases
-                        : sourceOptions
-                      ).map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-                <div>
-                  <label>Operator</label>
-                  <select
-                    value={condition.operator}
-                    onChange={(e) =>
-                      updateCondition("exit", idx, { operator: e.target.value as any })
-                    }
-                  >
-                    {operatorOptions.map((op) => (
-                      <option key={op} value={op}>
-                        {op}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label>Right Type</label>
-                  <select
-                    value={condition.right_operand_type}
-                    onChange={(e) =>
-                      updateCondition("exit", idx, {
-                        right_operand_type: e.target.value as any,
-                      })
-                    }
-                  >
-                    <option value="INDICATOR">INDICATOR</option>
-                    <option value="OHLCV">OHLCV</option>
-                    <option value="SCALAR">SCALAR</option>
-                    <option value="LOOKBACK">LOOKBACK</option>
-                  </select>
-                </div>
-                <div>
-                  <label>Right Value</label>
-                  {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
-                    <input
-                      placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
-                      value={condition.right_operand_value}
-                      onChange={(e) =>
-                        updateCondition("exit", idx, { right_operand_value: e.target.value })
-                      }
-                    />
-                  ) : (
-                    <select
-                      value={condition.right_operand_value}
-                      onChange={(e) =>
-                        updateCondition("exit", idx, { right_operand_value: e.target.value })
-                      }
-                    >
-                      {(condition.right_operand_type === "INDICATOR"
-                        ? indicatorAliases
-                        : sourceOptions
-                      ).map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              </div>
-              <button className="btn secondary" onClick={() => removeCondition("exit", idx)}>
-                Remove
+                Simple
+              </button>
+              <button
+                className={`btn ${useExpressions ? "" : "secondary"}`}
+                style={{ padding: "4px 12px" }}
+                onClick={() => setUseExpressions(true)}
+              >
+                Advanced
               </button>
             </div>
-          ))}
-          <button className="btn" onClick={() => addCondition("exit")}
-            >Add Exit Condition</button>
+          </div>
+
+          {!useExpressions ? (
+            <>
+              {/* Simple Mode - Single Group */}
+              <div className="row">
+                <div>
+                  <label>Logic</label>
+                  <select
+                    value={exit.logic}
+                    onChange={(e) => setExit({ ...exit, logic: e.target.value as "AND" | "OR" })}
+                  >
+                    <option value="AND">AND</option>
+                    <option value="OR">OR</option>
+                  </select>
+                </div>
+              </div>
+              {exit.conditions.map((condition, idx) => (
+                <div key={idx} className="card" style={{ marginTop: "12px" }}>
+                  <div className="row">
+                    <div>
+                      <label>Left Type</label>
+                      <select
+                        value={condition.left_operand_type}
+                        onChange={(e) =>
+                          updateCondition("exit", idx, {
+                            left_operand_type: e.target.value as any,
+                          })
+                        }
+                      >
+                        <option value="INDICATOR">INDICATOR</option>
+                        <option value="OHLCV">OHLCV</option>
+                        <option value="SCALAR">SCALAR</option>
+                        <option value="LOOKBACK">LOOKBACK</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Left Value</label>
+                      {condition.left_operand_type === "SCALAR" || condition.left_operand_type === "LOOKBACK" ? (
+                        <input
+                          placeholder={condition.left_operand_type === "LOOKBACK" ? "e.g., adx:-3" : ""}
+                          value={condition.left_operand_value}
+                          onChange={(e) =>
+                            updateCondition("exit", idx, { left_operand_value: e.target.value })
+                          }
+                        />
+                      ) : (
+                        <select
+                          value={condition.left_operand_value}
+                          onChange={(e) =>
+                            updateCondition("exit", idx, { left_operand_value: e.target.value })
+                          }
+                        >
+                          {(condition.left_operand_type === "INDICATOR"
+                            ? indicatorAliases
+                            : sourceOptions
+                          ).map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <label>Operator</label>
+                      <select
+                        value={condition.operator}
+                        onChange={(e) =>
+                          updateCondition("exit", idx, { operator: e.target.value as any })
+                        }
+                      >
+                        {operatorOptions.map((op) => (
+                          <option key={op} value={op}>
+                            {op}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label>Right Type</label>
+                      <select
+                        value={condition.right_operand_type}
+                        onChange={(e) =>
+                          updateCondition("exit", idx, {
+                            right_operand_type: e.target.value as any,
+                          })
+                        }
+                      >
+                        <option value="INDICATOR">INDICATOR</option>
+                        <option value="OHLCV">OHLCV</option>
+                        <option value="SCALAR">SCALAR</option>
+                        <option value="LOOKBACK">LOOKBACK</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Right Value</label>
+                      {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
+                        <input
+                          placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
+                          value={condition.right_operand_value}
+                          onChange={(e) =>
+                            updateCondition("exit", idx, { right_operand_value: e.target.value })
+                          }
+                        />
+                      ) : (
+                        <select
+                          value={condition.right_operand_value}
+                          onChange={(e) =>
+                            updateCondition("exit", idx, { right_operand_value: e.target.value })
+                          }
+                        >
+                          {(condition.right_operand_type === "INDICATOR"
+                            ? indicatorAliases
+                            : sourceOptions
+                          ).map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                  <button className="btn secondary" onClick={() => removeCondition("exit", idx)}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button className="btn" onClick={() => addCondition("exit")}>
+                Add Exit Condition
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Advanced Mode - Named Groups + Expression */}
+              <div className="notice" style={{ marginBottom: "16px" }}>
+                <strong>Advanced Mode:</strong> Create named condition groups and combine them with boolean expressions.
+                <br />
+                Operators: <code>&&</code> (AND), <code>||</code> (OR), <code>!</code> (NOT), <code>()</code> (grouping)
+              </div>
+
+              {/* Named Groups */}
+              {Object.keys(exitGroups).length === 0 && (
+                <div className="notice">No groups yet. Add a group below to get started.</div>
+              )}
+
+              {Object.entries(exitGroups).map(([groupName, group]) => (
+                <div key={groupName} className="card" style={{ marginTop: "16px", background: "#f9f9f9" }}>
+                  <div className="row" style={{ alignItems: "center", marginBottom: "8px" }}>
+                    <h3 style={{ margin: 0 }}>Group: {groupName}</h3>
+                    <button
+                      className="btn secondary"
+                      style={{ marginLeft: "auto", padding: "4px 12px" }}
+                      onClick={() => removeNamedGroup("exit", groupName)}
+                    >
+                      Remove Group
+                    </button>
+                  </div>
+
+                  <div className="row" style={{ marginBottom: "8px" }}>
+                    <div>
+                      <label>Logic</label>
+                      <select
+                        value={group.logic}
+                        onChange={(e) => updateGroupLogic("exit", groupName, e.target.value as "AND" | "OR")}
+                      >
+                        <option value="AND">AND</option>
+                        <option value="OR">OR</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {group.conditions.map((condition, idx) => (
+                    <div key={idx} className="card" style={{ marginTop: "8px" }}>
+                      <div className="row">
+                        <div>
+                          <label>Left Type</label>
+                          <select
+                            value={condition.left_operand_type}
+                            onChange={(e) =>
+                              updateConditionInGroup("exit", groupName, idx, {
+                                left_operand_type: e.target.value as any,
+                              })
+                            }
+                          >
+                            <option value="INDICATOR">INDICATOR</option>
+                            <option value="OHLCV">OHLCV</option>
+                            <option value="SCALAR">SCALAR</option>
+                            <option value="LOOKBACK">LOOKBACK</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label>Left Value</label>
+                          {condition.left_operand_type === "SCALAR" || condition.left_operand_type === "LOOKBACK" ? (
+                            <input
+                              placeholder={condition.left_operand_type === "LOOKBACK" ? "e.g., adx:-3" : ""}
+                              value={condition.left_operand_value}
+                              onChange={(e) =>
+                                updateConditionInGroup("exit", groupName, idx, { left_operand_value: e.target.value })
+                              }
+                            />
+                          ) : (
+                            <select
+                              value={condition.left_operand_value}
+                              onChange={(e) =>
+                                updateConditionInGroup("exit", groupName, idx, { left_operand_value: e.target.value })
+                              }
+                            >
+                              {(condition.left_operand_type === "INDICATOR"
+                                ? indicatorAliases
+                                : sourceOptions
+                              ).map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                        <div>
+                          <label>Operator</label>
+                          <select
+                            value={condition.operator}
+                            onChange={(e) =>
+                              updateConditionInGroup("exit", groupName, idx, { operator: e.target.value as any })
+                            }
+                          >
+                            {operatorOptions.map((op) => (
+                              <option key={op} value={op}>
+                                {op}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label>Right Type</label>
+                          <select
+                            value={condition.right_operand_type}
+                            onChange={(e) =>
+                              updateConditionInGroup("exit", groupName, idx, {
+                                right_operand_type: e.target.value as any,
+                              })
+                            }
+                          >
+                            <option value="INDICATOR">INDICATOR</option>
+                            <option value="OHLCV">OHLCV</option>
+                            <option value="SCALAR">SCALAR</option>
+                            <option value="LOOKBACK">LOOKBACK</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label>Right Value</label>
+                          {condition.right_operand_type === "SCALAR" || condition.right_operand_type === "LOOKBACK" ? (
+                            <input
+                              placeholder={condition.right_operand_type === "LOOKBACK" ? "e.g., close:-10" : ""}
+                              value={condition.right_operand_value}
+                              onChange={(e) =>
+                                updateConditionInGroup("exit", groupName, idx, { right_operand_value: e.target.value })
+                              }
+                            />
+                          ) : (
+                            <select
+                              value={condition.right_operand_value}
+                              onChange={(e) =>
+                                updateConditionInGroup("exit", groupName, idx, { right_operand_value: e.target.value })
+                              }
+                            >
+                              {(condition.right_operand_type === "INDICATOR"
+                                ? indicatorAliases
+                                : sourceOptions
+                              ).map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      </div>
+                      <button className="btn secondary" onClick={() => removeConditionFromGroup("exit", groupName, idx)}>
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+
+                  <button className="btn" onClick={() => addConditionToGroup("exit", groupName)}>
+                    Add Condition to {groupName}
+                  </button>
+                </div>
+              ))}
+
+              {/* Add New Group */}
+              <div className="row" style={{ marginTop: "16px", gap: "8px" }}>
+                <input
+                  placeholder="Group name (e.g., overbought, weak_trend)"
+                  id="newExitGroupName"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="btn"
+                  onClick={() => {
+                    const input = document.getElementById("newExitGroupName") as HTMLInputElement;
+                    const groupName = input.value.trim();
+                    if (groupName) {
+                      addNamedGroup("exit", groupName);
+                      input.value = "";
+                    }
+                  }}
+                >
+                  Add Group
+                </button>
+              </div>
+
+              {/* Expression Editor */}
+              <div style={{ marginTop: "16px" }}>
+                <label>Exit Expression</label>
+                <input
+                  value={exitExpression}
+                  onChange={(e) => setExitExpression(e.target.value)}
+                  placeholder='e.g., overbought || (weak_trend && profit_target)'
+                  style={{ fontFamily: "monospace" }}
+                />
+                <p style={{ fontSize: "0.85rem", color: "var(--muted)", marginTop: "4px" }}>
+                  Combine groups using: <code>&&</code> (AND), <code>||</code> (OR), <code>!</code> (NOT), <code>()</code>
+                  <br />
+                  Available groups: {Object.keys(exitGroups).length > 0 ? Object.keys(exitGroups).join(", ") : "none"}
+                </p>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -977,8 +1616,22 @@ export default function StrategyBuilder() {
               <p><strong>{name || "Untitled"}</strong></p>
               <p>{description || "No description"}</p>
               <p>Indicators: {indicators.length}</p>
-              <p>Entry conditions: {entry.conditions.length}</p>
-              <p>Exit conditions: {exit.conditions.length}</p>
+
+              {!useExpressions ? (
+                <>
+                  <p>Mode: Simple (AND/OR)</p>
+                  <p>Entry conditions: {entry.conditions.length}</p>
+                  <p>Exit conditions: {exit.conditions.length}</p>
+                </>
+              ) : (
+                <>
+                  <p>Mode: Advanced (Expressions)</p>
+                  <p>Entry groups: {Object.keys(entryGroups).length}</p>
+                  <p>Entry expression: {entryExpression || "(none)"}</p>
+                  <p>Exit groups: {Object.keys(exitGroups).length}</p>
+                  <p>Exit expression: {exitExpression || "(none)"}</p>
+                </>
+              )}
             </div>
             <div>
               <h3>Backtest</h3>

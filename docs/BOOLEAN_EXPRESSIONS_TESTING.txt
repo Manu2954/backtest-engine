@@ -1,0 +1,244 @@
+================================================================================
+              BOOLEAN EXPRESSIONS - TESTING CHECKLIST
+================================================================================
+
+Use this checklist to verify that boolean expression mode is working correctly.
+
+================================================================================
+                        SETUP & BASIC FUNCTIONALITY
+================================================================================
+
+☐ 1. Navigate to Strategy Builder
+☐ 2. Add at least one indicator (e.g., RSI with period 14, alias "rsi_14")
+☐ 3. Go to Entry Rules (step 2)
+☐ 4. Verify you see mode toggle: [Simple] [Advanced]
+☐ 5. Click "Advanced" button
+☐ 6. Verify UI changes to show:
+     - "Advanced Mode:" notice with operators info
+     - "No groups yet" message
+     - Input field for new group name
+     - "Add Group" button
+     - "Entry Expression" input field
+
+================================================================================
+                        CREATE ENTRY GROUPS
+================================================================================
+
+☐ 7. Enter group name "oversold" in the input field
+☐ 8. Click "Add Group"
+☐ 9. Verify "Group: oversold" card appears
+☐ 10. Verify the group has:
+      - Logic dropdown (AND/OR)
+      - "Add Condition to oversold" button
+      - "Remove Group" button
+
+☐ 11. Click "Add Condition to oversold"
+☐ 12. Configure condition:
+      - Left: INDICATOR → rsi_14
+      - Operator: LT
+      - Right: SCALAR → 30
+☐ 13. Verify condition is saved
+
+☐ 14. Create second group "trending":
+      - Enter name "trending"
+      - Click "Add Group"
+      - Add condition: ADX > 25 (if you have ADX indicator)
+      - Or add any other condition
+
+================================================================================
+                        CREATE ENTRY EXPRESSION
+================================================================================
+
+☐ 15. In "Entry Expression" input, enter: oversold && trending
+☐ 16. Verify help text shows: "Available groups: oversold, trending"
+☐ 17. Try other expressions:
+      - oversold || trending
+      - (oversold && trending) || !overbought
+      - Just one group: oversold
+
+================================================================================
+                        CREATE EXIT GROUPS & EXPRESSION
+================================================================================
+
+☐ 18. Go to Exit Rules (step 3)
+☐ 19. Click "Advanced" button
+☐ 20. Create exit group "profit_target":
+      - Add condition (e.g., close > some value)
+☐ 21. Create exit group "stop_loss":
+      - Add condition (e.g., close < some value)
+☐ 22. Enter exit expression: profit_target || stop_loss
+
+================================================================================
+                        REVIEW & SUBMIT
+================================================================================
+
+☐ 23. Go to Backtest step (step 4)
+☐ 24. Fill in backtest parameters:
+      - Ticker: AAPL
+      - Dates: 2020-01-01 to 2023-12-31
+      - Initial capital: 10000
+☐ 25. Click "Next" to Review step
+☐ 26. CRITICAL: Verify Review shows:
+      - Mode: Advanced (Expressions)
+      - Entry groups: 2 (or your count)
+      - Entry expression: oversold && trending (or your expression)
+      - Exit groups: 2 (or your count)
+      - Exit expression: profit_target || stop_loss (or your expression)
+
+☐ 27. Click "Submit Backtest"
+☐ 28. Verify no error messages
+☐ 29. Verify you're redirected to Backtest Report page
+☐ 30. Wait for backtest to complete
+☐ 31. Verify backtest completes successfully (status: COMPLETE)
+
+================================================================================
+                        VALIDATION TESTS
+================================================================================
+
+☐ 32. Test empty groups validation:
+      - Switch to Advanced mode
+      - Don't create any groups
+      - Try to submit
+      - Should see error: "Advanced mode requires at least one entry or exit group"
+
+☐ 33. Test missing expression validation:
+      - Create entry group with conditions
+      - Leave entry expression empty
+      - Try to submit
+      - Should see error: "Entry expression is required when entry groups are defined"
+
+☐ 34. Test undefined group in expression:
+      - Create group "oversold"
+      - Enter expression: oversold && nonexistent
+      - Submit
+      - Backend should return error about undefined group
+
+================================================================================
+                        MODE SWITCHING
+================================================================================
+
+☐ 35. Switch between modes:
+      - Start in Simple mode
+      - Add some simple conditions
+      - Switch to Advanced mode
+      - Verify UI changes
+      - Switch back to Simple mode
+      - Verify UI shows simple conditions again
+
+☐ 36. Verify mode persists across steps:
+      - Set to Advanced mode in Entry Rules
+      - Go to Exit Rules
+      - Verify Advanced mode is still active
+      - Go back to Entry Rules
+      - Verify still in Advanced mode
+
+================================================================================
+                        EDGE CASES
+================================================================================
+
+☐ 37. Test special characters in group names:
+      - Try group name with spaces: "my group" (may or may not work)
+      - Try group name with underscores: "my_group" (should work)
+      - Try group name starting with number: "1group" (should work)
+
+☐ 38. Test duplicate group names:
+      - Create group "test"
+      - Try to create another group "test"
+      - Should see error: "Group 'test' already exists"
+
+☐ 39. Test complex expressions:
+      - (A && B) || (C && D)
+      - !A && B
+      - A || B || C
+      - ((A || B) && C) || D
+
+☐ 40. Test removing groups:
+      - Create group
+      - Add conditions to it
+      - Remove group
+      - Verify it's gone from available groups list
+
+================================================================================
+                        BACKEND INTEGRATION
+================================================================================
+
+☐ 41. Check browser console for errors:
+      - Open Developer Tools (F12)
+      - Go to Console tab
+      - Look for any red errors
+      - Verify API calls succeed (status 200)
+
+☐ 42. Check network requests:
+      - Open Developer Tools
+      - Go to Network tab
+      - Submit strategy
+      - Find POST request to /strategies
+      - Check Request Payload:
+        - Should have entry_groups, exit_groups
+        - Should have entry_expression, exit_expression
+        - Should NOT have entry, exit (legacy)
+
+☐ 43. Check database:
+      - Run: psql -d backtest -c "SELECT id, name, entry_expression, exit_expression FROM strategies ORDER BY created_at DESC LIMIT 1;"
+      - Verify expressions are saved
+
+================================================================================
+                        SIMPLE MODE (REGRESSION TEST)
+================================================================================
+
+☐ 44. Create strategy in Simple mode:
+      - Stay in Simple mode
+      - Add entry conditions
+      - Add exit conditions
+      - Submit
+      - Verify it works (backward compatibility)
+
+☐ 45. Check network request for Simple mode:
+      - Request should have entry, exit
+      - Should NOT have entry_groups, exit_groups, expressions
+
+================================================================================
+                        SUCCESS CRITERIA
+================================================================================
+
+✅ All checkboxes above should pass
+✅ No console errors
+✅ Backend accepts expression payload
+✅ Backtest completes successfully
+✅ Strategy is saved with expressions
+✅ Simple mode still works (backward compatibility)
+
+================================================================================
+                        COMMON ISSUES & SOLUTIONS
+================================================================================
+
+ISSUE: Mode keeps switching back to Simple
+SOLUTION: Make sure you're clicking the Advanced button on BOTH Entry and Exit steps
+
+ISSUE: "Advanced mode requires at least one entry or exit group"
+SOLUTION: Create at least one group with at least one condition before submitting
+
+ISSUE: "Entry expression is required"
+SOLUTION: Enter an expression in the "Entry Expression" field
+
+ISSUE: Backend error "undefined groups"
+SOLUTION: Make sure all group names in expression match created groups exactly
+
+ISSUE: Backtest fails to execute
+SOLUTION: Check backend logs for expression validation errors
+
+ISSUE: Review step shows wrong information
+SOLUTION: Rebuild frontend (npm run build) and refresh browser
+
+================================================================================
+                        REPORTING BUGS
+================================================================================
+
+If you find issues, note:
+1. Steps to reproduce
+2. Expected behavior
+3. Actual behavior
+4. Console errors (if any)
+5. Network request payload (if relevant)
+
+================================================================================
