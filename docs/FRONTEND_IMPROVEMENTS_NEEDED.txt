@@ -237,7 +237,33 @@ Indicators covered:
   - OBV: Single column, volume-based
 
 
-5. STRATEGY REVIEW PAGE INCOMPLETE
+5. STRATEGY REVIEW PAGE ✅ COMPLETED
+-----------------------------------
+Status: ✅ COMPLETED
+Commit: [pending]
+
+Implementation:
+  - Enhanced Review step (step 4) with comprehensive summary
+  - Added Position Sizing section showing type and value with formatted display
+  - Added Risk Management section showing stop loss, take profit, dynamic stop
+  - Added Transaction Costs section showing commission and slippage
+  - Improved Backtest Parameters display with resolution and formatted capital
+  - Shows periodic contribution settings if enabled
+  - All sections use card styling for clear organization
+  - Dynamic value formatting based on position size type
+
+Files modified:
+  - frontend/src/pages/StrategyBuilder.tsx: Enhanced Review step UI
+
+Display improvements:
+  - Position size type: Converts snake_case to Title Case
+  - Position size value: Context-aware display (%, $, or risk %)
+  - Capital amounts: Formatted with thousands separator
+  - Dynamic stop: Shows note about priority over fixed percentage
+  - All settings clearly labeled and organized in grid layout
+
+
+6. PROVIDER SELECTION (MISSING)
 -----------------------------------
 Backend: Full strategy details available
 
@@ -354,7 +380,7 @@ PHASE 3 - Medium Priority
 --------------------------
 ✅ 3. Improve condition builder UX
 ✅ 4. Add indicator help text
-[ ] 5. Enhance Review step
+✅ 5. Enhance Review step
 [ ] 6. Add provider selection
 
 PHASE 4 - Polish

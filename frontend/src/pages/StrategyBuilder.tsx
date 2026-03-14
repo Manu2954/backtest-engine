@@ -1743,7 +1743,8 @@ export default function StrategyBuilder() {
       {step === 4 && (
         <div className="card">
           <h2>Review & Submit</h2>
-          <div className="grid grid-2">
+
+          <div className="grid grid-2" style={{ marginBottom: "24px" }}>
             <div>
               <h3>Strategy</h3>
               <p><strong>{name || "Untitled"}</strong></p>
@@ -1767,12 +1768,66 @@ export default function StrategyBuilder() {
               )}
             </div>
             <div>
-              <h3>Backtest</h3>
-              <p>{ticker} ({assetClass})</p>
-              <p>{startDate} → {endDate}</p>
-              <p>Initial: ${initialCapital}</p>
+              <h3>Backtest Parameters</h3>
+              <p><strong>Ticker:</strong> {ticker} ({assetClass})</p>
+              <p><strong>Period:</strong> {startDate} → {endDate}</p>
+              <p><strong>Resolution:</strong> {resolution}</p>
+              <p><strong>Initial Capital:</strong> ${Number(initialCapital).toLocaleString()}</p>
+              {contributionEnabled && (
+                <p><strong>Periodic Contribution:</strong> ${Number(contributionAmount).toLocaleString()} ({contributionFrequency})</p>
+              )}
             </div>
           </div>
+
+          <div className="card" style={{ background: "#faf8f5", marginBottom: "16px" }}>
+            <h3>Position Sizing</h3>
+            <div className="grid grid-2">
+              <div>
+                <p><strong>Type:</strong> {positionSizeType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</p>
+              </div>
+              <div>
+                <p><strong>Value:</strong> {
+                  positionSizeType === "full_capital" ? "100% of capital" :
+                  positionSizeType === "percent_capital" ? `${positionSizeValue}% of capital` :
+                  positionSizeType === "fixed_amount" ? `$${Number(positionSizeValue).toLocaleString()}` :
+                  positionSizeType === "risk_based" ? `${positionSizeValue}% risk per trade` :
+                  positionSizeValue
+                }</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ background: "#faf8f5", marginBottom: "16px" }}>
+            <h3>Risk Management</h3>
+            <div className="grid grid-2">
+              <div>
+                <p><strong>Stop Loss:</strong> {stopLossPct ? `${stopLossPct}%` : "None"}</p>
+                <p><strong>Take Profit:</strong> {takeProfitPct ? `${takeProfitPct}%` : "None"}</p>
+              </div>
+              <div>
+                <p><strong>Dynamic Stop:</strong> {dynamicStopColumn || "None"}</p>
+                {dynamicStopColumn && (
+                  <p style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
+                    (Indicator-based trailing stop - takes priority over fixed %)
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ background: "#faf8f5", marginBottom: "16px" }}>
+            <h3>Transaction Costs</h3>
+            <div className="grid grid-2">
+              <div>
+                <p><strong>Commission per Trade:</strong> ${commissionPerTrade}</p>
+                <p><strong>Commission %:</strong> {commissionPct}%</p>
+              </div>
+              <div>
+                <p><strong>Slippage %:</strong> {slippagePct}%</p>
+              </div>
+            </div>
+          </div>
+
           <button className="btn" onClick={handleSubmit} disabled={loading}>
             {loading ? "Submitting..." : "Submit Backtest"}
           </button>
