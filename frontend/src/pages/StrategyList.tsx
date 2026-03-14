@@ -17,6 +17,17 @@ export default function StrategyList() {
   const [resolution, setResolution] = useState("1d");
   const [submitting, setSubmitting] = useState(false);
   const [tickerValid, setTickerValid] = useState<boolean | null>(null);
+
+  // Advanced backtest options
+  const [positionSizeType, setPositionSizeType] = useState<"full_capital" | "percent_capital" | "fixed_amount" | "risk_based">("full_capital");
+  const [positionSizeValue, setPositionSizeValue] = useState("100");
+  const [stopLossPct, setStopLossPct] = useState("");
+  const [takeProfitPct, setTakeProfitPct] = useState("");
+  const [dynamicStopColumn, setDynamicStopColumn] = useState("");
+  const [commissionPerTrade, setCommissionPerTrade] = useState("0");
+  const [commissionPct, setCommissionPct] = useState("0");
+  const [slippagePct, setSlippagePct] = useState("0");
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -46,6 +57,14 @@ export default function StrategyList() {
     [assetClass]
   );
 
+  // Get indicator aliases from pending strategy for dynamic stop dropdown
+  const indicatorAliases = useMemo(() => {
+    if (!pendingBacktest) return [];
+    const strategy = strategies.find(s => s.id === pendingBacktest);
+    if (!strategy) return [];
+    return strategy.indicators.map(ind => ind.alias);
+  }, [strategies, pendingBacktest]);
+
   const isIntraday = ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"].includes(resolution);
   const rangeDays = Math.max(
     0,
@@ -74,6 +93,14 @@ export default function StrategyList() {
         end_date: endDate,
         bar_resolution: resolution,
         initial_capital: Number(initialCapital),
+        position_size_type: positionSizeType,
+        position_size_value: Number(positionSizeValue),
+        stop_loss_pct: stopLossPct ? Number(stopLossPct) : null,
+        take_profit_pct: takeProfitPct ? Number(takeProfitPct) : null,
+        dynamic_stop_column: dynamicStopColumn || null,
+        commission_per_trade: Number(commissionPerTrade),
+        commission_pct: Number(commissionPct),
+        slippage_pct: Number(slippagePct),
       });
       setPendingBacktest(null);
       navigate(`/backtests/${run.id}`);
@@ -224,6 +251,116 @@ export default function StrategyList() {
                 <span className="tag">{tickerValid ? "Valid" : "Invalid"}</span>
               )}
             </div>
+
+            <div className="card" style={{ marginTop: "16px" }}>
+              <h4>Position Sizing</h4>
+              <div className="row">
+                <div>
+                  <label>Type</label>
+                  <select
+                    value={positionSizeType}
+                    onChange={(e) => setPositionSizeType(e.target.value as any)}
+                  >
+                    <option value="full_capital">Full Capital</option>
+                    <option value="percent_capital">Percent of Capital</option>
+                    <option value="fixed_amount">Fixed Amount</option>
+                    <option value="risk_based">Risk-Based</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Value</label>
+                  <input
+                    type="number"
+                    value={positionSizeValue}
+                    onChange={(e) => setPositionSizeValue(e.target.value)}
+                    placeholder={
+                      positionSizeType === "percent_capital" ? "Percent (0-100)" :
+                      positionSizeType === "fixed_amount" ? "Dollar amount" :
+                      positionSizeType === "risk_based" ? "Risk % (e.g., 1)" :
+                      "Not used"
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="card" style={{ marginTop: "16px" }}>
+              <h4>Risk Management</h4>
+              <div className="row">
+                <div>
+                  <label>Stop Loss %</label>
+                  <input
+                    type="number"
+                    value={stopLossPct}
+                    onChange={(e) => setStopLossPct(e.target.value)}
+                    placeholder="e.g., 5"
+                  />
+                </div>
+                <div>
+                  <label>Take Profit %</label>
+                  <input
+                    type="number"
+                    value={takeProfitPct}
+                    onChange={(e) => setTakeProfitPct(e.target.value)}
+                    placeholder="e.g., 10"
+                  />
+                </div>
+              </div>
+              <div className="row" style={{ marginTop: "12px" }}>
+                <div>
+                  <label>Dynamic Stop (Indicator-based)</label>
+                  <select
+                    value={dynamicStopColumn}
+                    onChange={(e) => setDynamicStopColumn(e.target.value)}
+                  >
+                    <option value="">None</option>
+                    {indicatorAliases.map((alias) => (
+                      <option key={alias} value={alias}>
+                        {alias}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="notice" style={{ marginTop: "12px", fontSize: "0.85rem" }}>
+                <strong>Dynamic Stop:</strong> Select an indicator column to use as a trailing stop.
+                Takes priority over fixed percentage stops.
+              </div>
+            </div>
+
+            <div className="card" style={{ marginTop: "16px" }}>
+              <h4>Transaction Costs</h4>
+              <div className="row">
+                <div>
+                  <label>Commission per Trade ($)</label>
+                  <input
+                    type="number"
+                    value={commissionPerTrade}
+                    onChange={(e) => setCommissionPerTrade(e.target.value)}
+                    placeholder="e.g., 1"
+                  />
+                </div>
+                <div>
+                  <label>Commission %</label>
+                  <input
+                    type="number"
+                    value={commissionPct}
+                    onChange={(e) => setCommissionPct(e.target.value)}
+                    placeholder="e.g., 0.1"
+                  />
+                </div>
+                <div>
+                  <label>Slippage %</label>
+                  <input
+                    type="number"
+                    value={slippagePct}
+                    onChange={(e) => setSlippagePct(e.target.value)}
+                    placeholder="e.g., 0.05"
+                  />
+                </div>
+              </div>
+            </div>
+
             {assetClass === "STOCK" && isIntraday && rangeDays > 60 && (
               <p className="notice" style={{ marginTop: "12px" }}>
                 Yahoo intraday data is limited to the most recent 60 days. Reduce the date range.

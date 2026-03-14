@@ -3,16 +3,108 @@
 ================================================================================
 Based on: docs/BACKTEST_ENGINE_COMPREHENSIVE_GUIDE.txt
 Analysis Date: 2026-03-15
+Last Updated: 2026-03-15
 
 This document identifies all gaps between the frontend implementation and the
 backend capabilities documented in the comprehensive guide.
 
 ================================================================================
+                          COMPLETED FEATURES
+================================================================================
+
+✅ 1. BOOLEAN EXPRESSION LOGIC - COMPLETED
+------------------------------------------
+Status: Fully implemented
+Commit: 5f19f80 (feat: implement boolean expressions and fix critical bugs)
+
+Implementation:
+  - Named condition groups UI (entry_groups, exit_groups)
+  - Expression editor with validation
+  - Support for && (AND), || (OR), ! (NOT), parentheses
+  - Mode toggle: Simple vs Advanced
+  - Strategy loading for advanced mode
+  - Backend integration complete
+
+Files modified:
+  - frontend/src/types/index.ts: Added expression fields
+  - frontend/src/pages/StrategyBuilder.tsx: Full expression UI
+  - Documentation: docs/BOOLEAN_EXPRESSIONS_IMPLEMENTATION.txt
+
+
+✅ 2. DYNAMIC STOP LOSS - COMPLETED
+-----------------------------------
+Status: Fully implemented
+Commit: 73eddf1 (feat: complete dynamic stop loss)
+
+Implementation:
+  - Dropdown selector for indicator-based stops
+  - Supports any indicator column (ATR, Kijun-sen, etc.)
+  - Help text explaining usage
+  - Backend integration complete
+
+Files modified:
+  - frontend/src/types/index.ts: dynamic_stop_column field exists
+  - frontend/src/pages/StrategyBuilder.tsx: Lines 1473-1491
+
+
+✅ 3. TRADE LOG EXIT REASON - COMPLETED
+---------------------------------------
+Status: Fully implemented
+Commit: 73eddf1 (feat: complete dynamic stop loss)
+
+Implementation:
+  - Exit Reason column in trade log table
+  - Color coding (red=stop loss, green=take profit, etc.)
+  - Badge styling for exit reasons
+  - All exit reasons supported: signal, stop_loss, take_profit,
+    trailing_stop, force_close, last_bar_entry_force_close
+
+Files modified:
+  - frontend/src/types/index.ts: exit_reason field exists
+  - frontend/src/pages/TradeLog.tsx: Full implementation with color coding
+
+
+✅ 4. MULTI-COLUMN INDICATOR MAPPING - COMPLETED
+------------------------------------------------
+Status: Fully implemented
+Commit: a5b6db5 (feat: add frontend improvements and fix multi-column indicator mapping)
+
+Implementation:
+  - Automatic expansion of multi-column indicators in dropdowns
+  - Support for MACD (macd, signal, hist)
+  - Support for BB (upper, mid, lower)
+  - Support for STOCH (k, d)
+  - Support for ADX (adx, dmp, dmn)
+  - Support for ICHIMOKU (tenkan, kijun, span_a, span_b, chikou)
+
+Files modified:
+  - frontend/src/pages/StrategyBuilder.tsx: Multi-column alias expansion
+  - backend/tests/unit/test_multicolumn_indicator_mapping.py: Tests added
+
+
+✅ 5. BENCHMARK CALCULATION FIXES - COMPLETED
+---------------------------------------------
+Status: Fully implemented
+Commit: a5eef0f (fix: benchmark calculation for high-priced indices)
+
+Implementation:
+  - Fixed benchmark for high-priced indices (^NSEI, ^DJI, BRK.A)
+  - Changed to percentage return-based calculation
+  - Fixed warmup period alignment (uses original data range)
+  - Works for all asset prices
+
+Files modified:
+  - backend/app/engine/report_generator.py: Percentage return method
+  - backend/app/tasks/backtest_task.py: Store original OHLCV
+  - Documentation: docs/BUG_FIX_BENCHMARK_HIGH_PRICED_INDICES.txt
+
+
+================================================================================
                           PRIORITY: CRITICAL
 ================================================================================
 
-1. BOOLEAN EXPRESSION LOGIC (MISSING)
--------------------------------------
+1. BACKTEST LIST/STRATEGY LIST MISSING ADVANCED OPTIONS (INCOMPLETE)
+--------------------------------------------------------------------
 Backend: Supports named condition groups with boolean expressions
          e.g., "(oversold && trending) || bullish_cross"
 
@@ -34,61 +126,7 @@ Implementation needed:
   d) Support: && (AND), || (OR), ! (NOT), parentheses
 
 
-2. DYNAMIC STOP LOSS (MISSING)
-------------------------------
-Backend: Supports indicator-based trailing stops via dynamic_stop_column
-
-Frontend Gap:
-  - No UI to select an indicator column for dynamic stop
-  - Can only use fixed percentage stops
-
-Files to modify:
-  - types/index.ts: Add dynamic_stop_column to BacktestCreate
-  - StrategyBuilder.tsx: Add dynamic stop selector (dropdown of indicator aliases)
-
-Example usage:
-  - Stop at "close - 2*ATR" → requires creating indicator column first
-  - Stop at Kijun-sen → select ichimoku_kijun column
-
-
-3. MULTI-COLUMN INDICATOR AWARENESS (INCOMPLETE)
-------------------------------------------------
-Backend: Multi-column indicators create multiple output columns:
-  - MACD → macd_<alias>_macd, macd_<alias>_signal, macd_<alias>_hist
-  - BB → bb_<alias>_upper, bb_<alias>_mid, bb_<alias>_lower
-  - STOCH → stoch_<alias>_k, stoch_<alias>_d
-  - ADX → adx_<alias>, adx_<alias>_dmp, adx_<alias>_dmn
-  - ICHIMOKU → <alias>_tenkan, _kijun, _span_a, _span_b, _chikou
-
-Frontend Gap:
-  - Condition dropdowns only show the base alias, not sub-columns
-  - Users can't easily select macd_signal vs macd_macd
-  - No visual indication of which columns each indicator creates
-
-Files to modify:
-  - StrategyBuilder.tsx: Expand indicatorAliases to include sub-columns
-  - Add helper to generate all column names for multi-output indicators
-
-
-================================================================================
-                          PRIORITY: HIGH
-================================================================================
-
-4. TRADE LOG MISSING EXIT REASON (INCOMPLETE)
----------------------------------------------
-Backend: TradeLog includes exit_reason field:
-  - "signal", "stop_loss", "take_profit", "trailing_stop", "force_close"
-
-Frontend Gap:
-  - types/index.ts: TradeLog interface missing exit_reason
-  - TradeLog.tsx: Table doesn't display exit_reason column
-
-Files to modify:
-  - types/index.ts: Add exit_reason to TradeLog interface
-  - TradeLog.tsx: Add Exit Reason column with color coding
-
-
-5. BACKTEST LIST/STRATEGY LIST MISSING ADVANCED OPTIONS (INCOMPLETE)
+2. BACKTEST REPORT MISSING METRICS (INCOMPLETE)
 --------------------------------------------------------------------
 Backend: Full backtest configuration available
 
@@ -103,25 +141,7 @@ Files to modify:
   - StrategyList.tsx: Add advanced options to Run Backtest modal
 
 
-6. BACKTEST REPORT MISSING METRICS (INCOMPLETE)
------------------------------------------------
-Backend: Report includes many metrics not displayed:
-  - largest_win, largest_loss
-  - benchmark_final_capital
-  - benchmark_sharpe_ratio
-  - benchmark_max_drawdown_pct
-  - beta
-
-Frontend Gap:
-  - BacktestReport.tsx only shows subset of metrics
-  - No display for largest win/loss
-  - Incomplete benchmark comparison
-
-Files to modify:
-  - BacktestReport.tsx: Add missing metrics to display
-
-
-7. BACKTEST OUTPUT TYPE INCOMPLETE
+3. BACKTEST OUTPUT TYPE INCOMPLETE
 ----------------------------------
 Backend: BacktestOut includes many fields not typed:
   - position_size_type, position_size_value
@@ -141,7 +161,7 @@ Files to modify:
                           PRIORITY: MEDIUM
 ================================================================================
 
-8. CONDITION BUILDER UX IMPROVEMENTS
+4. CONDITION BUILDER UX IMPROVEMENTS
 ------------------------------------
 Issues:
   a) IS_RISING/IS_FALLING operators don't need right operand but UI shows it
@@ -155,7 +175,7 @@ Files to modify:
   - Add LOOKBACK column autocomplete
 
 
-9. INDICATOR HELP TEXT (MISSING)
+5. INDICATOR HELP TEXT (MISSING)
 --------------------------------
 Backend: Guide documents indicator parameters and outputs
 
@@ -169,7 +189,7 @@ Files to modify:
   - Add indicator description map
 
 
-10. STRATEGY REVIEW PAGE INCOMPLETE
+6. STRATEGY REVIEW PAGE INCOMPLETE
 -----------------------------------
 Backend: Full strategy details available
 
@@ -183,7 +203,7 @@ Files to modify:
   - StrategyBuilder.tsx: Enhance Review step with all settings
 
 
-11. PROVIDER SELECTION (MISSING)
+7. PROVIDER SELECTION (MISSING)
 --------------------------------
 Backend: Supports multiple providers (yfinance, binance)
          Auto-selects based on asset class but can be overridden
@@ -202,7 +222,7 @@ Files to modify:
                           PRIORITY: LOW
 ================================================================================
 
-12. TRADE LOG ENHANCEMENTS
+8. TRADE LOG ENHANCEMENTS
 --------------------------
 Issues:
   - No filtering (by exit_reason, win/loss, date range)
@@ -214,7 +234,7 @@ Files to modify:
   - TradeLog.tsx: Add filter controls, sorting, export button
 
 
-13. STRATEGY LIST ENHANCEMENTS
+9. STRATEGY LIST ENHANCEMENTS
 ------------------------------
 Issues:
   - No search/filter
@@ -226,7 +246,7 @@ Files to modify:
   - StrategyList.tsx: Add search, better display
 
 
-14. BACKTEST LIST ENHANCEMENTS
+10. BACKTEST LIST ENHANCEMENTS
 ------------------------------
 Issues:
   - No filtering by status, ticker, date
@@ -238,7 +258,7 @@ Files to modify:
   - BacktestList.tsx: Add filters, show strategy name, add columns
 
 
-15. RESPONSIVE DESIGN IMPROVEMENTS
+11. RESPONSIVE DESIGN IMPROVEMENTS
 ----------------------------------
 Issues:
   - Condition builder rows wrap poorly on mobile
@@ -251,7 +271,7 @@ Files to modify:
   - All page components: Review mobile layouts
 
 
-16. ERROR HANDLING IMPROVEMENTS
+12. ERROR HANDLING IMPROVEMENTS
 -------------------------------
 Issues:
   - Generic error messages
@@ -268,29 +288,30 @@ Files to modify:
                           IMPLEMENTATION PLAN
 ================================================================================
 
-PHASE 1 - Critical Features (2-3 days)
---------------------------------------
-1. Add Boolean Expression Logic support
-2. Add Dynamic Stop Loss selection
-3. Fix multi-column indicator aliases
+PHASE 1 - Critical Features ✅ COMPLETED
+-----------------------------------------
+✅ 1. Boolean Expression Logic support
+✅ 2. Dynamic Stop Loss selection
+✅ 3. Multi-column indicator aliases
+✅ 4. Exit reason in TradeLog
+✅ 5. Benchmark calculation fixes
 
-PHASE 2 - High Priority (1-2 days)
+PHASE 2 - High Priority (CURRENT)
 ----------------------------------
-4. Add exit_reason to TradeLog
-5. Add advanced options to BacktestList/StrategyList modals
-6. Complete BacktestReport metrics
-7. Complete BacktestOut type
+[ ] 1. Add advanced options to BacktestList/StrategyList modals
+[ ] 2. Complete BacktestReport metrics (largest win/loss, benchmark comparison)
+[ ] 3. Complete BacktestOut type
 
-PHASE 3 - Medium Priority (1-2 days)
-------------------------------------
-8. Improve condition builder UX
-9. Add indicator help text
-10. Enhance Review step
-11. Add provider selection
+PHASE 3 - Medium Priority
+--------------------------
+[ ] 4. Improve condition builder UX
+[ ] 5. Add indicator help text
+[ ] 6. Enhance Review step
+[ ] 7. Add provider selection
 
-PHASE 4 - Polish (1 day)
-------------------------
-12-16. TradeLog/StrategyList/BacktestList enhancements, responsive, errors
+PHASE 4 - Polish
+----------------
+[ ] 8-12. TradeLog/StrategyList/BacktestList enhancements, responsive, errors
 
 
 ================================================================================

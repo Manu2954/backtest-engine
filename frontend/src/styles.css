@@ -239,7 +239,9 @@ label {
   background: #ffffff;
   border-radius: 18px;
   padding: 24px;
-  width: min(480px, 90vw);
+  width: min(600px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
   box-shadow: var(--shadow);
   border: 1px solid var(--line);
 }
