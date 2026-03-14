@@ -6,6 +6,7 @@ This is the existing/legacy provider, refactored to match the DataProvider inter
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -15,6 +16,15 @@ from app.providers.base import DataProvider
 
 class YFinanceProvider(DataProvider):
     """Yahoo Finance data provider using yfinance library."""
+
+    def __init__(self, timezone: str = "Asia/Kolkata"):
+        """
+        Initialize YFinance provider.
+
+        Args:
+            timezone: Timezone for date range interpretation (default: "Asia/Kolkata" = IST)
+        """
+        self.timezone = ZoneInfo(timezone)
 
     def get_provider_name(self) -> str:
         """Return provider name."""

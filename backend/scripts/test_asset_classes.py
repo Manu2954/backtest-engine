@@ -32,7 +32,7 @@ async def test_asset_classes():
             "end": datetime(2024, 1, 31),
         },
         {
-            "ticker": "BTC-USD",
+            "ticker": "BTCUSDT",
             "asset_class": "CRYPTO",
             "start": datetime(2024, 1, 1),
             "end": datetime(2024, 1, 31),
@@ -40,10 +40,11 @@ async def test_asset_classes():
     ]
 
     providers_to_test = [
-        "yfinance",
+        ("yfinance", ["STOCK", "CRYPTO"]),  # yfinance supports both
+        ("binance", ["CRYPTO"]),  # Binance only supports crypto
     ]
 
-    for provider_name in providers_to_test:
+    for provider_name, supported_assets in providers_to_test:
         print(f"\n{'=' * 80}")
         print(f"Testing Provider: {provider_name}")
         print("=" * 80)
@@ -55,6 +56,11 @@ async def test_asset_classes():
             asset_class = test_case["asset_class"]
             start = test_case["start"]
             end = test_case["end"]
+
+            # Skip if provider doesn't support this asset class
+            if asset_class not in supported_assets:
+                print(f"\n  Skipping {asset_class}: {ticker} (not supported by {provider_name})")
+                continue
 
             print(f"\n  Testing {asset_class}: {ticker}")
 
