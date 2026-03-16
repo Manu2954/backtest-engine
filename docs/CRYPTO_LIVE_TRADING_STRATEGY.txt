@@ -1,0 +1,1122 @@
+================================================================================
+        CRYPTO LIVE TRADING STRATEGY - PERSONAL PROJECT (1MIN+)
+================================================================================
+Analysis Date: 2026-03-16
+Target: Crypto markets (Binance primary)
+Timeframes: 1m, 3m, 5m, 15m, 30m, 1h, 4h, 1d
+Scope: Personal trading system (no multi-user, auth as separate layer)
+
+This document outlines a focused, practical roadmap for evolving your backtest
+engine into a crypto live trading system for personal use.
+
+================================================================================
+                          STRATEGIC ADVANTAGES
+================================================================================
+
+Why Crypto First is THE RIGHT CHOICE:
+--------------------------------------
+
+✅ 1. Binance Already Integrated
+   - You have BinanceProvider working perfectly
+   - Free real-time WebSocket streams (no subscription fees)
+   - Free REST API for historical data
+   - No rate limits for reasonable usage (1200 req/min)
+   - 24/7 market (no "market closed" logic needed)
+
+✅ 2. Fractional Trading Built-In
+   - Your state_machine.py already handles allow_fractional=True
+   - Can trade $10 worth of BTC (no need for $40k)
+   - Position sizing works perfectly with small capital
+
+✅ 3. No Pattern Day Trading Rules
+   - Unlimited trades per day (unlike US stocks)
+   - No $25k minimum capital requirement
+   - Trade as aggressively as your strategy allows
+
+✅ 4. Instant Settlement
+   - No T+2 settlement (unlike stocks)
+   - Sell and rebuy immediately
+   - Cash available instantly
+
+✅ 5. Simple Execution
+   - Market orders fill in <100ms typically
+   - Limit orders straightforward
+   - No complex routing, no payment for order flow
+
+✅ 6. Low Commission
+   - Binance: 0.1% maker/taker (0.075% with BNB discount)
+   - Much cheaper than stock brokers for small trades
+   - Your commission modeling already handles this
+
+✅ 7. High Volatility = More Signals
+   - Crypto moves more than stocks
+   - More entry signals = more opportunities
+   - Perfect for testing strategies
+
+
+================================================================================
+                    CRYPTO-SPECIFIC ARCHITECTURE
+================================================================================
+
+Simplified Stack (No Auth Layer Needed Initially):
+---------------------------------------------------
+
+┌─────────────────────────────────────────────────────────────┐
+│  FastAPI Backend (Port 8000)                                │
+│  ├─ /live-trading/start (start session)                     │
+│  ├─ /live-trading/stop (stop session)                       │
+│  ├─ /live-trading/status (get current position/equity)      │
+│  └─ /live-trading/logs (get recent events)                  │
+└─────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  TradingSessionManager (In-Memory, Single User)             │
+│  ├─ Active sessions: Dict[session_id, TradingSession]      │
+│  ├─ Load sessions from DB on startup                        │
+│  └─ Persist state to DB periodically                        │
+└─────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  TradingSession (One per ticker/strategy)                   │
+│  ├─ Strategy (loaded from DB)                               │
+│  ├─ Indicator buffer (rolling window for calculations)     │
+│  ├─ Position state (NO_POSITION | IN_POSITION)             │
+│  ├─ Current equity, trades, stats                           │
+│  └─ Event handlers: on_bar(), on_order_fill()              │
+└─────────────────────────────────────────────────────────────┘
+            │                              │
+            ▼                              ▼
+┌──────────────────────────┐   ┌──────────────────────────┐
+│  BinanceRealtimeFeed     │   │  BinanceTradingAPI       │
+│  (WebSocket)             │   │  (REST API)              │
+│  ├─ Subscribe to ticker  │   │  ├─ place_order()        │
+│  ├─ Receive 1m bars      │   │  ├─ cancel_order()       │
+│  ├─ Aggregate to 5m/1h   │   │  ├─ get_balance()        │
+│  └─ Push to session      │   │  └─ get_positions()      │
+└──────────────────────────┘   └──────────────────────────┘
+            │                              │
+            └──────────────┬───────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  PostgreSQL (Persistent State)                              │
+│  ├─ live_trading_sessions (session config)                  │
+│  ├─ live_positions (current position snapshot)              │
+│  ├─ orders (order history)                                  │
+│  ├─ live_trades (closed trades)                             │
+│  └─ event_logs (audit trail)                                │
+└─────────────────────────────────────────────────────────────┘
+
+
+Key Design Decisions:
+---------------------
+
+1. **Single-User Simplification**
+   - No user_id checks in queries (assume single owner)
+   - No JWT/session tokens needed
+   - API accessible from localhost only (or VPN)
+   - Auth layer can be added later without touching core
+
+2. **In-Memory Session State**
+   - TradingSession objects live in memory
+   - Fast access (no DB query per bar)
+   - Persist snapshots to DB every 10 seconds
+   - Reload state from DB on restart
+
+3. **Paper Trading BUILT-IN**
+   - Every session has mode: "PAPER" | "LIVE"
+   - Paper mode uses BinancePaperBroker (simulated fills)
+   - Live mode uses BinanceLiveBroker (real API calls)
+   - Toggle with single flag
+
+4. **WebSocket Primary, REST Fallback**
+   - Subscribe to Binance WebSocket for 1m bars
+   - On disconnect: fetch missed bars via REST
+   - REST also used for order placement (WebSocket only for data)
+
+5. **No Complex Order Management**
+   - Only MARKET orders for MVP (instant fill)
+   - Limit orders in Phase 2
+   - Stop orders via logic (monitor price, place market order)
+
+
+================================================================================
+                    TECHNICAL DEEP DIVE: 1-MINUTE BARS
+================================================================================
+
+Challenge: Latency Requirements
+--------------------------------
+
+For 1-minute bars, you have ~60 seconds to:
+1. Receive bar (WebSocket) → ~10ms
+2. Update indicator buffer → ~20ms
+3. Calculate new indicator values → ~50ms
+4. Evaluate conditions (entry/exit) → ~30ms
+5. Check risk limits → ~10ms
+6. Place order via REST API → ~100ms
+Total: ~220ms (WELL WITHIN 60 SECOND BUDGET)
+
+✅ Verdict: Python is PERFECTLY FINE for 1m+ timeframes
+
+
+Indicator Calculation Strategy:
+--------------------------------
+
+Current (Backtest): Batch mode on full DataFrame
+```python
+df['rsi_14'] = ta.rsi(df['close'], length=14)  # Calculates all 1000 rows
+```
+
+Live Trading: Rolling window mode
+```python
+# Keep last 200 bars in memory
+self.buffer = df.tail(200)  # DataFrame with last 200 bars
+
+# On new bar:
+def on_bar(self, new_bar):
+    # Append new bar to buffer
+    self.buffer = pd.concat([self.buffer, new_bar]).tail(200)
+
+    # Recalculate indicators on buffer (only 200 rows, not 1000!)
+    self.buffer['rsi_14'] = ta.rsi(self.buffer['close'], length=14)
+
+    # Get latest value
+    current_rsi = self.buffer['rsi_14'].iloc[-1]
+```
+
+Buffer Size Calculation:
+- Max indicator period: SMA_200 needs 200 bars
+- Add margin: 200 + 50 = 250 bars
+- Memory: 250 rows × 20 columns × 8 bytes = ~40KB (negligible!)
+
+Performance:
+- pandas_ta.rsi(200 rows) takes ~5ms on modern CPU
+- pandas_ta.sma(200 rows) takes ~2ms
+- Even with 10 indicators, total ~50ms
+✅ Plenty fast for 1-minute bars
+
+
+================================================================================
+                    PHASE 1: REAL-TIME DATA FEED (Week 1-2)
+================================================================================
+
+Goal: Get live 1m bars from Binance WebSocket, update indicators in real-time
+
+Deliverables:
+-------------
+1. BinanceWebSocketFeed class
+2. Real-time indicator updates on rolling buffer
+3. Live dashboard showing current RSI/MACD/etc.
+4. No trading yet - just watch and validate data quality
+
+Implementation Plan:
+--------------------
+
+File: backend/app/realtime/binance_websocket.py (NEW)
+```python
+import asyncio
+import json
+from datetime import datetime
+import websockets
+import pandas as pd
+
+class BinanceWebSocketFeed:
+    """Real-time WebSocket feed for Binance crypto pairs."""
+
+    def __init__(self, symbol: str, interval: str = "1m"):
+        """
+        Args:
+            symbol: Trading pair (e.g., "btcusdt")
+            interval: Kline interval (1m, 3m, 5m, 15m, 30m, 1h, 4h, 1d)
+        """
+        self.symbol = symbol.lower()
+        self.interval = interval
+        self.url = f"wss://stream.binance.com:9443/ws/{self.symbol}@kline_{interval}"
+        self.ws = None
+        self.callbacks = []  # List of async functions to call on new bar
+
+    def subscribe(self, callback):
+        """Register callback function to receive bars."""
+        self.callbacks.append(callback)
+
+    async def connect(self):
+        """Connect to Binance WebSocket stream."""
+        self.ws = await websockets.connect(self.url)
+        print(f"Connected to {self.url}")
+
+    async def start(self):
+        """Start receiving bars (blocking loop)."""
+        await self.connect()
+
+        try:
+            async for message in self.ws:
+                data = json.loads(message)
+
+                # Binance sends updates during the bar
+                # Only process when bar is closed
+                if data['k']['x']:  # x = is_closed
+                    bar = self._parse_bar(data['k'])
+
+                    # Call all registered callbacks
+                    for callback in self.callbacks:
+                        await callback(bar)
+
+        except websockets.exceptions.ConnectionClosed:
+            print("WebSocket closed, reconnecting...")
+            await asyncio.sleep(5)
+            await self.start()  # Reconnect
+
+    def _parse_bar(self, kline) -> dict:
+        """Parse Binance kline to OHLCV dict."""
+        return {
+            'timestamp': datetime.fromtimestamp(kline['t'] / 1000),
+            'open': float(kline['o']),
+            'high': float(kline['h']),
+            'low': float(kline['l']),
+            'close': float(kline['c']),
+            'volume': float(kline['v']),
+        }
+```
+
+File: backend/app/realtime/live_indicator_engine.py (NEW)
+```python
+import pandas as pd
+from app.engine.indicator_layer import compute_indicators
+
+class LiveIndicatorEngine:
+    """Maintains rolling buffer of bars and computes indicators."""
+
+    def __init__(self, strategy, buffer_size: int = 250):
+        self.strategy = strategy
+        self.buffer_size = buffer_size
+        self.buffer = None  # Will be initialized with historical data
+
+    async def initialize(self, historical_bars: pd.DataFrame):
+        """Initialize buffer with historical data."""
+        self.buffer = historical_bars.tail(self.buffer_size).copy()
+
+        # Compute all indicators on initial buffer
+        self.buffer = compute_indicators(
+            self.buffer,
+            self.strategy.indicators
+        )
+
+        print(f"Initialized buffer with {len(self.buffer)} bars")
+
+    async def on_bar(self, bar: dict) -> pd.Series:
+        """
+        Process new bar and return updated indicators.
+
+        Returns:
+            Series with all indicator values for this bar
+        """
+        # Convert bar dict to DataFrame row
+        new_row = pd.DataFrame([bar]).set_index('timestamp')
+
+        # Append to buffer
+        self.buffer = pd.concat([self.buffer, new_row]).tail(self.buffer_size)
+
+        # Recompute indicators (only on buffer, not full history)
+        self.buffer = compute_indicators(
+            self.buffer,
+            self.strategy.indicators
+        )
+
+        # Return latest row (current bar with indicators)
+        return self.buffer.iloc[-1]
+```
+
+File: backend/app/api/routes/live_monitor.py (NEW)
+```python
+from fastapi import APIRouter
+from app.realtime.binance_websocket import BinanceWebSocketFeed
+from app.realtime.live_indicator_engine import LiveIndicatorEngine
+
+router = APIRouter()
+
+# Global registry of active feeds (single user, so global is fine)
+active_feeds = {}
+
+@router.post("/live-monitor/start")
+async def start_monitor(ticker: str, strategy_id: str):
+    """Start monitoring a ticker with a strategy (no trading)."""
+
+    # Load strategy from DB
+    strategy = await load_strategy(strategy_id)
+
+    # Fetch last 500 bars for indicator warmup
+    historical = await fetch_historical_bars(ticker, bars=500)
+
+    # Initialize indicator engine
+    indicator_engine = LiveIndicatorEngine(strategy)
+    await indicator_engine.initialize(historical)
+
+    # Create WebSocket feed
+    feed = BinanceWebSocketFeed(ticker, interval="1m")
+
+    # Define callback to process bars
+    async def on_bar(bar):
+        indicators = await indicator_engine.on_bar(bar)
+
+        # Log current indicators
+        print(f"[{bar['timestamp']}] "
+              f"Close: {bar['close']:.2f} | "
+              f"RSI: {indicators.get('rsi_14', 'N/A'):.2f}")
+
+        # TODO: Store to DB, push to frontend via WebSocket
+
+    feed.subscribe(on_bar)
+
+    # Start feed in background
+    asyncio.create_task(feed.start())
+
+    # Store in registry
+    active_feeds[ticker] = {
+        'feed': feed,
+        'indicator_engine': indicator_engine,
+        'strategy': strategy
+    }
+
+    return {"status": "monitoring", "ticker": ticker}
+
+
+@router.get("/live-monitor/status/{ticker}")
+async def get_monitor_status(ticker: str):
+    """Get current indicator values for a ticker."""
+
+    if ticker not in active_feeds:
+        return {"error": "Not monitoring this ticker"}
+
+    engine = active_feeds[ticker]['indicator_engine']
+    latest = engine.buffer.iloc[-1]
+
+    return {
+        "ticker": ticker,
+        "timestamp": latest.name,
+        "close": latest['close'],
+        "indicators": {
+            col: latest[col] for col in latest.index
+            if col not in ['open', 'high', 'low', 'close', 'volume']
+        }
+    }
+```
+
+Testing Plan:
+-------------
+1. Start monitor for BTCUSDT with RSI strategy
+2. Let it run for 1 hour
+3. Verify:
+   - Bars arrive every 60 seconds
+   - Indicators update correctly
+   - Values match backtest calculation
+   - No memory leaks (buffer stays at 250 rows)
+4. Test reconnection: Kill WebSocket, verify it reconnects
+
+
+Phase 1 Milestones:
+-------------------
+☐ BinanceWebSocketFeed connects and receives bars
+☐ LiveIndicatorEngine updates indicators on each bar
+☐ API endpoint to start/stop monitoring
+☐ Dashboard showing live indicator values
+☐ Run successfully for 24 hours without crash
+
+
+================================================================================
+                    PHASE 2: PAPER TRADING (Week 3-4)
+================================================================================
+
+Goal: Trade with real-time data, simulated execution
+
+Deliverables:
+-------------
+1. BinancePaperBroker (simulated order fills)
+2. TradingSession engine (signal → order logic)
+3. Position tracking in real-time
+4. Trade log with entry/exit reasons
+5. Live equity curve
+
+Implementation Plan:
+--------------------
+
+File: backend/app/brokers/paper_broker.py (NEW)
+```python
+from dataclasses import dataclass
+from datetime import datetime
+import uuid
+
+@dataclass
+class Order:
+    id: str
+    ticker: str
+    side: str  # "BUY" or "SELL"
+    quantity: float
+    order_type: str  # "MARKET" or "LIMIT"
+    status: str  # "PENDING" | "FILLED" | "REJECTED"
+    filled_price: float | None = None
+    filled_at: datetime | None = None
+
+
+class BinancePaperBroker:
+    """Simulated broker for paper trading."""
+
+    def __init__(self, initial_balance: float = 10000.0):
+        self.balance_usdt = initial_balance
+        self.positions = {}  # {ticker: quantity}
+        self.orders = {}  # {order_id: Order}
+
+    async def place_market_order(
+        self,
+        ticker: str,
+        side: str,
+        quantity: float,
+        current_price: float,
+        slippage_pct: float = 0.05
+    ) -> Order:
+        """
+        Simulate market order fill.
+
+        Args:
+            ticker: Trading pair (e.g., "BTCUSDT")
+            side: "BUY" or "SELL"
+            quantity: Amount of base asset (e.g., 0.01 BTC)
+            current_price: Current market price
+            slippage_pct: Simulated slippage (0.05 = 0.05%)
+
+        Returns:
+            Order object with filled status
+        """
+        order = Order(
+            id=str(uuid.uuid4()),
+            ticker=ticker,
+            side=side,
+            quantity=quantity,
+            order_type="MARKET",
+            status="PENDING"
+        )
+
+        # Simulate slippage
+        if side == "BUY":
+            fill_price = current_price * (1 + slippage_pct / 100)
+        else:
+            fill_price = current_price * (1 - slippage_pct / 100)
+
+        # Simulate commission (0.1% for Binance)
+        commission_pct = 0.1
+
+        if side == "BUY":
+            cost = quantity * fill_price
+            commission = cost * (commission_pct / 100)
+            total_cost = cost + commission
+
+            if total_cost > self.balance_usdt:
+                order.status = "REJECTED"
+                return order
+
+            # Execute
+            self.balance_usdt -= total_cost
+            self.positions[ticker] = self.positions.get(ticker, 0) + quantity
+
+        else:  # SELL
+            current_position = self.positions.get(ticker, 0)
+            if quantity > current_position:
+                order.status = "REJECTED"
+                return order
+
+            # Execute
+            proceeds = quantity * fill_price
+            commission = proceeds * (commission_pct / 100)
+            net_proceeds = proceeds - commission
+
+            self.balance_usdt += net_proceeds
+            self.positions[ticker] -= quantity
+
+        order.status = "FILLED"
+        order.filled_price = fill_price
+        order.filled_at = datetime.utcnow()
+
+        self.orders[order.id] = order
+        return order
+
+    def get_equity(self, current_prices: dict[str, float]) -> float:
+        """Calculate total equity (cash + position value)."""
+        position_value = sum(
+            qty * current_prices.get(ticker, 0)
+            for ticker, qty in self.positions.items()
+        )
+        return self.balance_usdt + position_value
+```
+
+File: backend/app/realtime/trading_session.py (NEW)
+```python
+from datetime import datetime
+import asyncio
+from app.engine.condition_engine import evaluate_conditions, evaluate_expression
+from app.brokers.paper_broker import BinancePaperBroker
+
+class TradingSession:
+    """
+    Manages a live trading session for a single ticker/strategy.
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        strategy,
+        ticker: str,
+        broker: BinancePaperBroker,
+        config: dict
+    ):
+        self.session_id = session_id
+        self.strategy = strategy
+        self.ticker = ticker
+        self.broker = broker
+        self.config = config
+
+        # State
+        self.state = "NO_POSITION"  # NO_POSITION | IN_POSITION
+        self.current_position = None
+        self.entry_price = None
+        self.entry_time = None
+        self.trades = []
+
+        # Indicator engine
+        self.indicator_engine = None
+
+        # Lock for concurrent bar processing
+        self.lock = asyncio.Lock()
+
+    async def initialize(self, historical_bars):
+        """Initialize with historical data for indicator warmup."""
+        from app.realtime.live_indicator_engine import LiveIndicatorEngine
+
+        self.indicator_engine = LiveIndicatorEngine(self.strategy)
+        await self.indicator_engine.initialize(historical_bars)
+
+    async def on_bar(self, bar: dict):
+        """
+        Process new bar: update indicators, check signals, execute trades.
+        """
+        async with self.lock:  # Prevent concurrent processing
+            # Update indicators
+            current_data = await self.indicator_engine.on_bar(bar)
+            current_price = bar['close']
+
+            # Check entry/exit signals
+            if self.state == "NO_POSITION":
+                if self._check_entry_signal(current_data):
+                    await self._enter_position(current_price, bar['timestamp'])
+
+            elif self.state == "IN_POSITION":
+                exit_reason = self._check_exit_signal(current_data, current_price)
+                if exit_reason:
+                    await self._exit_position(
+                        current_price,
+                        bar['timestamp'],
+                        exit_reason
+                    )
+
+    def _check_entry_signal(self, current_data: pd.Series) -> bool:
+        """Evaluate entry conditions on current bar."""
+        # Get full buffer (for lookback conditions)
+        df = self.indicator_engine.buffer
+
+        if self.strategy.entry_expression:
+            # Use boolean expression
+            entry_groups = self._build_groups_dict("ENTRY")
+            signal_series = evaluate_expression(
+                df,
+                entry_groups,
+                self.strategy.entry_expression
+            )
+            return signal_series.iloc[-1]  # Latest value
+        else:
+            # Legacy single group
+            entry_group = self._group_to_payload("ENTRY")
+            signal_series = evaluate_conditions(df, entry_group)
+            return signal_series.iloc[-1]
+
+    def _check_exit_signal(
+        self,
+        current_data: pd.Series,
+        current_price: float
+    ) -> str | None:
+        """
+        Check if exit conditions are met.
+
+        Returns:
+            Exit reason string if should exit, None otherwise
+        """
+        df = self.indicator_engine.buffer
+
+        # 1. Check exit signal
+        if self.strategy.exit_expression:
+            exit_groups = self._build_groups_dict("EXIT")
+            signal_series = evaluate_expression(
+                df,
+                exit_groups,
+                self.strategy.exit_expression
+            )
+            if signal_series.iloc[-1]:
+                return "signal"
+        else:
+            exit_group = self._group_to_payload("EXIT")
+            signal_series = evaluate_conditions(df, exit_group)
+            if signal_series.iloc[-1]:
+                return "signal"
+
+        # 2. Check stop loss
+        if self.config.get('stop_loss_pct'):
+            stop_price = self.entry_price * (1 - self.config['stop_loss_pct'] / 100)
+            if current_price <= stop_price:
+                return "stop_loss"
+
+        # 3. Check take profit
+        if self.config.get('take_profit_pct'):
+            target_price = self.entry_price * (1 + self.config['take_profit_pct'] / 100)
+            if current_price >= target_price:
+                return "take_profit"
+
+        # 4. Check dynamic stop (indicator-based)
+        if self.config.get('dynamic_stop_column'):
+            stop_col = self.config['dynamic_stop_column']
+            if stop_col in current_data.index:
+                stop_value = current_data[stop_col]
+                if current_price <= stop_value:
+                    return "trailing_stop"
+
+        return None
+
+    async def _enter_position(self, price: float, timestamp: datetime):
+        """Enter a position at current price."""
+        # Calculate position size
+        equity = self.broker.get_equity({self.ticker: price})
+        position_size_type = self.config.get('position_size_type', 'full_capital')
+        position_size_value = self.config.get('position_size_value', 100.0)
+
+        # Calculate quantity to buy
+        if position_size_type == 'full_capital':
+            amount_usdt = self.broker.balance_usdt
+        elif position_size_type == 'percent_capital':
+            amount_usdt = equity * (position_size_value / 100)
+        elif position_size_type == 'fixed_amount':
+            amount_usdt = position_size_value
+        else:
+            amount_usdt = self.broker.balance_usdt
+
+        quantity = amount_usdt / price
+
+        # Place order
+        order = await self.broker.place_market_order(
+            ticker=self.ticker,
+            side="BUY",
+            quantity=quantity,
+            current_price=price,
+            slippage_pct=self.config.get('slippage_pct', 0.05)
+        )
+
+        if order.status == "FILLED":
+            self.state = "IN_POSITION"
+            self.entry_price = order.filled_price
+            self.entry_time = timestamp
+            self.current_position = order.quantity
+
+            print(f"[ENTRY] {timestamp} | "
+                  f"Price: ${order.filled_price:.2f} | "
+                  f"Qty: {order.quantity:.6f} | "
+                  f"Cost: ${order.quantity * order.filled_price:.2f}")
+        else:
+            print(f"[ENTRY REJECTED] {order.id}")
+
+    async def _exit_position(
+        self,
+        price: float,
+        timestamp: datetime,
+        reason: str
+    ):
+        """Exit current position at current price."""
+        order = await self.broker.place_market_order(
+            ticker=self.ticker,
+            side="SELL",
+            quantity=self.current_position,
+            current_price=price,
+            slippage_pct=self.config.get('slippage_pct', 0.05)
+        )
+
+        if order.status == "FILLED":
+            # Calculate P&L
+            pnl = (order.filled_price - self.entry_price) * order.quantity
+            pnl_pct = ((order.filled_price / self.entry_price) - 1) * 100
+
+            # Log trade
+            trade = {
+                'entry_time': self.entry_time,
+                'entry_price': self.entry_price,
+                'exit_time': timestamp,
+                'exit_price': order.filled_price,
+                'quantity': order.quantity,
+                'pnl': pnl,
+                'pnl_pct': pnl_pct,
+                'exit_reason': reason
+            }
+            self.trades.append(trade)
+
+            print(f"[EXIT - {reason.upper()}] {timestamp} | "
+                  f"Price: ${order.filled_price:.2f} | "
+                  f"P&L: ${pnl:.2f} ({pnl_pct:+.2f}%) | "
+                  f"Balance: ${self.broker.balance_usdt:.2f}")
+
+            # Reset state
+            self.state = "NO_POSITION"
+            self.current_position = None
+            self.entry_price = None
+            self.entry_time = None
+        else:
+            print(f"[EXIT REJECTED] {order.id}")
+```
+
+Testing Plan:
+-------------
+1. Run paper trading for BTCUSDT with RSI strategy for 7 days
+2. Verify:
+   - Entries trigger on correct signals
+   - Exits trigger on correct signals
+   - Stop loss works
+   - Take profit works
+   - P&L calculated correctly
+   - Equity curve matches expectations
+3. Compare paper trading results to backtest on same period
+
+
+Phase 2 Milestones:
+-------------------
+☐ BinancePaperBroker simulates orders realistically
+☐ TradingSession executes entry/exit logic correctly
+☐ Stop loss and take profit work
+☐ Trade log persists to database
+☐ Run successfully for 7 days paper trading
+☐ Results within 5% of backtest (accounting for slippage)
+
+
+================================================================================
+                PHASE 3: LIVE TRADING (Week 5-6) - PROCEED WITH CAUTION
+================================================================================
+
+Goal: Connect to real Binance account and place actual orders
+
+⚠️  WARNING: REAL MONEY AT RISK - START WITH TINY POSITIONS ($10-50)
+
+Deliverables:
+-------------
+1. BinanceLiveBroker (real API integration)
+2. Safety checks and circuit breakers
+3. Live mode flag requiring explicit confirmation
+4. Real-time alerts on every order
+
+Implementation Plan:
+--------------------
+
+File: backend/app/brokers/binance_live_broker.py (NEW)
+```python
+import hmac
+import hashlib
+import time
+from datetime import datetime
+import httpx
+
+class BinanceLiveBroker:
+    """
+    Real Binance broker for live trading.
+
+    REQUIRES:
+    - Binance API Key (read + trade permissions)
+    - Binance Secret Key
+    - IP whitelisting recommended
+    """
+
+    BASE_URL = "https://api.binance.com"
+
+    def __init__(self, api_key: str, secret_key: str):
+        self.api_key = api_key
+        self.secret_key = secret_key
+
+    def _sign_request(self, params: dict) -> dict:
+        """Sign request parameters with HMAC SHA256."""
+        params['timestamp'] = int(time.time() * 1000)
+        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        signature = hmac.new(
+            self.secret_key.encode(),
+            query_string.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        params['signature'] = signature
+        return params
+
+    async def place_market_order(
+        self,
+        ticker: str,
+        side: str,
+        quantity: float
+    ):
+        """
+        Place REAL market order on Binance.
+
+        Args:
+            ticker: Symbol (e.g., "BTCUSDT")
+            side: "BUY" or "SELL"
+            quantity: Base asset quantity (e.g., 0.001 BTC)
+        """
+        params = {
+            'symbol': ticker,
+            'side': side,
+            'type': 'MARKET',
+            'quantity': quantity
+        }
+        params = self._sign_request(params)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.BASE_URL}/api/v3/order",
+                params=params,
+                headers={'X-MBX-APIKEY': self.api_key}
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def get_balance(self) -> dict:
+        """Get account balances."""
+        params = self._sign_request({})
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/api/v3/account",
+                params=params,
+                headers={'X-MBX-APIKEY': self.api_key}
+            )
+            response.raise_for_status()
+
+            balances = {}
+            for balance in response.json()['balances']:
+                asset = balance['asset']
+                free = float(balance['free'])
+                locked = float(balance['locked'])
+                if free > 0 or locked > 0:
+                    balances[asset] = {'free': free, 'locked': locked}
+
+            return balances
+```
+
+Safety Checks (CRITICAL):
+-------------------------
+
+File: backend/app/safety/risk_manager.py (NEW)
+```python
+class RiskManager:
+    """Enforce risk limits on live trading."""
+
+    def __init__(self, config: dict):
+        self.config = config
+        self.daily_pnl = 0.0
+        self.daily_trades = 0
+        self.consecutive_losses = 0
+        self.max_drawdown_hit = False
+
+    def check_can_trade(
+        self,
+        current_equity: float,
+        initial_equity: float
+    ) -> tuple[bool, str]:
+        """
+        Validate if trading is allowed.
+
+        Returns:
+            (allowed: bool, reason: str)
+        """
+        # 1. Max daily loss
+        max_daily_loss = self.config.get('max_daily_loss_pct', 5.0)
+        daily_loss_pct = (self.daily_pnl / initial_equity) * 100
+        if daily_loss_pct < -max_daily_loss:
+            return False, f"Daily loss limit hit: {daily_loss_pct:.2f}%"
+
+        # 2. Max trades per day
+        max_daily_trades = self.config.get('max_daily_trades', 10)
+        if self.daily_trades >= max_daily_trades:
+            return False, f"Daily trade limit hit: {self.daily_trades}"
+
+        # 3. Max consecutive losses
+        max_losses = self.config.get('max_consecutive_losses', 3)
+        if self.consecutive_losses >= max_losses:
+            return False, f"Consecutive loss limit: {self.consecutive_losses}"
+
+        # 4. Max drawdown
+        max_dd = self.config.get('max_drawdown_pct', 10.0)
+        current_dd = ((current_equity / initial_equity) - 1) * 100
+        if current_dd < -max_dd:
+            self.max_drawdown_hit = True
+            return False, f"Max drawdown exceeded: {current_dd:.2f}%"
+
+        return True, "OK"
+```
+
+Phased Rollout:
+---------------
+
+1. Week 5: Integration Testing
+   - Use Binance Testnet (free sandbox)
+   - Verify order placement works
+   - Test error handling (insufficient balance, invalid symbols)
+
+2. Week 6: Live with Micro Positions
+   - Start with $10 per trade
+   - Trade for 1 week
+   - Verify fills match expectations
+   - Monitor commission costs
+
+3. Gradual Increase:
+   - Week 1-2: $10 per trade
+   - Week 3-4: $50 per trade
+   - Month 2: $100 per trade
+   - Month 3: $500 per trade
+   - Only increase if profitable!
+
+
+Phase 3 Milestones:
+-------------------
+☐ BinanceLiveBroker integrated with real API
+☐ Safety checks enforced
+☐ Email alerts on every order
+☐ Manual kill switch tested
+☐ 1 week live trading with $10 positions successful
+☐ P&L matches backtest expectations
+
+
+================================================================================
+                    REALISTIC TIMELINE & COMMITMENT
+================================================================================
+
+Minimum Viable Product (MVP):
+------------------------------
+Week 1-2: Real-time data feed → 20-30 hours
+Week 3-4: Paper trading → 30-40 hours
+Week 5-6: Live trading (optional) → 20-30 hours
+
+Total: 70-100 hours (2.5 months part-time, or 3 weeks full-time)
+
+
+Ongoing Commitment:
+-------------------
+- Monitoring: 30 min/day to check trades, equity, errors
+- Maintenance: 5 hours/week to fix bugs, adjust strategies
+- Strategy refinement: Ongoing based on live results
+
+
+================================================================================
+                    NEXT CONCRETE STEPS
+================================================================================
+
+If you want to proceed, here's what we do NOW:
+
+1. Set up Binance account (if not already)
+   - Sign up at binance.com
+   - Complete KYC verification
+   - Deposit $100-500 USDT (for eventual live trading)
+
+2. Get Binance API keys
+   - Go to Account → API Management
+   - Create new API key with "Enable Reading" + "Enable Spot Trading"
+   - Whitelist your IP address (security best practice)
+   - SAVE SECRET KEY (shown only once!)
+   - Test with /api/v3/account endpoint
+
+3. Install WebSocket library
+   ```bash
+   cd backend
+   pip install websockets
+   ```
+
+4. Create Phase 1 scaffolding
+   - I'll create the file structure
+   - We'll implement BinanceWebSocketFeed together
+   - Test with BTCUSDT live data
+
+5. Pick your test strategy
+   - Which existing strategy will you test live?
+   - RSI oversold/overbought? MACD crossover? Bollinger breakout?
+
+
+================================================================================
+                    QUESTIONS FOR YOU
+================================================================================
+
+Before we start coding:
+
+1. **Do you have a Binance account already?**
+   - If not, I can guide you through setup
+
+2. **How much capital will you dedicate to this?**
+   - Recommended: $500-1000 USDT minimum
+   - Can start with less, but commissions eat tiny trades
+
+3. **Which strategy will you test first?**
+   - What's your most profitable backtest strategy?
+   - Let's pick ONE to focus on
+
+4. **What's your time commitment?**
+   - 10 hours/week? 20 hours/week? Full-time?
+   - This dictates our pace
+
+5. **Risk tolerance?**
+   - Max acceptable loss: $50? $100? $500?
+   - This sets our position sizes
+
+6. **Live trading timeline?**
+   - Do you want to go live ASAP, or paper trade for months?
+   - I recommend 30 days paper minimum
+
+
+================================================================================
+                    MY RECOMMENDATION
+================================================================================
+
+Start with **2-week Proof of Concept**:
+
+Week 1:
+  - Set up Binance API
+  - Implement BinanceWebSocketFeed
+  - Monitor BTCUSDT live with your best RSI strategy
+  - Dashboard showing live RSI values
+
+Week 2:
+  - Add paper trading for that strategy
+  - Let it run for full week
+  - Compare results to backtest
+
+Decision Point:
+  - If paper trading is profitable → Continue to live
+  - If paper trading loses money → Fix strategy first!
+
+
+This 2-week PoC proves the concept works before full commitment.
+
+
+================================================================================
+                    WAITING FOR YOUR DECISION
+================================================================================
+
+What do you want to do?
+
+Option A: "Let's build the 2-week PoC - start with Phase 1"
+   → I'll create the file structure and we start coding
+
+Option B: "I need to think about it / ask more questions"
+   → Let's discuss further
+
+Option C: "Let's focus on improving the backtest engine first"
+   → We can work on short selling, parameter optimization, etc.
+
+Option D: "Show me a quick code example of the WebSocket feed"
+   → I'll write a standalone script you can test right now
+
+
+Let me know what you're thinking! 🚀

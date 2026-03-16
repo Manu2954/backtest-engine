@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Important:** Any generic important instructions or preferences should be documented in this file so they persist across sessions and all future Claude Code instances can follow them consistently.
 
+### Communication Style
+
+- **Do NOT include code examples in discussions unless explicitly requested**
+- Keep discussions focused on concepts, architecture, and strategy
+- Use high-level descriptions and pseudocode when explaining technical approaches
+- Only write actual code when:
+  1. User explicitly asks for code
+  2. User asks to implement a feature
+  3. User is debugging and needs code fixes
+- In planning and discussion phases, describe what needs to be done without showing implementation details
+
 ### Git Commit Guidelines
 
 - **Commit messages must be concise, clear, and ONE-LINER only**

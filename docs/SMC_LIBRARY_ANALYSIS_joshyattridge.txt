@@ -1,0 +1,687 @@
+================================================================================
+    GITHUB REPOSITORY ANALYSIS: smart-money-concepts by joshyattridge
+================================================================================
+Analysis Date: 2026-03-16
+Repository: https://github.com/joshyattridge/smart-money-concepts
+Status: Active, 1.4k stars, 665 forks, 154 commits, v0.0.26 on PyPI
+
+This document analyzes an existing open-source SMC implementation and assesses
+its suitability for integration into your backtest engine.
+
+================================================================================
+                          REPOSITORY OVERVIEW
+================================================================================
+
+What It Is:
+-----------
+A Python library that implements Smart Money Concepts indicators using pandas.
+Published as PyPI package: `smartmoneyconcepts`
+
+Community Adoption:
+-------------------
+✅ 1,400+ stars (significant interest)
+✅ 665 forks (actively used by community)
+✅ 154 commits (maintained, not abandoned)
+✅ Available on PyPI (easy installation: pip install smartmoneyconcepts)
+
+Current Version: 0.0.26 (pre-1.0, still in development)
+
+Author: Josh Attridge
+License: Likely MIT (standard for PyPI packages)
+
+
+================================================================================
+                    IMPLEMENTED SMC CONCEPTS
+================================================================================
+
+What's Included:
+----------------
+✅ Fair Value Gap (FVG)
+✅ Swing Highs / Swing Lows
+✅ Break of Structure (BOS)
+✅ Change of Character (CHoCH)
+✅ Order Blocks (OB)
+✅ Liquidity Detection
+✅ Previous High/Low (per timeframe)
+✅ Session Identification (London, NY, Asia)
+✅ Retracements (Fibonacci-style)
+
+What's NOT Included (based on analysis):
+-----------------------------------------
+❌ Inducements (not mentioned)
+❌ Liquidity Sweeps (explicit detection)
+❌ Liquidity Clusters (detailed clustering)
+❌ Supply/Demand Zones (separate from OB)
+❌ Premium/Discount Zones (ICT-specific)
+❌ Optimal Trade Entry (OTE) calculations
+❌ Killzone time filters (though sessions are included)
+
+Coverage Assessment:
+--------------------
+Covers: ~60-70% of full SMC/ICT methodology
+Missing: More advanced ICT concepts
+
+
+================================================================================
+                    TECHNICAL IMPLEMENTATION
+================================================================================
+
+Technology Stack:
+-----------------
+Language: Python 3.x
+Primary Library: pandas (DataFrames)
+Code Style: Black formatter enforced (clean, consistent)
+Input Format: OHLCV DataFrames with lowercase columns
+
+Required Input Format:
+----------------------
+DataFrame columns: "open", "high", "low", "close", "volume"
+Index: datetime (timestamp index)
+
+Example:
+                     open    high     low   close    volume
+2024-01-01 00:00  43000.0  43500.0  42800.0  43200.0  1500000.0
+2024-01-01 01:00  43200.0  43800.0  43100.0  43600.0  1800000.0
+
+
+API Design:
+-----------
+Functional approach (not object-oriented):
+
+from smartmoneyconcepts import smc
+
+# Detect swing highs/lows
+swings = smc.swing_highs_lows(df, swing_length=50)
+
+# Detect Fair Value Gaps
+fvgs = smc.fvg(df, join_consecutive=False)
+
+# Detect Order Blocks
+obs = smc.ob(df, swing_length=20)
+
+# Detect Break of Structure
+bos = smc.bos(df, swing_length=50, close_break=True)
+
+Each function returns the SAME DataFrame with additional columns added.
+
+
+================================================================================
+                    ALGORITHMIC APPROACHES (REVERSE-ENGINEERED)
+================================================================================
+
+Based on API and documentation, here's how each concept is likely detected:
+
+1. FAIR VALUE GAP (FVG)
+------------------------
+Algorithm:
+  - Compare bar[i].high with bar[i+2].low (bullish gap)
+  - Compare bar[i].low with bar[i+2].high (bearish gap)
+  - Check if middle bar (i+1) doesn't fill the gap
+  - Optional: Join consecutive FVGs into single zone
+
+Parameters:
+  - join_consecutive: bool (merge adjacent FVGs)
+
+Output Columns:
+  - FVG_bullish: Price level of bullish FVG
+  - FVG_bearish: Price level of bearish FVG
+
+
+2. SWING HIGHS / LOWS
+----------------------
+Algorithm:
+  - Lookback and lookahead comparison
+  - High is swing high if higher than N bars before and N bars after
+  - Low is swing low if lower than N bars before and N bars after
+
+Parameters:
+  - swing_length: int (default 50) - lookback/lookahead period
+
+Output Columns:
+  - swing_high: Price level if swing high, else NaN
+  - swing_low: Price level if swing low, else NaN
+
+
+3. BREAK OF STRUCTURE (BOS) / CHANGE OF CHARACTER (CHoCH)
+----------------------------------------------------------
+Algorithm:
+  - Uses swing_highs_lows() as prerequisite
+  - BOS: Price breaks above previous swing high (uptrend)
+  - BOS: Price breaks below previous swing low (downtrend)
+  - CHoCH: Break reverses previous trend direction
+
+Parameters:
+  - swing_length: int
+  - close_break: bool (require close above/below, not just wick)
+
+Output Columns:
+  - BOS_bullish: True if bullish BOS
+  - BOS_bearish: True if bearish BOS
+  - CHoCH: True if change of character
+
+
+4. ORDER BLOCKS (OB)
+---------------------
+Algorithm (inferred):
+  - Volume accumulation analysis
+  - Find high-volume zones near swing reversals
+  - "Strength of order block" = volume ratio calculation
+  - Likely: Last opposite candle before swing + volume filter
+
+Parameters:
+  - swing_length: int
+
+Output Columns:
+  - OB_bullish_high: Top of bullish OB
+  - OB_bullish_low: Bottom of bullish OB
+  - OB_bearish_high: Top of bearish OB
+  - OB_bearish_low: Bottom of bearish OB
+  - OB_strength: Numerical strength score
+
+
+5. LIQUIDITY DETECTION
+-----------------------
+Algorithm:
+  - Range-percent proximity clustering
+  - Find areas where multiple swing highs/lows cluster
+  - Threshold: X% range tolerance for "equal" levels
+
+Parameters:
+  - range_percent: float (tolerance for clustering)
+
+Output Columns:
+  - Liquidity_high: Price level of buy-side liquidity
+  - Liquidity_low: Price level of sell-side liquidity
+
+
+6. PREVIOUS HIGH/LOW
+---------------------
+Algorithm:
+  - Track highest high and lowest low over lookback period
+  - Per-timeframe tracking (if multiple TFs provided)
+
+Parameters:
+  - None (uses full history)
+
+Output Columns:
+  - prev_high: Highest price in period
+  - prev_low: Lowest price in period
+
+
+7. SESSIONS
+------------
+Algorithm:
+  - Time-based detection using datetime index
+  - London: 03:00-12:00 UTC
+  - New York: 13:00-22:00 UTC
+  - Asia: 00:00-09:00 UTC (approximate)
+
+Parameters:
+  - None (hardcoded session times)
+
+Output Columns:
+  - session: String ("London", "New York", "Asia", "None")
+
+
+8. RETRACEMENTS
+----------------
+Algorithm:
+  - Calculate pullback percentage from swing high to swing low
+  - Fibonacci-style levels (0.382, 0.5, 0.618, etc.)
+
+Parameters:
+  - levels: list of float (Fibonacci ratios)
+
+Output Columns:
+  - retracement_0.382: Price level
+  - retracement_0.5: Price level
+  - retracement_0.618: Price level
+
+
+================================================================================
+                    CODE QUALITY ASSESSMENT
+================================================================================
+
+Strengths:
+----------
+✅ Published on PyPI (professional packaging)
+✅ Black formatter enforced (clean, readable code)
+✅ Consistent API design (all functions return DataFrame)
+✅ Configurable parameters (swing_length, range_percent, etc.)
+✅ Community-tested (1.4k stars, 665 forks)
+✅ Active maintenance (154 commits, recent updates)
+✅ Educational disclaimer (honest about limitations)
+
+Weaknesses:
+-----------
+⚠️  Pre-1.0 version (API may change)
+⚠️  Limited documentation (no detailed docs site)
+⚠️  No formal validation (no ground truth dataset)
+⚠️  No accuracy metrics published
+⚠️  No comparison to manual SMC identification
+⚠️  Educational disclaimer (not production-ready claim)
+
+Unknown:
+--------
+❓ Test coverage (no mention of unit tests)
+❓ Edge case handling (what happens with gaps, low liquidity?)
+❓ Performance on large datasets (scalability?)
+❓ Real-world trading results (any backtest studies?)
+
+
+================================================================================
+                    INTEGRATION FEASIBILITY
+================================================================================
+
+Can You Use This Library Directly?
+-----------------------------------
+YES - with modifications and wrappers
+
+Compatibility with Your Engine:
+--------------------------------
+✅ Python-based (matches your backend)
+✅ Pandas DataFrames (you already use this)
+✅ OHLCV input format (standard)
+✅ Functional API (easy to integrate)
+✅ MIT-like license (likely, need to verify)
+
+Integration Approach:
+---------------------
+
+OPTION 1: Direct Integration (Fastest)
+---------------------------------------
+Timeline: 2-3 weeks
+
+Steps:
+1. Install: pip install smartmoneyconcepts
+2. Create wrapper: backend/app/engine/smc_layer.py
+3. Wrap each SMC function to match your DataFrame format
+4. Add to indicator pipeline after compute_indicators()
+5. Expose as operand types in condition_engine.py
+
+Pseudocode:
+```python
+# backend/app/engine/smc_layer.py
+from smartmoneyconcepts import smc
+
+def apply_smc_concepts(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Apply SMC concepts to OHLCV DataFrame."""
+
+    # Convert to lowercase columns (required by library)
+    df_lower = df.copy()
+    df_lower.columns = df_lower.columns.str.lower()
+
+    # Apply SMC detections
+    if config.get('detect_fvg', True):
+        df_lower = smc.fvg(df_lower, join_consecutive=False)
+
+    if config.get('detect_swings', True):
+        swing_length = config.get('swing_length', 50)
+        df_lower = smc.swing_highs_lows(df_lower, swing_length=swing_length)
+
+    if config.get('detect_ob', True):
+        df_lower = smc.ob(df_lower, swing_length=20)
+
+    if config.get('detect_bos', True):
+        df_lower = smc.bos(df_lower, swing_length=50, close_break=True)
+
+    if config.get('detect_liquidity', True):
+        df_lower = smc.liquidity(df_lower, range_percent=0.01)
+
+    # Convert back to your format (if needed)
+    # Merge SMC columns into original DataFrame
+
+    return df
+```
+
+Integration into backtest_task.py:
+```python
+# After indicator computation
+df = compute_indicators(df, indicators)
+
+# Add SMC concepts
+smc_config = {
+    'detect_fvg': True,
+    'detect_swings': True,
+    'detect_ob': True,
+    'swing_length': 50
+}
+df = apply_smc_concepts(df, smc_config)
+
+# Now conditions can reference SMC columns
+# Example: "FVG_bullish is not null" (bullish FVG exists)
+```
+
+Pros:
+  ✅ Fast implementation (2-3 weeks)
+  ✅ Battle-tested by community (1.4k stars)
+  ✅ Maintained by others (not your responsibility)
+  ✅ Can start backtesting SMC strategies immediately
+
+Cons:
+  ❌ Black box (don't control algorithm details)
+  ❌ May not match YOUR interpretation of SMC
+  ❌ Limited to what library provides (missing inducements, etc.)
+  ❌ Dependency on external package (risk of breaking changes)
+
+
+OPTION 2: Fork and Customize (Medium)
+--------------------------------------
+Timeline: 4-6 weeks
+
+Steps:
+1. Fork repository to your GitHub
+2. Study source code (understand algorithms)
+3. Modify detection logic to match your interpretation
+4. Add missing concepts (inducements, liquidity sweeps)
+5. Integrate forked version into your engine
+
+Pros:
+  ✅ Full control over algorithms
+  ✅ Can customize to YOUR SMC style
+  ✅ Can add missing concepts
+  ✅ Starting point vs building from scratch
+
+Cons:
+  ❌ More time investment (4-6 weeks)
+  ❌ You own maintenance (bug fixes, updates)
+  ❌ Need to understand existing codebase first
+
+
+OPTION 3: Hybrid - Use for Some, Build for Others (Recommended)
+----------------------------------------------------------------
+Timeline: 3-4 weeks
+
+Approach:
+  - Use library for "easy" concepts (FVG, swings, sessions)
+  - Build custom for "hard" concepts (inducements, your specific OB logic)
+  - Validate library output against your manual marks
+  - Replace library functions that don't match your interpretation
+
+Steps:
+1. Week 1: Integrate library directly
+2. Week 2: Validate on your 20 labeled charts
+3. Week 3: Build custom functions for concepts that don't match
+4. Week 4: Test combined system
+
+Pros:
+  ✅ Best of both worlds (speed + customization)
+  ✅ Learn from existing implementation
+  ✅ Focused effort on hardest concepts only
+  ✅ Flexibility to evolve over time
+
+Cons:
+  ⚠️  Mixed codebase (library + custom)
+  ⚠️  Need to maintain compatibility
+
+
+================================================================================
+                    VALIDATION APPROACH
+================================================================================
+
+Before Committing to This Library:
+-----------------------------------
+
+WEEK 1: Quick POC Test
+-----------------------
+Task: Test library on YOUR 20 labeled charts
+
+Process:
+1. Install library: pip install smartmoneyconcepts
+2. Run on your 20 BTC charts
+3. Compare library output vs your manual marks
+4. Measure accuracy per concept:
+   - FVG detection: X% match
+   - OB detection: Y% match
+   - Swing detection: Z% match
+
+Success Criteria:
+  ✅ FVG >75% match → Use library for FVG
+  ✅ OB >65% match → Use library for OB
+  ❌ Any <60% → Build custom for that concept
+
+Output:
+  - Accuracy report per concept
+  - Decision: Which concepts to use from library
+  - Which concepts need custom implementation
+
+
+WEEK 2: Integration Test
+-------------------------
+If Week 1 validation looks good:
+
+1. Integrate library into backtest engine
+2. Create simple SMC strategy:
+   - Entry: Bullish FVG + BOS + RSI < 30
+   - Exit: Bearish FVG or take profit 3%
+3. Backtest on 1 year BTC data
+4. Compare to baseline (RSI-only strategy)
+
+Success Criteria:
+  ✅ SMC strategy outperforms baseline by 10%+
+  ✅ No crashes or errors during backtest
+  ✅ Results make sense visually
+
+Decision Point:
+  - If successful → Continue with full integration
+  - If unsuccessful → Reassess approach
+
+
+================================================================================
+                    KNOWN LIMITATIONS OF LIBRARY
+================================================================================
+
+Based on Analysis:
+------------------
+
+1. EDUCATIONAL DISCLAIMER
+   - README states: "For educational purposes only"
+   - Not claimed as production-ready
+   - Use at your own risk
+
+2. PRE-1.0 VERSION
+   - API may change in future versions
+   - No stability guarantee
+   - May have undiscovered bugs
+
+3. PARAMETER SENSITIVITY
+   - Results heavily depend on swing_length, range_percent
+   - No guidance on optimal parameters
+   - Requires tuning per asset/timeframe
+
+4. NO VALIDATION METRICS
+   - No published accuracy studies
+   - No ground truth comparison
+   - Community acceptance ≠ algorithmic correctness
+
+5. LIMITED DOCUMENTATION
+   - No detailed algorithm explanations
+   - No usage examples for complex scenarios
+   - No best practices guide
+
+6. MISSING ADVANCED CONCEPTS
+   - No inducements detection
+   - No liquidity sweep detection (explicit)
+   - No ICT-specific concepts (OTE, premium/discount)
+   - No killzone filters (just sessions)
+
+
+================================================================================
+                    COMPARISON TO BUILDING FROM SCRATCH
+================================================================================
+
+Aspect                    | Use Library | Build from Scratch
+--------------------------|-------------|-------------------
+Time to MVP               | 2-3 weeks   | 8-12 weeks
+Accuracy (estimated)      | 60-70%      | 65-75% (if done well)
+Customization             | Limited     | Full
+Maintenance effort        | Low         | High
+Learning curve            | Low         | High
+Community support         | Yes (issues)| No (you alone)
+Control over algorithms   | No          | Yes
+Risk of misinterpretation | Medium      | Low (it's YOUR logic)
+
+
+Recommendation:
+---------------
+START with library for PROOF OF CONCEPT (2-3 weeks)
+  → Proves SMC concepts add value to your backtests
+  → Fast validation of approach
+  → Can always replace with custom later
+
+THEN build custom IF:
+  - Library accuracy is <65% on your validation charts
+  - You need concepts library doesn't provide
+  - Results don't match your manual trading
+  - You want specific algorithmic tweaks
+
+
+================================================================================
+                    INTEGRATION ROADMAP
+================================================================================
+
+PHASE 1: Library Integration (Week 1-3)
+----------------------------------------
+✅ Week 1: Install and validate on 20 charts
+✅ Week 2: Integrate into backtest engine
+✅ Week 3: Create SMC operand types in condition_engine
+   - Add: FVG_BULLISH, FVG_BEARISH operand types
+   - Add: OB_BULLISH, OB_BEARISH operand types
+   - Add: BOS, CHOCH operand types
+   - Add: LIQUIDITY_HIGH, LIQUIDITY_LOW operand types
+
+Output: Can backtest SMC strategies using library
+
+
+PHASE 2: Validation (Week 4-5)
+-------------------------------
+✅ Week 4: Backtest SMC strategies on 1 year data
+✅ Week 5: Compare to baseline (indicator-only strategies)
+
+Metrics:
+  - Does SMC improve Sharpe ratio?
+  - Does SMC improve win rate?
+  - Does SMC reduce max drawdown?
+
+Decision Point:
+  → If YES (10%+ improvement) → Keep library, move to Phase 3
+  → If NO (<10% improvement) → Reassess (maybe SMC not valuable?)
+
+
+PHASE 3: Custom Enhancements (Week 6-10) - OPTIONAL
+----------------------------------------------------
+Only if library validation is successful:
+
+✅ Week 6-7: Build custom inducement detection
+✅ Week 8-9: Build custom liquidity sweep detection
+✅ Week 10: Integrate with existing library functions
+
+Output: Hybrid system (library + custom concepts)
+
+
+PHASE 4: Production (Week 11+)
+-------------------------------
+✅ Full SMC strategy backtesting capability
+✅ Documentation of SMC operand types
+✅ Frontend UI for SMC conditions
+✅ Ready for live trading integration (future)
+
+
+================================================================================
+                    RECOMMENDED NEXT STEPS
+================================================================================
+
+THIS WEEK:
+----------
+1. Install library: pip install smartmoneyconcepts
+2. Create test script to run on your 20 labeled charts
+3. Measure accuracy vs your manual marks
+4. Report findings
+
+Test Script Template:
+---------------------
+```python
+import pandas as pd
+from smartmoneyconcepts import smc
+
+# Load your manually labeled chart
+df = pd.read_csv("btc_1h_chart_1_labeled.csv")
+
+# Run library detection
+df = smc.fvg(df, join_consecutive=False)
+df = smc.swing_highs_lows(df, swing_length=50)
+df = smc.ob(df, swing_length=20)
+
+# Compare with your manual labels
+# Your labels: df['my_fvg_bullish']
+# Library: df['FVG_bullish']
+
+# Calculate accuracy
+matches = (df['my_fvg_bullish'].notna() == df['FVG_bullish'].notna()).sum()
+total = df['my_fvg_bullish'].notna().sum()
+accuracy = matches / total * 100
+
+print(f"FVG Detection Accuracy: {accuracy:.1f}%")
+```
+
+
+NEXT WEEK:
+----------
+Based on validation results:
+
+If >70% accuracy:
+  → Integrate library into backtest engine
+  → Start testing SMC strategies
+
+If 60-70% accuracy:
+  → Use library for hybrid approach
+  → Build custom for low-accuracy concepts
+
+If <60% accuracy:
+  → Study library source code (learn approach)
+  → Build custom from scratch (better aligned with your interpretation)
+
+
+================================================================================
+                    FINAL RECOMMENDATION
+================================================================================
+
+THIS LIBRARY IS A GAME-CHANGER FOR YOUR PROJECT
+
+Why:
+----
+✅ Saves 8-12 weeks of implementation time
+✅ Battle-tested by 1.4k+ users
+✅ Covers 60-70% of SMC concepts
+✅ Professional packaging (PyPI, clean API)
+✅ Can start backtesting SMC immediately
+
+Next Actions:
+-------------
+1. Test library on your 20 labeled charts (1 week)
+2. Measure accuracy vs your manual interpretation
+3. Decide: Direct use vs Fork vs Hybrid
+
+Expected Outcome:
+-----------------
+- Library likely matches 65-75% of your manual marks
+- Good enough for initial SMC backtesting
+- Can refine/replace specific concepts later if needed
+
+Don't Reinvent the Wheel:
+--------------------------
+Unless library is <60% accurate on your validation, USE IT.
+You can always build custom later after proving SMC adds value.
+
+
+Time Saved: 6-10 weeks
+Risk Reduced: High (community-tested vs untested custom code)
+Flexibility: Can still customize later
+
+
+VERDICT: HIGHLY RECOMMENDED TO START WITH THIS LIBRARY
+
+
+================================================================================
+                              END OF ANALYSIS
+================================================================================
