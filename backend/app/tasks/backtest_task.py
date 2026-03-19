@@ -197,6 +197,7 @@ def _group_to_payload(strategy: Strategy, group_type: str) -> dict[str, Any]:
         "logic": group.logic,
         "conditions": [
             {
+                "id": str(c.id),
                 "left_operand_type": c.left_operand_type,
                 "left_operand_value": c.left_operand_value,
                 "operator": c.operator,
@@ -235,6 +236,7 @@ def _build_groups_dict(strategy: Strategy, group_type: str) -> dict[str, dict[st
             "logic": group.logic,
             "conditions": [
                 {
+                    "id": str(c.id),
                     "left_operand_type": c.left_operand_type,
                     "left_operand_value": c.left_operand_value,
                     "operator": c.operator,
