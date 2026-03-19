@@ -27,6 +27,8 @@ class BacktestCreate(BaseModel):
     commission_per_trade: float = 0.0  # Fixed commission per trade (e.g., $5)
     commission_pct: float = 0.0  # Commission as % of trade value (e.g., 0.1 for 0.1%)
     slippage_pct: float = 0.0  # Slippage as % of price (e.g., 0.05 for 0.05%)
+    # Attribution parameters
+    enable_attribution: bool = True  # Enable trade attribution analysis
 
 
 class BacktestOut(BaseModel):
@@ -55,6 +57,7 @@ class BacktestOut(BaseModel):
     commission_per_trade: float | None
     commission_pct: float | None
     slippage_pct: float | None
+    enable_attribution: bool
 
 
 class TradeLogOut(BaseModel):
@@ -70,4 +73,12 @@ class TradeLogOut(BaseModel):
     pnl: float
     pnl_pct: float
     trade_duration_days: int
-    exit_reason: str | None  # NEW: Why the trade exited
+    exit_reason: str | None
+    # Attribution fields (optional)
+    entry_conditions_met: list[str] | None = None
+    exit_conditions_met: list[str] | None = None
+    entry_signal_strength: float | None = None
+    market_return_during_trade: float | None = None
+    alpha: float | None = None
+    indicator_snapshot_entry: dict[str, Any] | None = None
+    indicator_snapshot_exit: dict[str, Any] | None = None

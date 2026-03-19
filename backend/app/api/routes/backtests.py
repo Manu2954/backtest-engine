@@ -42,6 +42,7 @@ async def create_backtest(
         commission_per_trade=payload.commission_per_trade,
         commission_pct=payload.commission_pct,
         slippage_pct=payload.slippage_pct,
+        enable_attribution=payload.enable_attribution,
     )
     session.add(run)
     await session.commit()
