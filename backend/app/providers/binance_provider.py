@@ -13,7 +13,7 @@ import pandas as pd
 
 from app.providers.base import DataProvider
 
-BINANCE_URL = "https://api.binance.com/api/v3"
+BINANCE_URL = "https://fapi.binance.com/fapi/v1"
 BINANCE_INTERVAL_MS = {
     "1m": 1 * 60 * 1000,
     "3m": 3 * 60 * 1000,

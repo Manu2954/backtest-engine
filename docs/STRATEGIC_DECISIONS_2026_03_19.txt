@@ -1,0 +1,347 @@
+================================================================================
+KEY STRATEGIC DECISIONS - SESSION 2026-03-19
+================================================================================
+
+This document captures critical strategic decisions made during the session
+that fundamentally shaped the product direction and development roadmap.
+
+================================================================================
+DECISION 1: PRODUCT POSITIONING SHIFT
+================================================================================
+
+FROM: "Backtest Engine" (commodity tool)
+TO:   "Truth Engine" (strategy validation platform)
+
+REASONING:
+- General-purpose backtest engines are commoditized (TradingView, Backtrader,
+  QuantConnect all free or cheap)
+- Cannot compete on features alone - established players have years of dev
+- Real pain point: Traders get deceived by backtests (overfitting, regime bias,
+  execution assumptions)
+- Gap in market: Tools that tell you IF your strategy will work, not just HOW
+  it performed historically
+
+IMPACT:
+- Changes entire value proposition from "run backtests" to "validate truth"
+- Shifts target market from retail traders to serious/semi-pro traders
+- Justifies premium pricing ($100-$500/month vs $20-$50/month)
+- Creates defensible moat (hard to build well, requires domain expertise)
+
+KEY QUOTE:
+"We need to upgrade from 'Engine that runs strategies' to 'Engine that
+evaluates truth of strategies'"
+
+VALIDATION:
+- Aligns with customer pain: "Why did backtest show 40% but live got 8%?"
+- Differentiates from all competitors (nobody positions as "truth validator")
+- Addresses root cause: Confidence in strategy before risking capital
+
+================================================================================
+DECISION 2: REJECT SMC-FOCUSED NICHE
+================================================================================
+
+DECISION: Do NOT build "SMC/ICT-specific backtesting platform"
+
+REASONING:
+- SMC market is retail-heavy (low capital, low willingness to pay)
+- Hype-driven demand (ICT popular now, might fade in 12-18 months)
+- High churn (blown accounts, short attention spans)
+- Won't pay for software ($20-$50/month max, prefer free TradingView scripts)
+- Market expects courses/signals, not infrastructure tools
+
+ALTERNATIVE CONSIDERED:
+"SMC-native backtest engine with pre-built FVG/OB indicators"
+
+WHY REJECTED:
+- Niche too small with low monetization potential
+- Hype cycle risk (what if ICT trend ends?)
+- Retail traders prefer manual analysis over automation
+- Can't build sustainable business on retail SMC traders
+
+STRATEGIC PIVOT:
+- Build paradigm-agnostic truth engine
+- SMC becomes one "strategy pack" option, not the core product
+- Target serious traders (prop, semi-pro, small funds) not retail
+
+IMPACT:
+- Avoids low-value market trap
+- Opens door to institutional/semi-institutional customers
+- Sustainable business model (not hype-dependent)
+
+================================================================================
+DECISION 3: TRUTH ENGINE FEATURE PRIORITIES
+================================================================================
+
+CORE TRUTH ENGINE COMPONENTS (What makes it a "truth engine"):
+
+1. ROBUSTNESS LAYER
+   - Parameter sensitivity analysis (±20% variations)
+   - Monte Carlo simulation (1000+ runs with timing variations)
+   - Walk-forward optimization (rolling windows, unseen data)
+   - Output: Confidence score 0-100 ("Is this edge real or lucky?")
+
+2. REGIME DETECTION LAYER
+   - Market regime classification (trend/range, vol clusters, correlation)
+   - Performance breakdown by regime
+   - Regime transition analysis
+   - Output: "Works in X regime, fails in Y regime"
+
+3. EXECUTION REALITY LAYER
+   - Slippage models (spread, market impact, partial fills)
+   - Liquidity constraints (can you enter this size?)
+   - Latency simulation (signal-to-execution delay)
+   - Output: Reality-adjusted returns (backtest vs expected live)
+
+4. FAILURE MODE DETECTION
+   - Drawdown clustering (loses in streaks?)
+   - Black swan sensitivity (what if Oct 2008 happens?)
+   - Correlation breakdown (fails when everything correlates?)
+   - Output: "Here's how this strategy dies"
+
+REASONING:
+These four components answer the core question: "Will this strategy work in
+production, or am I fooling myself?"
+
+COMPETITIVE ANALYSIS:
+- Tier 1 (Commodity): Basic backtest - TradingView, Backtrader
+- Tier 2 (Table stakes): Good execution modeling - QuantConnect, Alpaca
+- Tier 3 (Differentiation): Truth validation - Almost nobody at retail price
+  (institutional tools like Quantopian/Numerai cost $10k+/month)
+
+MARKET POSITION:
+Competing at Tier 3 with Tier 2 pricing ($100-$500/month)
+
+================================================================================
+DECISION 4: FEATURE RANKING - WHAT TO BUILD NEXT
+================================================================================
+
+TIER 1: CRITICAL FOR TRUTH ENGINE (Build First)
+
+1. Trade Attribution / Explainability Layer - HIGHEST PRIORITY
+   WHY: Core differentiator. Answers "Why did trades work?"
+   - Per-trade breakdown (which condition triggered?)
+   - Attribution analysis (% P&L from entries vs exits vs beta)
+   - Counterfactual testing ("What if I removed RSI condition?")
+   - Separates skill from luck
+   IMPACT: This IS the truth engine. Without this, you're just another backtester.
+
+2. Data Quality + Signal Integrity Layer - HIGH PRIORITY
+   WHY: Can't evaluate truth with bad data. Trust builder.
+   - Data validation (gaps, outliers, suspicious patterns)
+   - Lookahead bias detection ("Your indicator uses future data")
+   - Realism enforcement ("You're buying more than daily volume")
+   IMPACT: Credibility foundation. Users trust the "truth" you're showing.
+
+TIER 2: POWERFUL UPGRADES (Build After Core)
+
+3. Portfolio-Level Backtesting - MEDIUM-HIGH PRIORITY
+   WHY: Serious traders run multiple strategies. Portfolio view required.
+   - Multi-strategy orchestration (shared capital, correlation)
+   - Portfolio-level metrics (total drawdown, capital efficiency)
+   - Risk allocation across strategies
+   IMPACT: Moves from retail to semi-pro/institutional territory.
+
+4. Event-Based Backtesting - MEDIUM PRIORITY
+   WHY: Unique angle (most backtesters ignore events)
+   - Event feed integration (on-chain, news, economic calendar)
+   - Event-driven triggers ("Enter when funding rate > 0.1%")
+   - Event attribution
+   IMPACT: Niche differentiation, especially for crypto.
+
+TIER 3: RISKY / DEPRIORITIZED
+
+5. Strategy Discovery Engine - LOW PRIORITY / RISKY
+   WHY RISKY: Conflicts with "truth" positioning
+   - Auto-generated strategies are usually curve-fit garbage
+   - If users lose money on discovered strategies, kills brand trust
+   - Implies "easy alpha" which conflicts with "we tell hard truths"
+
+   ALTERNATIVE: "Strategy Improvement" not "Discovery"
+   - User brings strategy
+   - Engine suggests: "Try adding ATR filter - 15% better Sharpe"
+   - Lower risk, maintains truth-telling brand
+
+REASONING FOR RANKING:
+- Attribution = defines what "truth engine" means (without this, it's just backtest)
+- Data Quality = enables trust in the truth being shown
+- Portfolio = serious trader feature (high willingness to pay)
+- Event-based = nice-to-have, niche use case
+- Discovery = brand risk (only if done with heavy robustness filters)
+
+================================================================================
+DECISION 5: PAUSE SMC VALIDATION
+================================================================================
+
+DECISION: Pause SMC library validation work (in progress) until truth engine
+          core is complete.
+
+CONTEXT:
+- SMC validation workspace fully set up (scripts, config, 22 charts downloaded)
+- Library installed and tested (FVG detection works, slightly over-sensitive)
+- Critical bugs fixed (index alignment, API corrections)
+- Pending work: Manual labeling (12-20 hours) + validation run
+
+REASONING:
+1. EFFORT VS ROI
+   - Manual labeling = 12-20 hours of tedious work
+   - Uncertain outcome (library might not validate well)
+   - Low ROI at this stage (only validates one strategy paradigm)
+
+2. NO BLOCKERS
+   - Truth engine core works on ANY strategy (indicators, SMC, price action)
+   - Can test with simpler strategies already supported (SMA, RSI, MACD)
+   - SMC validation doesn't block any other features
+
+3. STRATEGIC PRIORITY
+   - Truth engine features are the differentiator (attribution, robustness)
+   - SMC is one strategy type, not the product itself
+   - Better to prove core engine value first
+
+4. MODULAR APPROACH
+   - Launch: "Truth engine for indicator-based strategies"
+   - Add later: "SMC strategy pack" (after validation, if needed)
+   - SMC becomes optional add-on, not foundation
+
+WHEN TO RESUME:
+- Truth engine core is complete and validated
+- Ready to backtest personal SMC trading strategy
+- Users request SMC features
+- Have 2-3 weeks to dedicate to labeling + validation
+- Need SMC as marketing differentiator
+
+DOCUMENTED:
+- validation_smc/STATUS.txt - Complete status, findings, resume instructions
+- validation_smc/PAUSED.md - Quick reference
+
+KEY INSIGHT:
+"SMC validation is testing whether the engine can evaluate SMC strategies
+truthfully. But the truth engine doesn't require SMC to prove its value -
+it works on any strategy. SMC is a use case, not the foundation."
+
+================================================================================
+DECISION 6: BUILD ORDER / ROADMAP
+================================================================================
+
+PHASE 1: CORE TRUTH ENGINE (6-8 weeks) - IMMEDIATE PRIORITY
+- Trade Attribution / Explainability Layer
+- Data Quality + Signal Integrity Layer
+- Robustness scoring (parameter sensitivity, Monte Carlo)
+
+PHASE 2: ADVANCED TRUTH FEATURES (4-6 weeks)
+- Regime detection + regime-aware analysis
+- Execution reality layer (slippage, liquidity)
+- Failure mode detection
+
+PHASE 3: SERIOUS TRADER FEATURES (6-8 weeks)
+- Portfolio-level backtesting
+- Walk-forward optimization
+- Event-based backtesting (optional)
+
+PHASE 4: ADVANCED (Only if validated demand)
+- Strategy improvement suggestions (NOT full discovery)
+- SMC validation completion + integration (if demand exists)
+
+REASONING:
+- Phase 1 defines what "truth engine" means (attribution + robustness)
+- Phase 2 completes the truth validation suite
+- Phase 3 adds institutional-grade features (portfolio mgmt)
+- Phase 4 is market-driven (build based on user feedback)
+
+MILESTONE GATES:
+- After Phase 1: Validate with beta users (does attribution add value?)
+- After Phase 2: Launch MVP (complete truth engine)
+- After Phase 3: Institutional feature set complete
+- Phase 4: Driven by revenue/demand signals
+
+================================================================================
+KEY PRINCIPLES ESTABLISHED
+================================================================================
+
+1. POSITIONING PRINCIPLE
+   "We don't help you run strategies. We help you validate if strategies
+    will work before you risk capital."
+
+2. MARKET PRINCIPLE
+   "Target customers who've been burned before and will pay to avoid failure.
+    Not retail traders looking for free tools."
+
+3. FEATURE PRINCIPLE
+   "Build features that evaluate truth, not features that run backtests faster.
+    Speed is commodity. Truth is defensible."
+
+4. SCOPE PRINCIPLE
+   "Paradigm-agnostic engine > niche-specific engine. SMC is a use case,
+    not the product."
+
+5. VALIDATION PRINCIPLE
+   "Prove core value with simple strategies first. Add complexity (SMC, events)
+    only after core is validated."
+
+================================================================================
+NEXT IMMEDIATE DECISION REQUIRED
+================================================================================
+
+CHOOSE FIRST FEATURE TO BUILD:
+
+Option A: Trade Attribution Layer
+- Explains why trades won/lost
+- Separates skill from luck
+- Core differentiator
+
+Option B: Robustness Scoring
+- Parameter sensitivity + Monte Carlo
+- Answers "Is this edge real or curve-fit?"
+- Quantifies confidence
+
+Option C: Data Quality Layer
+- Validates data integrity
+- Catches lookahead bias, bad data
+- Trust foundation
+
+RECOMMENDATION: Start with Trade Attribution (Option A)
+- Most visible to users (per-trade insights)
+- Clearest differentiation from competitors
+- Immediate "aha moment" value
+- Enables other features (robustness scoring needs attribution framework)
+
+================================================================================
+CONTEXT FOR FUTURE SESSIONS
+================================================================================
+
+PRODUCT VISION:
+"Backtest engines lie. We tell the truth. Find out if your strategy is real
+ or bullshit before you lose money."
+
+TARGET CUSTOMER:
+- Prop firm traders (need edge to pass evaluations)
+- Retail → semi-pro transition (building track record)
+- Small hedge funds (need institutional validation, can't afford Bloomberg)
+- Anyone who's been burned by backtests before
+
+COMPETITIVE MOAT:
+- Truth validation (attribution, robustness, regime, execution reality)
+- Not competing on "more indicators" or "faster backtests"
+- Hard to replicate (requires domain expertise + engineering)
+
+REVENUE MODEL:
+- $100-$500/month SaaS (serious trader pricing)
+- Freemium: Basic backtest free, truth validation features paid
+- Enterprise: Portfolio-level + API access for funds
+
+BRAND:
+- "We tell hard truths" (not "find easy alpha")
+- "Validate before you trade" (not "backtest anything")
+- Professional, skeptical, evidence-based
+
+================================================================================
+END OF STRATEGIC DECISIONS DOCUMENT
+================================================================================
+
+Last Updated: 2026-03-19
+Session Duration: ~2 hours
+Key Decisions: 6 major strategic pivots
+Impact: Complete product repositioning from commodity to differentiated offering
+
+These decisions fundamentally changed the project from "yet another backtest
+engine" to "strategy truth validation platform" - a defensible, monetizable
+product with clear target market and competitive advantages.
