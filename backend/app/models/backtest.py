@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -39,6 +39,9 @@ class BacktestRun(Base):
     commission_pct: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True, default=0.0)
     slippage_pct: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True, default=0.0)
 
+    # Attribution feature flag
+    enable_attribution: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
     strategy = relationship("Strategy", back_populates="backtest_runs")
     trades = relationship("TradeLog", back_populates="run", cascade="all, delete-orphan")
 
@@ -57,5 +60,14 @@ class TradeLog(Base):
     pnl_pct: Mapped[float] = mapped_column(Numeric(8, 4), nullable=False)
     trade_duration_days: Mapped[int] = mapped_column(nullable=False)
     exit_reason: Mapped[str | None] = mapped_column(String(32), nullable=True, default="signal")
+
+    # Attribution fields
+    entry_conditions_met: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # List of condition UUIDs
+    exit_conditions_met: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # List of condition UUIDs
+    entry_signal_strength: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)  # 0.0000 to 1.0000
+    market_return_during_trade: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)  # Close-to-close market return
+    alpha: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)  # pnl_pct - market_return
+    indicator_snapshot_entry: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # Indicator values at entry
+    indicator_snapshot_exit: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # Indicator values at exit
 
     run = relationship("BacktestRun", back_populates="trades")

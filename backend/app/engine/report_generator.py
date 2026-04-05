@@ -294,3 +294,133 @@ def generate_report(
                 report[key] = 999999.0 if value > 0 else -999999.0
 
     return report
+
+
+def generate_attribution_report(
+    trade_log: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """
+    Generate trade attribution report from trade-level attribution data.
+
+    Aggregates individual trade attribution into strategy-level insights:
+    - Total alpha across all trades
+    - Signal strength distribution (strong/medium/weak performance)
+    - Win rate by signal strength
+    - Condition frequency analysis
+    - Average alpha by signal strength bin
+
+    Args:
+        trade_log: List of trade dictionaries with attribution fields
+
+    Returns:
+        Dictionary with attribution insights, or None if no attribution data
+
+    Attribution Fields in Trade Log:
+        - entry_conditions_met: List of condition IDs that triggered entry
+        - entry_signal_strength: Float 0.0-1.0 (confluence score)
+        - market_return_during_trade: Float percent (buy-and-hold return)
+        - alpha: Float percent (pnl_pct - market_return)
+        - indicator_snapshot_entry: Dict of indicator values at entry
+
+    Report Structure:
+        {
+            "total_alpha": float,  # Sum of all trade alphas
+            "alpha_percentage": float,  # Alpha as % of total return
+            "signal_strength": {
+                "strong": {"count": int, "win_rate": float, "avg_alpha": float},
+                "medium": {"count": int, "win_rate": float, "avg_alpha": float},
+                "weak": {"count": int, "win_rate": float, "avg_alpha": float}
+            },
+            "condition_frequency": {
+                "condition_id": int,  # How many trades triggered each condition
+            }
+        }
+    """
+    # Check if any trades have attribution data
+    trades_with_attribution = [
+        t for t in trade_log
+        if t.get("entry_signal_strength") is not None
+    ]
+
+    if not trades_with_attribution:
+        return None
+
+    # Calculate total alpha
+    total_alpha = sum(
+        float(t.get("alpha", 0.0))
+        for t in trades_with_attribution
+        if t.get("alpha") is not None
+    )
+
+    # Calculate alpha percentage (alpha / total return)
+    total_pnl_pct = sum(
+        float(t.get("pnl_pct", 0.0))
+        for t in trades_with_attribution
+    )
+    alpha_percentage = _safe_div(total_alpha, total_pnl_pct) * 100 if total_pnl_pct != 0 else 0.0
+
+    # Signal strength bins
+    signal_strength_bins = {
+        "strong": {"trades": [], "threshold": 0.7},
+        "medium": {"trades": [], "threshold": 0.3},
+        "weak": {"trades": [], "threshold": 0.0},
+    }
+
+    # Classify trades by signal strength
+    for trade in trades_with_attribution:
+        strength = float(trade.get("entry_signal_strength", 0.0))
+        if strength >= 0.7:
+            signal_strength_bins["strong"]["trades"].append(trade)
+        elif strength >= 0.3:
+            signal_strength_bins["medium"]["trades"].append(trade)
+        else:
+            signal_strength_bins["weak"]["trades"].append(trade)
+
+    # Calculate stats per bin
+    signal_strength_stats = {}
+    for bin_name, bin_data in signal_strength_bins.items():
+        trades = bin_data["trades"]
+        if not trades:
+            signal_strength_stats[bin_name] = {
+                "count": 0,
+                "win_rate": 0.0,
+                "avg_alpha": 0.0,
+            }
+            continue
+
+        wins = [t for t in trades if float(t.get("pnl", 0.0)) > 0]
+        win_rate = _safe_div(len(wins), len(trades)) * 100
+
+        alphas = [float(t.get("alpha", 0.0)) for t in trades if t.get("alpha") is not None]
+        avg_alpha = sum(alphas) / len(alphas) if alphas else 0.0
+
+        signal_strength_stats[bin_name] = {
+            "count": len(trades),
+            "win_rate": win_rate,
+            "avg_alpha": avg_alpha,
+        }
+
+    # Condition frequency analysis
+    condition_frequency = {}
+    for trade in trades_with_attribution:
+        entry_conditions = trade.get("entry_conditions_met", [])
+        if entry_conditions:
+            for condition_id in entry_conditions:
+                condition_frequency[str(condition_id)] = condition_frequency.get(str(condition_id), 0) + 1
+
+    report = {
+        "total_alpha": total_alpha,
+        "alpha_percentage": alpha_percentage,
+        "signal_strength": signal_strength_stats,
+        "condition_frequency": condition_frequency,
+    }
+
+    # Sanitize report (NaN/Inf handling)
+    for key, value in report.items():
+        if isinstance(value, float):
+            if math.isnan(value):
+                report[key] = 0.0
+            elif math.isinf(value):
+                report[key] = 999999.0 if value > 0 else -999999.0
+
+    return report

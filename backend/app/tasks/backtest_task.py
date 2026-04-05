@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.engine.condition_engine import evaluate_conditions, evaluate_expression
 from app.engine.data_layer import fetch_ohlcv_async
 from app.engine.indicator_layer import compute_indicators, trim_warmup_period
-from app.engine.report_generator import generate_report, calculate_buy_and_hold_equity
+from app.engine.report_generator import generate_report, generate_attribution_report, calculate_buy_and_hold_equity
 from app.engine.state_machine import run_backtest
 from app.models.backtest import BacktestRun, TradeLog
 from app.models.strategy import ConditionGroup, Strategy
@@ -110,6 +110,15 @@ async def _run_backtest_async(run_id: str) -> None:
                 exit_signal = evaluate_conditions(df, exit_group)
 
             logger.info("Running backtest")
+
+            # Prepare condition groups for attribution (if enabled)
+            entry_conditions_for_attribution = None
+            exit_conditions_for_attribution = None
+            if run.enable_attribution:
+                # Build condition groups payload for attribution
+                entry_conditions_for_attribution = _group_to_payload(strategy, "ENTRY") if not strategy.entry_expression else _build_groups_dict(strategy, "ENTRY")
+                exit_conditions_for_attribution = _group_to_payload(strategy, "EXIT") if not strategy.exit_expression else _build_groups_dict(strategy, "EXIT")
+
             trades, equity_curve = run_backtest(
                 df,
                 entry_signal,
@@ -127,6 +136,10 @@ async def _run_backtest_async(run_id: str) -> None:
                 commission_per_trade=float(run.commission_per_trade or 0.0),
                 commission_pct=float(run.commission_pct or 0.0),
                 slippage_pct=float(run.slippage_pct or 0.0),
+                # Attribution parameters
+                enable_attribution=run.enable_attribution,
+                entry_conditions=entry_conditions_for_attribution,
+                exit_conditions=exit_conditions_for_attribution,
             )
 
             logger.info("Generating report and persisting trades")
@@ -142,6 +155,14 @@ async def _run_backtest_async(run_id: str) -> None:
             report = generate_report(
                 trades, equity_curve, float(run.initial_capital), benchmark_equity=benchmark_equity
             )
+
+            # Generate attribution report if enabled
+            if run.enable_attribution:
+                logger.info("Generating attribution report")
+                attribution_report = generate_attribution_report(trades)
+                if attribution_report:
+                    report["attribution"] = attribution_report
+
             run.report = report
             run.status = "COMPLETE"
             await session.commit()
@@ -176,6 +197,7 @@ def _group_to_payload(strategy: Strategy, group_type: str) -> dict[str, Any]:
         "logic": group.logic,
         "conditions": [
             {
+                "id": str(c.id),
                 "left_operand_type": c.left_operand_type,
                 "left_operand_value": c.left_operand_value,
                 "operator": c.operator,
@@ -214,6 +236,7 @@ def _build_groups_dict(strategy: Strategy, group_type: str) -> dict[str, dict[st
             "logic": group.logic,
             "conditions": [
                 {
+                    "id": str(c.id),
                     "left_operand_type": c.left_operand_type,
                     "left_operand_value": c.left_operand_value,
                     "operator": c.operator,
@@ -244,7 +267,15 @@ def _persist_trades(
                 pnl=trade["pnl"],
                 pnl_pct=trade["pnl_pct"],
                 trade_duration_days=trade["trade_duration_days"],
-                exit_reason=trade.get("exit_reason", "signal"),  # NEW: Store exit reason
+                exit_reason=trade.get("exit_reason", "signal"),
+                # Attribution fields (optional)
+                entry_conditions_met=trade.get("entry_conditions_met"),
+                exit_conditions_met=trade.get("exit_conditions_met"),
+                entry_signal_strength=trade.get("entry_signal_strength"),
+                market_return_during_trade=trade.get("market_return_during_trade"),
+                alpha=trade.get("alpha"),
+                indicator_snapshot_entry=trade.get("indicator_snapshot_entry"),
+                indicator_snapshot_exit=trade.get("indicator_snapshot_exit"),
             )
         )
 

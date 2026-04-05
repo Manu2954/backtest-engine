@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -452,3 +452,119 @@ def evaluate_expression(
         )
 
     return result.fillna(False).astype(bool)
+
+
+def evaluate_conditions_with_attribution(
+    df: pd.DataFrame,
+    condition_group: dict[str, Any],
+    bar_idx: int,
+    context: Optional[Dict[str, Any]] = None
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    Evaluate conditions at a specific bar and return attribution data.
+
+    This is the attribution-aware version of evaluate_conditions().
+    It evaluates conditions at a specific bar and tracks which conditions
+    triggered, plus calculates signal strength.
+
+    Args:
+        df: DataFrame with OHLCV + indicator columns
+        condition_group: Condition group definition (same format as evaluate_conditions)
+        bar_idx: Specific bar index to evaluate
+        context: Optional context (timeframe, strategy config) for strength calculation
+
+    Returns:
+        Tuple of (triggered, attribution_data):
+        - triggered: bool - True if conditions met at this bar
+        - attribution_data: dict or None - Attribution data if triggered, else None
+            {
+                'conditions_met': [list of condition dicts that were true],
+                'all_conditions': [list of all condition dicts],
+                'signal_strength': float (0-1)
+            }
+
+    Example:
+        triggered, attr = evaluate_conditions_with_attribution(df, entry_group, 100)
+        if triggered:
+            print(f"Strength: {attr['signal_strength']}")
+            print(f"Conditions met: {len(attr['conditions_met'])}/{len(attr['all_conditions'])}")
+    """
+    # Evaluate all conditions as boolean Series
+    result_series = evaluate_conditions(df, condition_group)
+
+    # Check if triggered at this specific bar
+    if bar_idx < 0 or bar_idx >= len(result_series):
+        return False, None
+
+    triggered = bool(result_series.iloc[bar_idx])
+
+    if not triggered:
+        return False, None
+
+    # Attribution data - track which conditions were true
+    logic = str(condition_group.get("logic", "AND")).upper()
+    conditions = condition_group.get("conditions", []) or []
+
+    if not conditions:
+        return False, None
+
+    # Evaluate each condition individually at this bar
+    conditions_met = []
+    all_conditions = []
+
+    for cond in conditions:
+        # Store condition reference
+        all_conditions.append(cond)
+
+        # Evaluate this single condition at the bar
+        left_type = cond.get("left_operand_type")
+        right_type = cond.get("right_operand_type")
+        operator = cond.get("operator")
+        left_value = cond.get("left_operand_value")
+        right_value = cond.get("right_operand_value")
+
+        try:
+            left = _get_operand(df, left_type, str(left_value))
+            right = _get_operand(df, right_type, str(right_value))
+            cond_result = _apply_operator(left, right, str(operator))
+
+            # Check if this condition was true at bar_idx
+            if isinstance(cond_result, pd.Series) and 0 <= bar_idx < len(cond_result):
+                if cond_result.iloc[bar_idx]:
+                    conditions_met.append(cond)
+        except Exception:
+            # If condition evaluation fails, skip it
+            continue
+
+    # Calculate signal strength using the attribution module
+    try:
+        from app.engine.attribution import (
+            StrengthCalculatorRegistry,
+            get_indicators_used_in_conditions,
+            get_indicator_snapshot,
+        )
+
+        signal_strength = StrengthCalculatorRegistry.calculate_strength(
+            df=df,
+            bar_idx=bar_idx,
+            conditions_met=conditions_met,
+            all_conditions=all_conditions,
+            context=context
+        )
+
+        # Get indicator snapshot at this bar
+        indicators_used = get_indicators_used_in_conditions(all_conditions)
+        indicator_snapshot = get_indicator_snapshot(df, bar_idx, indicators_used)
+    except Exception:
+        # Fallback if attribution module not available
+        signal_strength = len(conditions_met) / len(all_conditions) if all_conditions else 0.5
+        indicator_snapshot = {}
+
+    attribution_data = {
+        'conditions_met': conditions_met,
+        'all_conditions': all_conditions,
+        'signal_strength': signal_strength,
+        'indicator_snapshot': indicator_snapshot,
+    }
+
+    return triggered, attribution_data

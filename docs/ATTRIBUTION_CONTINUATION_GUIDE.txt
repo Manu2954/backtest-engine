@@ -1,0 +1,334 @@
+================================================================================
+ATTRIBUTION IMPLEMENTATION - CONTINUATION GUIDE
+================================================================================
+
+Status: Step 3 (Condition Engine) Complete - 40% Done
+Next: Step 4 (State Machine Modification)
+
+================================================================================
+WHAT'S BEEN COMPLETED ✅
+================================================================================
+
+**Step 1: Database Models** ✅
+- Added enable_attribution flag to BacktestRun
+- Added 7 attribution fields to TradeLog
+- Migration file ready (apply when DB is up)
+
+**Step 2: Pluggable Attribution Architecture** ✅
+- Created backend/app/engine/attribution/ module
+- SignalStrengthCalculator abstract base
+- StrengthCalculatorRegistry (pluggable design)
+- ConfluenceStrengthCalculator (Phase 1A)
+- Helper functions: get_indicators_used_in_conditions(), get_indicator_snapshot(), calculate_market_return()
+
+**Step 3: Condition Engine Enhancement** ✅
+- Added evaluate_conditions_with_attribution() to condition_engine.py
+- Returns: (triggered: bool, attribution_data: dict)
+- Calls StrengthCalculatorRegistry.calculate_strength()
+- Backward compatible (existing code unchanged)
+
+================================================================================
+STEP 4: STATE MACHINE MODIFICATION (NEXT - 30% of remaining work)
+================================================================================
+
+**Current State Machine Architecture (Observations):**
+
+File: backend/app/engine/state_machine.py (865 lines)
+
+Key findings:
+1. **No PendingTrade class** - Uses individual variables:
+   - pending_entry, pending_exit (booleans)
+   - entry_date, entry_price, entry_commission (tracking vars)
+   - shares (current position)
+
+2. **Main loop structure** (line 348+):
+   ```
+   for i, (ts, row) in enumerate(df.iterrows()):
+       # Periodic contributions
+       # Fill pending entry
+       # Check exit conditions (stop/take profit/signal)
+       # Fill pending exit
+       # Check entry signal
+       # Update equity curve
+   ```
+
+3. **Trade entry flow** (around line 364-420):
+   - Fill pending entry at open
+   - Calculate position size
+   - Apply slippage + commission
+   - Deduct from cash
+
+4. **Trade exit flow** (around line 450-550):
+   - Check stop loss, take profit, dynamic stop
+   - Check exit signal
+   - Fill pending exit at next bar open
+   - Create TradeRecord
+   - Add to trade_log
+
+5. **TradeRecord** (line 10-38):
+   - Dataclass with trade details
+   - NO attribution fields yet
+
+**What Needs to Change:**
+
+### A. Add Attribution Parameters to run_backtest()
+
+Location: Line 220 (function signature)
+
+Add parameter:
+```
+enable_attribution: bool = True
+```
+
+Also need to pass condition groups for attribution:
+```
+entry_conditions: dict[str, Any] | None = None
+exit_conditions: dict[str, Any] | None = None
+```
+
+### B. Extend TradeRecord Dataclass
+
+Location: Line 10-38
+
+Add fields:
+```
+@dataclass
+class TradeRecord:
+    # ... existing fields ...
+
+    # Attribution fields (optional)
+    entry_conditions_met: list[dict] | None = None
+    exit_conditions_met: list[dict] | None = None
+    entry_signal_strength: float | None = None
+    market_return_during_trade: float | None = None
+    alpha: float | None = None
+    indicator_snapshot_entry: dict | None = None
+    indicator_snapshot_exit: dict | None = None
+```
+
+Update to_dict() method to include these fields.
+
+### C. Track Attribution Data During Trade
+
+Location: Lines 303-308 (where pending vars are declared)
+
+Add variables:
+```
+# Attribution tracking (if enabled)
+entry_attribution_data: dict | None = None
+entry_bar_idx: int | None = None
+exit_bar_idx: int | None = None
+```
+
+### D. Capture Entry Attribution
+
+Location: Around line 450-500 (where entry signal is checked)
+
+Current code (approximate):
+```
+if entry_signal.iloc[i] and shares == 0.0:
+    pending_entry = True
+```
+
+New code:
+```
+if entry_signal.iloc[i] and shares == 0.0:
+    pending_entry = True
+    entry_bar_idx = i  # Track bar index
+
+    # Capture attribution if enabled
+    if enable_attribution and entry_conditions:
+        from app.engine.condition_engine import evaluate_conditions_with_attribution
+        from app.engine.attribution import get_indicators_used_in_conditions, get_indicator_snapshot
+
+        _, entry_attribution_data = evaluate_conditions_with_attribution(
+            df, entry_conditions, i
+        )
+
+        # Get indicator snapshot
+        if entry_attribution_data:
+            indicators_used = get_indicators_used_in_conditions(
+                entry_attribution_data['all_conditions']
+            )
+            entry_attribution_data['indicator_snapshot'] = get_indicator_snapshot(
+                df, i, indicators_used
+            )
+```
+
+### E. Capture Exit Attribution
+
+Location: Around line 520-600 (where TradeRecord is created)
+
+Similar to entry, but on exit:
+```
+exit_bar_idx = i  # When exit is triggered
+
+if enable_attribution and exit_conditions:
+    _, exit_attribution_data = evaluate_conditions_with_attribution(
+        df, exit_conditions, i
+    )
+
+    if exit_attribution_data:
+        indicators_used = get_indicators_used_in_conditions(
+            exit_attribution_data['all_conditions']
+        )
+        exit_attribution_data['indicator_snapshot'] = get_indicator_snapshot(
+            df, i, indicators_used
+        )
+```
+
+### F. Calculate Market Return and Alpha
+
+Location: When creating TradeRecord (around line 540-560)
+
+Before creating TradeRecord:
+```
+# Calculate attribution metrics if enabled
+market_return = None
+alpha = None
+if enable_attribution and entry_bar_idx is not None and exit_bar_idx is not None:
+    from app.engine.attribution import calculate_market_return
+
+    market_return = calculate_market_return(df, entry_bar_idx, exit_bar_idx, "LONG")
+    # Assuming LONG for now - need to track direction
+
+    # Alpha = trade return - market return
+    alpha = pnl_pct - market_return
+```
+
+Note: Need to track trade direction (LONG/SHORT) - current state_machine assumes LONG only.
+
+### G. Create TradeRecord with Attribution
+
+Location: Around line 560
+
+Current:
+```
+trade = TradeRecord(
+    entry_date=entry_date,
+    entry_price=entry_price,
+    # ... other fields ...
+)
+```
+
+New:
+```
+trade = TradeRecord(
+    entry_date=entry_date,
+    entry_price=entry_price,
+    # ... existing fields ...
+
+    # Attribution fields (if enabled, else None)
+    entry_conditions_met=([c for c in entry_attribution_data['conditions_met']]
+                          if enable_attribution and entry_attribution_data else None),
+    exit_conditions_met=([c for c in exit_attribution_data['conditions_met']]
+                         if enable_attribution and exit_attribution_data else None),
+    entry_signal_strength=(entry_attribution_data['signal_strength']
+                           if enable_attribution and entry_attribution_data else None),
+    market_return_during_trade=market_return if enable_attribution else None,
+    alpha=alpha if enable_attribution else None,
+    indicator_snapshot_entry=(entry_attribution_data.get('indicator_snapshot')
+                              if enable_attribution and entry_attribution_data else None),
+    indicator_snapshot_exit=(exit_attribution_data.get('indicator_snapshot')
+                             if enable_attribution and exit_attribution_data else None),
+)
+```
+
+### H. Reset Attribution Vars After Trade
+
+After creating TradeRecord:
+```
+entry_attribution_data = None
+entry_bar_idx = None
+exit_bar_idx = None
+```
+
+================================================================================
+KEY DESIGN DECISIONS FOR STATE MACHINE
+================================================================================
+
+1. **Backward Compatibility:** enable_attribution defaults to True but is optional
+2. **Performance:** Attribution code only runs when enable_attribution=True
+3. **Condition Groups:** Must be passed explicitly (not inferred from signals)
+4. **Direction Tracking:** Need to add direction="LONG"|"SHORT" (currently assumes LONG)
+5. **Error Handling:** Attribution failures shouldn't break backtest (fallback to None values)
+
+================================================================================
+IMPLEMENTATION APPROACH
+================================================================================
+
+**Option A: Modify run_backtest() directly**
+- Pros: Simple, all in one place
+- Cons: Function already 650 lines, will become 750+
+
+**Option B: Extract attribution logic to helper functions**
+- Pros: Cleaner, testable, readable
+- Cons: More files to manage
+
+**Recommendation: Option B** - Create helpers:
+```
+def _capture_entry_attribution(df, i, entry_conditions) -> dict
+def _capture_exit_attribution(df, i, exit_conditions) -> dict
+def _calculate_trade_attribution(df, entry_idx, exit_idx, pnl_pct, direction) -> (float, float)
+```
+
+Keep state_machine.py main loop clean, delegate to helpers.
+
+================================================================================
+TESTING STRATEGY
+================================================================================
+
+1. **Unit test attribution helpers** (new functions)
+2. **Integration test:** Run backtest with enable_attribution=True
+3. **Regression test:** Run backtest with enable_attribution=False (should match old behavior)
+4. **Validation:** Check that strong signals have better performance than weak
+
+================================================================================
+TIME ESTIMATE
+================================================================================
+
+Step 4 remaining work:
+- Add TradeRecord fields: 15 min
+- Add run_backtest parameters: 10 min
+- Create attribution helper functions: 90 min
+- Integrate into main loop (entry): 45 min
+- Integrate into main loop (exit): 45 min
+- Error handling + edge cases: 30 min
+- Testing: 60 min
+
+**Total: ~4.5 hours**
+
+================================================================================
+FILES TO MODIFY
+================================================================================
+
+1. backend/app/engine/state_machine.py
+   - Extend TradeRecord dataclass
+   - Add parameters to run_backtest()
+   - Add attribution helpers (or inline logic)
+   - Modify main loop (entry + exit capture)
+
+2. backend/app/engine/attribution/__init__.py
+   - Already complete, no changes needed
+
+3. backend/app/engine/condition_engine.py
+   - Already complete ✅
+
+================================================================================
+NEXT SESSION START HERE
+================================================================================
+
+1. Open backend/app/engine/state_machine.py
+2. Extend TradeRecord dataclass (line 10-38)
+3. Create attribution helper functions (after TradeRecord, before run_backtest)
+4. Add parameters to run_backtest() signature (line 220)
+5. Add attribution variable tracking (line 303-308)
+6. Integrate entry attribution (around line 450)
+7. Integrate exit attribution (around line 520-560)
+8. Test changes
+
+**Branch:** feature/trade-attribution
+**Progress:** 40% complete
+**Remaining:** Steps 4 (state machine), 5 (report generator), 6 (API), 7 (tests), 8 (migration)
+
+================================================================================
