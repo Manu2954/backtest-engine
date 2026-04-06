@@ -76,7 +76,7 @@ def test_simple_and_expression() -> None:
     result = evaluate_expression(df, groups, "oversold && trending")
 
     # Only bar 5 should be True
-    assert result.iloc[5] is True
+    assert result.iloc[5] == True
     assert result.sum() == 1
 
 
@@ -120,8 +120,8 @@ def test_simple_or_expression() -> None:
     result = evaluate_expression(df, groups, "oversold || trending")
 
     # Bars 3 and 7 should be True
-    assert result.iloc[3] is True
-    assert result.iloc[7] is True
+    assert result.iloc[3] == True
+    assert result.iloc[7] == True
     assert result.sum() == 2
 
 
@@ -133,7 +133,8 @@ def test_complex_expression_with_parentheses() -> None:
     df.loc[df.index[2], "rsi_14"] = 25
     df.loc[df.index[2], "adx_14"] = 30
 
-    # Bar 5: C true only
+    # Bar 5: C true only - set ema_20 high but keep others low
+    df["ema_20"] = 100.0  # Reset all to 100
     df.loc[df.index[5], "ema_20"] = 110
 
     groups = {
@@ -178,8 +179,8 @@ def test_complex_expression_with_parentheses() -> None:
     result = evaluate_expression(df, groups, "(A && B) || C")
 
     # Bars 2 and 5 should be True
-    assert result.iloc[2] is True
-    assert result.iloc[5] is True
+    assert result.iloc[2] == True
+    assert result.iloc[5] == True
     assert result.sum() == 2
 
 
@@ -275,7 +276,7 @@ def test_complex_nested_expression() -> None:
     result = evaluate_expression(df, groups, "A && (B || C) && D")
 
     # Bar 4: A=T, B=T, C=F, D=T → T && (T || F) && T = T
-    assert result.iloc[4] is True
+    assert result.iloc[4] == True
     assert result.sum() == 1
 
 
@@ -399,7 +400,7 @@ def test_empty_groups_error() -> None:
     df = make_df(10)
 
     with pytest.raises(ValueError, match="condition_groups cannot be empty"):
-        evaluate_expression(df, groups={}, expression="A")
+        evaluate_expression(df, condition_groups={}, expression="A")
 
 
 def test_multiple_groups_same_name_reused() -> None:
@@ -427,7 +428,7 @@ def test_multiple_groups_same_name_reused() -> None:
     result = evaluate_expression(df, groups, "oversold || oversold")
 
     # Should work correctly (same as just "oversold")
-    assert result.iloc[5] is True
+    assert result.iloc[5] == True
     assert result.sum() == 1
 
 
@@ -467,7 +468,7 @@ def test_descriptive_group_names() -> None:
 
     result = evaluate_expression(df, groups, "rsi_oversold && strong_trend")
 
-    assert result.iloc[3] is True
+    assert result.iloc[3] == True
     assert result.sum() == 1
 
 
@@ -538,4 +539,4 @@ def test_real_world_strategy_expression() -> None:
     )
 
     # Bar 10 should trigger
-    assert result.iloc[10] is True
+    assert result.iloc[10] == True

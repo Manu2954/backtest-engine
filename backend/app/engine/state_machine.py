@@ -716,7 +716,7 @@ def run_backtest(
 
             pnl = (exit_price - (entry_price or 0.0)) * shares - entry_commission - actual_exit_commission
             trade_cost = (entry_price or 0.0) * shares + entry_commission
-            pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+            pnl_pct = (pnl / trade_cost) if trade_cost > 0 else 0.0
             trade_duration_days = (
                 (exit_date - entry_date).days if entry_date is not None else 0
             )
@@ -815,7 +815,7 @@ def run_backtest(
                     exit_reason = "trailing_stop" if pnl >= 0 else "stop_loss"
 
                     trade_cost = entry_price * shares + entry_commission
-                    pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+                    pnl_pct = (pnl / trade_cost) if trade_cost > 0 else 0.0
                     trade_duration_days = (
                         (exit_date - entry_date).days if entry_date is not None else 0
                     )
@@ -883,7 +883,7 @@ def run_backtest(
 
                     pnl = (exit_price - entry_price) * shares - entry_commission - actual_exit_commission
                     trade_cost = entry_price * shares + entry_commission
-                    pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+                    pnl_pct = (pnl / trade_cost) if trade_cost > 0 else 0.0
                     trade_duration_days = (
                         (exit_date - entry_date).days if entry_date is not None else 0
                     )
@@ -947,7 +947,7 @@ def run_backtest(
 
                     pnl = (exit_price - entry_price) * shares - entry_commission - actual_exit_commission
                     trade_cost = entry_price * shares + entry_commission
-                    pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+                    pnl_pct = (pnl / trade_cost) if trade_cost > 0 else 0.0
                     trade_duration_days = (
                         (exit_date - entry_date).days if entry_date is not None else 0
                     )
@@ -1097,7 +1097,7 @@ def run_backtest(
                 # Since entry and exit at same price, P&L is just commissions
                 pnl = -(entry_commission + actual_exit_commission)
                 trade_cost = entry_price * shares + entry_commission
-                pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+                pnl_pct = (pnl / trade_cost) if trade_cost > 0 else 0.0
 
                 # Create trade record with attribution
                 trade = _create_trade_record_with_attribution(
@@ -1126,6 +1126,9 @@ def run_backtest(
                     cash = 0.0
                 shares = 0.0
 
+                # Update equity curve for last bar
+                equity_curve.iloc[-1] = cash
+
                 # Reset attribution (though loop ending)
                 entry_attribution_data = None
                 exit_attribution_data = None
@@ -1152,7 +1155,7 @@ def run_backtest(
 
         pnl = (execution_price - (entry_price or 0.0)) * shares - entry_commission - actual_exit_commission
         trade_cost = (entry_price or last_close) * shares + entry_commission
-        pnl_pct = (pnl / trade_cost * 100.0) if trade_cost > 0 else 0.0
+        pnl_pct = (pnl / trade_cost) if trade_cost > 0 else 0.0
         trade_duration_days = (
             (last_ts - entry_date).days if entry_date is not None else 0
         )

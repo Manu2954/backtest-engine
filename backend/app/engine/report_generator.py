@@ -424,3 +424,63 @@ def generate_attribution_report(
                 report[key] = 999999.0 if value > 0 else -999999.0
 
     return report
+
+
+def generate_binning_report(
+    trade_log: list[dict[str, Any]],
+    indicators: list[dict[str, Any]],
+    conditions: list[dict[str, Any]] | None = None
+) -> dict[str, Any] | None:
+    """
+    Generate empirical binning analysis report.
+
+    This is a diagnostic tool that analyzes which indicator value ranges
+    correlate with profitable trades. Unlike Phase 1B (arbitrary thresholds),
+    this uses data-driven quintile binning.
+
+    Args:
+        trade_log: List of trade dicts with indicator_snapshot_entry
+        indicators: List of indicator dicts with 'alias' key
+        conditions: Optional list of condition dicts (for crossover detection)
+
+    Returns:
+        Binning analysis dict or None if insufficient data (< 50 trades)
+
+    Example return:
+        {
+            "rsi_14": {
+                "bins": [
+                    {"range": [0, 20], "count": 30, "avg_pnl": 250.0, "win_rate": 0.67},
+                    ...
+                ],
+                "bin_edges": [0, 20, 40, 60, 80, 100],
+                "correlation": 0.72,
+                "p_value": 0.001,
+                "sample_size": 100
+            },
+            "summary": {
+                "total_indicators": 5,
+                "analyzed_indicators": 2,
+                "significant_indicators": 1,
+                "skipped_indicators": ["ema_cross"],
+                "insufficient_data": False
+            }
+        }
+    """
+    if len(trade_log) < 50:
+        return None
+
+    from app.engine.attribution.analysis.binning_analyzer import analyze_indicator_bins
+
+    # Convert trade_log dicts to mock objects that binning_analyzer expects
+    # binning_analyzer needs objects with .pnl and .indicator_snapshot_entry attributes
+    class TradeMock:
+        def __init__(self, trade_dict):
+            self.pnl = float(trade_dict.get("pnl", 0.0))
+            self.indicator_snapshot_entry = trade_dict.get("indicator_snapshot_entry")
+
+    trades = [TradeMock(t) for t in trade_log]
+    indicator_aliases = [ind["alias"] for ind in indicators]
+
+    return analyze_indicator_bins(trades, indicator_aliases, conditions=conditions)
+

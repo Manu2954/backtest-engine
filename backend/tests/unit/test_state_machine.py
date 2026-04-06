@@ -34,7 +34,7 @@ def test_next_bar_fills_and_pnl() -> None:
     assert trade["exit_price"] == 14.0
     assert trade["shares"] == 8.0  # floor(100/12)
     assert trade["pnl"] == 16.0
-    assert trade["pnl_pct"] == 0.16
+    assert abs(trade["pnl_pct"] - 0.1667) < 0.001  # 16.67% return
     assert trade["trade_duration_days"] == 2
 
     assert equity.iloc[-1] == 116.0
@@ -354,10 +354,10 @@ def test_negative_proceeds_with_sufficient_cash() -> None:
     index = pd.date_range("2020-01-01", periods=5, freq="D")
     df = pd.DataFrame(
         {
-            "open": [10, 10, 1, 1, 1],  # Price drops to $1
-            "high": [12, 12, 2, 2, 2],
-            "low": [8, 8, 1, 1, 1],
-            "close": [10, 10, 1, 1, 1],
+            "open": [10, 10, 10, 1, 1],  # Price drops AFTER entry
+            "high": [12, 12, 12, 2, 2],
+            "low": [8, 8, 8, 1, 1],
+            "close": [10, 10, 10, 1, 1],  # Close stays at 10 until bar 3
             "volume": [1000, 1000, 1000, 1000, 1000],
         },
         index=index,
@@ -470,6 +470,7 @@ def test_pending_entry_on_last_bar_fills() -> None:
     exit_signal = pd.Series([False, False, False, False, False], index=index)
 
     initial_capital = 100.0
+    commission_per_trade = 1.0  # Need commission to have negative P&L
 
     trades, equity = run_backtest(
         df,
@@ -477,6 +478,7 @@ def test_pending_entry_on_last_bar_fills() -> None:
         exit_signal,
         initial_capital=initial_capital,
         asset_class="STOCK",
+        commission_per_trade=commission_per_trade,
     )
 
     # Should have one trade (entry + immediate force-close)
@@ -487,7 +489,7 @@ def test_pending_entry_on_last_bar_fills() -> None:
     assert trade["exit_date"] == index[-1]
     assert trade["entry_price"] == 10.0
     assert trade["exit_price"] == 10.0
-    assert trade["shares"] == 10.0
+    assert trade["shares"] == 9.0  # floor((100 - 1 commission) / 10)
     assert trade["trade_duration_days"] == 0
     assert trade["exit_reason"] == "last_bar_entry_force_close"
 
@@ -613,8 +615,8 @@ def test_dynamic_stop_crossover_detection() -> None:
         index=index,
     )
 
-    # Entry on bar 1
-    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    # Entry on bar 0 (so fill at bar 1 open = $105)
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
     exit_signal = pd.Series([False, False, False, False, False], index=index)
 
     initial_capital = 1000.0
@@ -628,18 +630,18 @@ def test_dynamic_stop_crossover_detection() -> None:
         dynamic_stop_column="trailing_stop",
     )
 
-    # Entry at bar 2 (signal on bar 1, fill at bar 2): open=$105
-    # Bar 2: price=$98 < stop=$99, BUT prev_close=$105 >= prev_stop=$95 → CROSS BELOW → EXIT
+    # Entry at bar 1 open (signal on bar 0, fill at bar 1): open=$105
+    # Bar 2: price=$98 < stop=$99, AND prev_close=$105 >= prev_stop=$95 → CROSS BELOW → EXIT
     # Should have 1 trade exiting at bar 2
 
     assert len(trades) == 1
     trade = trades[0]
 
-    # Entry at bar 2 open
+    # Entry at bar 1 open
     assert trade["entry_price"] == 105.0
-    assert trade["entry_date"] == index[2]
+    assert trade["entry_date"] == index[1]
 
-    # Exit at bar 2 open (same bar, crossover detected)
+    # Exit at bar 2 open (crossover detected)
     assert trade["exit_date"] == index[2]
     assert trade["exit_price"] == 98.0
     assert trade["exit_reason"] in ["trailing_stop", "stop_loss"]

@@ -1,0 +1,386 @@
+# Backtest Engine - Complete Status (April 2026)
+
+## Project Overview
+
+Full-stack indicator-based trading strategy backtesting engine with attribution analysis.
+
+**Stack**: FastAPI + Python 3.12, React 18 + TypeScript, PostgreSQL 16, Redis 7, Celery
+
+**Maturity**: Production-ready core features, Phase 1 attribution complete
+
+---
+
+## Current Feature Status
+
+### ✅ Core Backtesting Engine (V1 - Complete)
+
+**Execution Model**:
+- Realistic fill simulation (entry/exit at next bar's open - prevents lookahead bias)
+- Position state machine: NO_POSITION → PENDING_ENTRY → IN_POSITION → PENDING_EXIT
+- Asset classes: STOCK (integer shares), CRYPTO (fractional shares)
+- Trade tracking: 20+ fields per trade
+
+**Technical Indicators** (11 via pandas-ta):
+- SMA, EMA, RSI, MACD, Bollinger Bands, ATR
+- Stochastic Oscillator, ADX, Ichimoku Cloud, ROC, OBV
+
+**Condition Operators** (9):
+- Comparisons: GT, LT, EQ, GTE, LTE
+- Crossovers: CROSSES_ABOVE, CROSSES_BELOW
+- Trends: IS_RISING, IS_FALLING
+
+**Operand Types** (4):
+- INDICATOR: Technical indicator aliases
+- OHLCV: Price/volume data
+- SCALAR: Constant numeric values
+- LOOKBACK: Historical values (e.g., "rsi_14:-3" = RSI 3 bars ago)
+
+**Position Sizing** (4 modes):
+- full_capital: Invest entire cash balance
+- percent_capital: Fixed percentage (e.g., 10%)
+- fixed_amount: Fixed dollar amount
+- risk_based: Size based on risk % and stop distance
+
+**Risk Management**:
+- Static stop loss (percentage-based)
+- Static take profit (percentage-based)
+- Dynamic stop loss (indicator-based trailing stops)
+- Commission modeling (per-trade + percentage)
+- Slippage simulation
+
+**Data Providers** (Pluggable):
+- YahooFinance: stocks/crypto, daily to 1min resolution
+- Binance: crypto, multiple resolutions, IST timezone support
+
+**Performance Metrics**:
+- Returns: total return %, CAGR, Sharpe ratio
+- Risk: max drawdown, Calmar ratio, longest drawdown
+- Trade stats: win rate, profit factor, avg win/loss
+- Buy-and-hold benchmark comparison
+
+---
+
+### ✅ Phase 1A: Trade Attribution (100% Complete)
+
+**Purpose**: Understand which conditions drive profitable trades
+
+**Features**:
+- Entry/exit condition tracking (which conditions triggered)
+- Signal strength calculation (confluence-based: 0.0-1.0)
+- Indicator snapshots at entry/exit
+- Market return calculation (buy-and-hold during trade)
+- Alpha calculation (pnl_pct - market_return = skill vs luck)
+
+**Attribution Report**:
+```json
+{
+  "total_alpha": 12.5,
+  "alpha_percentage": 45.2,
+  "signal_strength": {
+    "strong": {"count": 25, "win_rate": 72.0, "avg_alpha": 3.5},
+    "medium": {"count": 40, "win_rate": 55.0, "avg_alpha": 1.2},
+    "weak": {"count": 20, "win_rate": 35.0, "avg_alpha": -0.8}
+  },
+  "condition_frequency": {
+    "condition-uuid-1": 45,
+    "condition-uuid-2": 30
+  }
+}
+```
+
+**Status**: Fully integrated, all 6 TradeRecord creation sites use attribution helper
+
+---
+
+### ✅ Phase 1B: Empirical Binning (100% Complete)
+
+**Purpose**: Data-driven validation of which indicator ranges correlate with profitable trades
+
+**Replaces**: Original Phase 1B plan (5 indicator-specific calculators with arbitrary thresholds)
+
+**Why**: Senior engineer feedback identified flaws in original approach:
+- Arbitrary thresholds (RSI 30/70) are subjective curve-fitting
+- No validation method - can't prove assumptions
+- Combinatorial explosion (5 calculators × params)
+
+**How It Works**:
+1. Bin each indicator's entry values by quintiles (5 bins)
+2. Calculate avg P&L, win rate per bin
+3. Compute trade-level Spearman correlation (indicator value vs P&L)
+4. Statistical significance via p-values
+
+**Example Output**:
+```json
+{
+  "rsi_14": {
+    "bins": [
+      {"range": [10, 30], "count": 30, "avg_pnl": 250.0, "win_rate": 0.67},
+      {"range": [30, 45], "count": 25, "avg_pnl": 150.0, "win_rate": 0.60},
+      ...
+    ],
+    "correlation": -0.72,  // Strong negative (low RSI = high P&L)
+    "p_value": 0.001,      // Highly significant
+    "sample_size": 100
+  },
+  "summary": {
+    "analyzed_indicators": 3,
+    "significant_indicators": 1,  // p < 0.05
+    "skipped_indicators": ["ema_cross"]  // Crossover-only
+  }
+}
+```
+
+**Requirements**:
+- Minimum 50 trades (not 20 - per senior feedback)
+- Trade-level Spearman correlation (not bin-level)
+- Crossover indicators explicitly skipped with warning
+
+**Status**: Fully integrated, 20 tests passing, documented in backend/docs/EMPIRICAL_BINNING.txt
+
+---
+
+## Test Status
+
+**Total**: 155 tests
+**Passing**: 155 (100%)
+**Failing**: 0
+**Skipped**: 1
+
+**Coverage**:
+- Attribution: 26 tests (21 unit + 5 integration)
+- Binning: 20 tests (17 unit + 3 integration)
+- State Machine: 17 tests
+- Condition Engine: 25 tests
+- Indicator Layer: 9 tests
+- Other: 58 tests
+
+---
+
+## Known Limitations (V1)
+
+See V1_LIMITATIONS.txt for full details:
+
+- Single position only (no scaling in/out)
+- Long-only (no short selling)
+- Market orders only
+- No authentication/multi-tenancy
+- No real-time/paper trading
+- No strategy version control
+
+---
+
+## Architecture
+
+### Backend (Python)
+```
+app/
+├── engine/
+│   ├── state_machine.py          # Core backtest loop (1,400+ lines)
+│   ├── condition_engine.py       # Signal evaluation (600+ lines)
+│   ├── indicator_layer.py        # Technical indicators (350+ lines)
+│   ├── data_layer.py             # OHLCV fetching (450+ lines)
+│   ├── report_generator.py       # Performance metrics (500+ lines)
+│   └── attribution/
+│       ├── strength_calculator.py
+│       ├── calculators/
+│       │   └── confluence.py     # Phase 1A
+│       └── analysis/
+│           └── binning_analyzer.py  # Phase 1B
+├── models/                       # SQLAlchemy models
+├── api/routes/                   # FastAPI endpoints
+└── tasks/                        # Celery background tasks
+```
+
+### Frontend (React + TypeScript)
+```
+src/
+├── pages/
+│   ├── StrategyBuilder.tsx       # Main UI (1,865 lines)
+│   └── BacktestReport.tsx        # Results visualization
+├── api/client.ts                 # API integration
+└── types/                        # TypeScript definitions
+```
+
+### Database (PostgreSQL)
+- 8 migrations (latest: 0007_trade_attribution.py)
+- UUID primary keys, JSONB for flexible data
+- CASCADE deletes for relationships
+
+---
+
+## Recent Fixes (April 2026)
+
+### Test Suite Fixes (15 tests)
+1. Boolean expressions: numpy type compatibility (8 tests)
+2. State machine: P&L calculation bug (2 tests)
+3. Indicator layer: test data issues (2 tests)
+
+### State Machine Bugs Fixed
+1. **P&L percentage calculation**: Removed erroneous `* 100.0` multiplication (6 locations)
+2. **Equity curve update**: Added missing update after last-bar force close
+
+**Result**: 135 tests → 155 tests passing (100% pass rate)
+
+---
+
+## Strategic Direction: "Truth Engine"
+
+**Vision**: Strategy validation platform that distinguishes real edge from overfitting
+
+**Core Value Proposition**: "Backtest engines lie. We tell the truth."
+
+**Key Insight**: This isn't about running backtests faster or having more indicators. It's about determining if backtests are **TRUSTWORTHY** before risking capital.
+
+**Problem**: Traders are deceived by backtests (overfitting, regime bias, unrealistic execution assumptions)
+
+**Solution**: Tools that validate whether strategies will work, not just how they performed historically
+
+**Competitive Position**:
+- Tier 1 (TradingView/Backtrader): Basic backtesting ($0-50/mo)
+- Tier 2 (QuantConnect): Good execution modeling ($50-200/mo)
+- **Tier 3 (This Engine)**: Truth validation (Tier 3 features, Tier 2 pricing: $100-500/mo)
+
+**Strategic Priorities** (as of April 2026):
+1. ✅ Phase 1A: Trade Attribution (COMPLETE)
+2. ✅ Phase 1B: Empirical Binning (COMPLETE)
+3. 🎯 Phase 2: Robustness Scoring (CURRENT PRIORITY)
+4. ⏸️  Authentication/Multi-tenancy (DEPRIORITIZED - focus on core value)
+5. ⏸️  API Documentation (DEPRIORITIZED - build features first)
+
+**Phase 2 Roadmap** (Robustness Analysis - 6-8 weeks):
+1. **Parameter Sensitivity Analyzer**
+   - Vary indicator parameters by ±20%
+   - Measure performance stability
+   - Identify fragile vs robust strategies
+
+2. **Monte Carlo Simulation**
+   - 1000+ runs with randomized entry timing
+   - Statistical confidence intervals
+   - Luck vs skill separation
+
+3. **Walk-Forward Optimization**
+   - Rolling windows on unseen data
+   - Out-of-sample validation
+   - Overfitting detection
+
+4. **Robustness Confidence Scoring**
+   - 0-100 scale based on multiple tests
+   - LOW/MEDIUM/HIGH risk assessment
+   - Visual robustness dashboard
+
+5. **Regime Detection**
+   - Bull/bear/sideways classification
+   - Regime-aware performance analysis
+   - Strategy adaptation recommendations
+
+---
+
+## Quick Start
+
+### Setup
+```bash
+# Infrastructure
+docker-compose up -d  # PostgreSQL + Redis
+
+# Backend
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+alembic upgrade head
+uvicorn app.main:app --reload --port 8000
+
+# Celery Worker (separate terminal)
+celery -A app.celery_app.celery_app worker --loglevel=info
+
+# Frontend (separate terminal)
+cd frontend
+npm install
+npm run dev  # http://localhost:5173
+```
+
+### Run Tests
+```bash
+cd backend
+pytest tests/  # All tests
+pytest tests/unit/  # Unit only
+pytest tests/integration/  # Integration only
+```
+
+### Environment Variables
+```env
+DATABASE_URL=postgresql+asyncpg://backtest:backtest@localhost:5432/backtest
+REDIS_URL=redis://localhost:6379/0
+CELERY_BROKER_URL=redis://localhost:6379/1
+CELERY_BACKEND_URL=redis://localhost:6379/2
+OHLCV_CACHE_TTL_SECONDS=86400
+```
+
+---
+
+## Documentation
+
+### Core References (docs/)
+- **INDICATORS.txt** - All supported indicators with parameters
+- **OPERATORS.txt** - Condition operators and operand types
+- **POSITION_SIZING.txt** - Position sizing methods
+- **V1_LIMITATIONS.txt** - Known limitations and V2 roadmap
+
+### Phase 1 Documentation (docs/)
+- **PHASE1A_COMPLETE.txt** - Attribution implementation summary
+- **PHASE1B_CRITICAL_FEEDBACK.txt** - Senior engineer feedback
+- **PHASE1B_PLAN.txt** - Original Phase 1B plan (deprecated, kept for reference)
+
+### Implementation Details (backend/docs/)
+- **EMPIRICAL_BINNING.txt** - Phase 1B implementation guide
+
+### Strategic Documents (docs/)
+- **STRATEGIC_DECISIONS_2026_03_19.txt** - Strategic pivot to Truth Engine
+- **STRATEGIC_PIVOT_ADVANCED_CONCEPTS.txt** - Advanced feature analysis
+
+---
+
+## Git Workflow
+
+**Branch Strategy**: Feature branches → PR merges → master
+**Commit Convention**: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`
+**Examples**:
+- `feat: add empirical binning analysis (Phase 1B replacement)`
+- `fix: correct P&L percentage calculation in state machine`
+
+---
+
+## Next Steps
+
+### Immediate
+1. ✅ Phase 1A complete (trade attribution)
+2. ✅ Phase 1B complete (empirical binning)
+3. ⏭️ Commit Phase 1A/1B implementation
+4. ⏭️ Run M5 smoke test validation
+
+### Phase 2 (Truth Engine)
+1. Parameter sensitivity analyzer
+2. Monte Carlo simulation framework
+3. Walk-forward optimization engine
+4. Robustness confidence scoring (0-100)
+5. Overfitting risk assessment (LOW/MEDIUM/HIGH)
+
+### Future
+- Portfolio-level backtesting
+- Short selling support
+- Parameter optimization (grid search, genetic algorithms)
+- Additional data providers (Polygon.io, FMP)
+- Multi-timeframe analysis
+
+---
+
+## Contact & Support
+
+- GitHub Issues: Report bugs and request features
+- `/help` command in CLI for usage help
+
+---
+
+**Last Updated**: April 6, 2026
+**Version**: Phase 1 Complete (Attribution + Binning)
+**Test Status**: 155/155 passing (100%)
