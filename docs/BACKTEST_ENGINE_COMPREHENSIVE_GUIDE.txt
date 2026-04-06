@@ -2,6 +2,13 @@
                     BACKTEST ENGINE - COMPREHENSIVE GUIDE
 ================================================================================
 
+NOTE: This guide covers core V1 features. For latest updates see:
+- PROJECT_STATUS.txt - Current project status and Phase 1A/1B features
+- backend/docs/EMPIRICAL_BINNING.txt - Phase 1B empirical binning
+- PHASE1A_COMPLETE.txt - Phase 1A trade attribution
+
+Last Updated: March 2026 (Pre-Phase 1A/1B)
+
                             Table of Contents
                             -----------------
 

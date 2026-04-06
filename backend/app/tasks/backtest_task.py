@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.engine.condition_engine import evaluate_conditions, evaluate_expression
 from app.engine.data_layer import fetch_ohlcv_async
 from app.engine.indicator_layer import compute_indicators, trim_warmup_period
-from app.engine.report_generator import generate_report, generate_attribution_report, calculate_buy_and_hold_equity
+from app.engine.report_generator import generate_report, generate_attribution_report, generate_binning_report, calculate_buy_and_hold_equity
 from app.engine.state_machine import run_backtest
 from app.models.backtest import BacktestRun, TradeLog
 from app.models.strategy import ConditionGroup, Strategy
@@ -162,6 +162,25 @@ async def _run_backtest_async(run_id: str) -> None:
                 attribution_report = generate_attribution_report(trades)
                 if attribution_report:
                     report["attribution"] = attribution_report
+
+                # Generate binning analysis report (diagnostic tool)
+                logger.info("Generating binning analysis report")
+                all_conditions = []
+                for group in strategy.condition_groups:
+                    for cond in group.conditions:
+                        all_conditions.append({
+                            "operator": cond.operator,
+                            "left_operand_value": cond.left_operand_value,
+                            "right_operand_value": cond.right_operand_value
+                        })
+
+                binning_report = generate_binning_report(
+                    trades,
+                    indicators,
+                    conditions=all_conditions if all_conditions else None
+                )
+                if binning_report:
+                    report["binning_analysis"] = binning_report
 
             run.report = report
             run.status = "COMPLETE"

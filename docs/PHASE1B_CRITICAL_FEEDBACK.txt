@@ -1,0 +1,677 @@
+================================================================================
+PHASE 1B - CRITICAL FEEDBACK & VALIDATION PLAN
+================================================================================
+
+Date: 2026-04-05
+Source: Senior engineer code review
+Status: PHASE 1B IMPLEMENTATION BLOCKED - VALIDATION REQUIRED FIRST
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+CRITICAL ISSUE:
+The entire Phase 1B plan rests on unvalidated hypotheses. Before writing any
+code, we must empirically validate that:
+
+1. RSI extremity correlates with win rate (RSI=20 better than RSI=29?)
+2. MACD crossover recency correlates with win rate (fresh > stale?)
+3. Indicator-aware strength provides better predictive power than confluence
+
+If these hypotheses don't hold on actual data, Phase 1B adds complexity without
+value - worse than simple confluence because it's harder to reason about.
+
+ACTION REQUIRED:
+Run hypothesis validation analysis FIRST (2-4 hours), then decide whether to
+proceed with Phase 1B, modify it, or skip it entirely.
+
+================================================================================
+CRITICAL FLAWS IDENTIFIED
+================================================================================
+
+FLAW 1: CORE HYPOTHESIS UNVALIDATED
+------------------------------------
+
+ASSUMPTION (unproven):
+"RSI=20 is a stronger signal than RSI=29" → Higher win rate
+
+REALITY CHECK:
+- RSI can sit at 15 for 40 bars in downtrend (not a "strong signal")
+- Indicator extremity ≠ signal quality (trader intuition, not empirical fact)
+- Success criterion #2 checks if strong signals have higher win rates, but we
+  designed the scoring system ASSUMING that correlation exists
+
+CIRCULAR LOGIC:
+1. Design Phase 1B to score RSI=20 as "stronger" than RSI=29
+2. Run backtests with Phase 1B
+3. Check if "strong" signals have higher win rates
+4. But we DEFINED "strong" to mean extreme RSI values
+5. → We're testing our own definition, not validating the hypothesis
+
+CORRECT APPROACH:
+Before Phase 1B, analyze Phase 1A data:
+- Bin RSI values at entry: [0-20], [20-25], [25-28], [28-30], [30+]
+- Calculate win rate per bin
+- Check if win rate INCREASES as RSI goes lower (hypothesis validation)
+- If no correlation → Phase 1B scoring would add noise, not signal
+
+IMPACT IF WRONG:
+Elaborate system that's WORSE than confluence because:
+- More complex (harder to debug, maintain, explain)
+- False confidence (numbers look precise but are meaningless)
+- Misleads users ("strong signal" doesn't actually predict anything)
+
+FLAW 2: CROSSOVER STRENGTH MEASURES WRONG THING
+------------------------------------------------
+
+PROBLEM:
+Attribution is about ENTRY conditions (bar when trade was entered), not current
+bar conditions during the trade.
+
+PHASE 1B SPEC (flawed):
+- Calculate crossover strength with decay: 1 bar ago → 0.86, 3 bars ago → 0.64
+- If trade entered at bar 100 (MACD crossed at bar 97)
+- At bar 108 (during trade), crossover is now 11 bars old → strength ~0.20
+- Trade exits at bar 110
+- Attribution captures strength=0.20 (wrong - should be strength at entry)
+
+CORRECT BEHAVIOR:
+- Trade entered at bar 100
+- MACD crossed at bar 97 (3 bars before entry)
+- Strength at entry = 0.64 (3 bars decay)
+- This strength is FIXED for attribution, regardless of exit bar
+- Don't recalculate strength during trade - capture it at entry only
+
+CURRENT PHASE 1B SPEC:
+Doesn't specify WHEN strength is calculated. Implementation would likely
+calculate it wrong (at current bar instead of entry bar).
+
+FIX REQUIRED:
+Clarify in spec: "Capture strength at ENTRY bar, freeze it for trade record"
+
+FLAW 3: HYBRID CALCULATOR CIRCULAR DEPENDENCY
+----------------------------------------------
+
+CODE (fragile):
+```python
+class HybridStrengthCalculator:
+    def __init__(self):
+        self.volatility_calc = VolatilityAdjustedCalculator(self)  # CIRCULAR!
+```
+
+PROBLEM:
+- VolatilityAdjustedCalculator expects a base_calculator
+- Passing self creates circular dependency
+- Calling self.volatility_calc.calculate_strength() would infinite loop
+- Current spec only calls _volatility_adjustment() (private method), which works
+- But this is structurally fragile and breaks expected interface
+
+CORRECT APPROACH:
+Don't wrap HybridCalculator in VolatilityAdjusted. Instead:
+```python
+class HybridStrengthCalculator:
+    def calculate_strength(...):
+        base_strength = self._calculate_base_strength(...)
+        if should_apply_volatility_adjustment:
+            return self._apply_volatility_adjustment(base_strength, df, bar)
+        return base_strength
+```
+
+Volatility adjustment is a feature OF HybridCalculator, not a wrapper around it.
+
+FLAW 4: HYBRID AVERAGING IS INCOHERENT
+---------------------------------------
+
+PROBLEM:
+Averaging continuous scores (0.0-1.0 from oscillators) with binary scores
+(0.0 or 1.0 from unknown indicators) produces meaningless results.
+
+EXAMPLE:
+Strategy: "RSI < 30 AND price > SMA_200"
+- RSI=20 → oscillator strength = 0.33
+- price > SMA → unknown indicator → binary fallback = 1.0 (condition met)
+- Average = (0.33 + 1.0) / 2 = 0.665
+
+Different strategy: "RSI < 30 AND ADX > 25"
+- RSI=20 → oscillator strength = 0.33
+- ADX=40 → momentum strength = 0.67
+- Average = (0.33 + 0.67) / 2 = 0.50
+
+Why is the first strategy (0.665) "stronger" when the SMA condition contributed
+nothing but a binary "yes"? The scales are incompatible.
+
+CORRECT APPROACH:
+Options:
+1. Exclude binary fallback conditions from average (only average known indicators)
+2. Use weighted average (known indicators weight=1.0, fallback weight=0.5)
+3. Convert binary to continuous: If condition met but no strength calc available → 0.5 (neutral)
+
+FLAW 5: BOUNDED OSCILLATOR CONTRADICTION
+-----------------------------------------
+
+SPEC SAYS:
+"Neutral zone (30-70): strength = 0.0"
+
+TEST TABLE SAYS:
+"RSI > 50 with RSI=60 → strength ~0.5 (neutral)"
+
+PSEUDOCODE SAYS:
+```python
+else:
+    return 0.0  # Neutral zone - no strength
+```
+
+CONTRADICTION:
+Tests expect 0.5, code returns 0.0. Tests will fail against own implementation.
+
+FIX REQUIRED:
+Decide: Is neutral zone 0.0 (no strength) or 0.5 (satisfied but not extreme)?
+
+RECOMMENDATION: 0.5 (satisfied but not extreme) is more coherent with continuous scale.
+
+FLAW 6: TIMEFRAME SENSITIVITY ABSENT
+-------------------------------------
+
+PROBLEM:
+RSI thresholds 30/70 are conventions for DAILY charts.
+- 15-minute chart: RSI touches 30 every few hours (not extreme)
+- Weekly chart: RSI < 30 is rare (very extreme)
+- Same calculator applied to both → incomparable scores
+
+EXAMPLE:
+Daily strategy: RSI < 30, RSI=25 → strength = 0.167 (mild oversold)
+15-min strategy: RSI < 30, RSI=25 → strength = 0.167 (not actually extreme for this timeframe)
+
+Apples vs oranges comparison.
+
+FIX REQUIRED:
+Either:
+1. Don't compare strength scores across different timeframes (document limitation)
+2. Normalize thresholds by timeframe (complex, probably not worth it)
+3. Accept that Phase 1B only works well for single-timeframe analysis
+
+FLAW 7: FORMULA IGNORES STRATEGY THRESHOLDS
+--------------------------------------------
+
+PROBLEM:
+Calculator hardcodes oversold=30, but strategy might use RSI < 25 (more conservative).
+
+CURRENT FORMULA:
+strength = 1.0 - (value / 30)
+RSI=24 → strength = 0.20
+
+But for "RSI < 25" strategy, RSI=24 is MAXIMUM satisfaction (just barely met).
+Should have high strength, not 0.20.
+
+CORRECT APPROACH:
+Normalize to strategy's actual threshold:
+```python
+threshold = float(condition.right_operand_value)  # e.g., 25
+strength = 1.0 - (value / threshold)
+RSI=24 with threshold=25 → strength = 0.04 (just satisfied)
+RSI=10 with threshold=25 → strength = 0.60 (well into extreme)
+```
+
+Denominator should be the condition's threshold, not a hardcoded default.
+
+================================================================================
+WHAT'S ACTUALLY SOUND IN THE PLAN
+================================================================================
+
+✅ Pluggable registry architecture
+✅ Build order (oscillator → crossover → hybrid)
+✅ Backward compatibility via rollback
+✅ No database schema changes
+✅ Test coverage approach (50+ tests)
+✅ Incremental implementation steps
+
+These aren't the problem. The algorithms themselves are the issue.
+
+================================================================================
+VALIDATION PLAN (DO THIS FIRST)
+================================================================================
+
+BEFORE writing any Phase 1B code, run empirical validation on Phase 1A data.
+
+STEP 1: EXTRACT PHASE 1A TRADE DATA (30 minutes)
+-------------------------------------------------
+
+Goal: Get all trades with entry attribution data
+
+SQL Query:
+```sql
+SELECT
+    tl.entry_date,
+    tl.exit_date,
+    tl.pnl_pct,
+    tl.entry_conditions_met,
+    tl.entry_signal_strength,
+    tl.indicator_snapshot_entry,
+    br.strategy_id
+FROM trade_logs tl
+JOIN backtest_runs br ON tl.backtest_run_id = br.id
+WHERE br.enable_attribution = true
+  AND tl.entry_conditions_met IS NOT NULL;
+```
+
+Output: CSV with ~100-1000+ trades (need sufficient sample size)
+
+STEP 2: INDICATOR VALUE BINNING (1 hour)
+-----------------------------------------
+
+For each trade, extract indicator values at entry from indicator_snapshot_entry.
+
+RSI ANALYSIS:
+Bin RSI values: [0-20], [20-25], [25-28], [28-30], [30+]
+For each bin, calculate:
+- Count of trades
+- Win rate (% profitable)
+- Avg P&L
+- Avg alpha (if available)
+
+EXPECTED IF HYPOTHESIS IS TRUE:
+| RSI Bin  | Count | Win Rate | Avg P&L |
+|----------|-------|----------|---------|
+| 0-20     | 15    | 75%      | +3.2%   |  ← "Strong" signals
+| 20-25    | 32    | 68%      | +2.5%   |
+| 25-28    | 45    | 62%      | +1.8%   |
+| 28-30    | 28    | 55%      | +1.2%   |
+| 30+      | 12    | 45%      | -0.5%   |  ← "Weak" signals
+
+Win rate should DECREASE as RSI increases (less oversold).
+
+HYPOTHESIS VALIDATED IF:
+- Win rate difference between best and worst bin > 15%
+- Trend is monotonic (each bin worse than previous)
+- Statistical significance (chi-square test, p < 0.05)
+
+HYPOTHESIS FAILS IF:
+- Win rates are similar across bins (±5%)
+- Trend is non-monotonic (random)
+- Not statistically significant
+
+MACD CROSSOVER RECENCY ANALYSIS:
+For trades with MACD cross conditions, calculate bars_since_cross.
+Bin: [0], [1], [2-3], [4-5], [6+]
+Same analysis: count, win rate, avg P&L per bin.
+
+EXPECTED IF HYPOTHESIS IS TRUE:
+| Bars Since Cross | Count | Win Rate |
+|------------------|-------|----------|
+| 0 (same bar)     | 8     | 70%      |  ← Fresh cross
+| 1                | 25    | 65%      |
+| 2-3              | 42    | 58%      |
+| 4-5              | 18    | 50%      |
+| 6+               | 10    | 45%      |  ← Stale cross
+
+Win rate should DECREASE as crossover ages.
+
+STEP 3: STATISTICAL VALIDATION (30 minutes)
+--------------------------------------------
+
+For each hypothesis test:
+
+Chi-Square Test:
+```python
+from scipy.stats import chi2_contingency
+
+# RSI bins vs win/loss
+contingency_table = [
+    [rsi_0_20_wins, rsi_0_20_losses],
+    [rsi_20_25_wins, rsi_20_25_losses],
+    [rsi_25_28_wins, rsi_25_28_losses],
+    ...
+]
+
+chi2, p_value, dof, expected = chi2_contingency(contingency_table)
+
+if p_value < 0.05:
+    print("Hypothesis validated: RSI extremity predicts win rate")
+else:
+    print("Hypothesis FAILED: RSI extremity does NOT predict win rate")
+```
+
+Trend Analysis:
+```python
+from scipy.stats import spearmanr
+
+# Correlation between RSI value and win rate
+correlation, p_value = spearmanr(rsi_values, win_loss_binary)
+
+if correlation < -0.2 and p_value < 0.05:
+    print("Negative correlation confirmed: Lower RSI → higher win rate")
+else:
+    print("No meaningful correlation")
+```
+
+STEP 4: DECISION MATRIX (30 minutes)
+-------------------------------------
+
+Based on validation results:
+
+SCENARIO A: HYPOTHESES VALIDATED (win rate stratifies by indicator extremity)
+→ Proceed with Phase 1B as planned
+→ Adjust formulas to fix identified flaws (threshold normalization, etc.)
+→ Implement with confidence
+
+SCENARIO B: HYPOTHESES PARTIALLY VALIDATED (some indicators stratify, others don't)
+→ Implement selective Phase 1B
+→ Only apply indicator-aware scoring to validated indicators (e.g., RSI works, MACD doesn't)
+→ Fall back to confluence for unvalidated indicators
+
+SCENARIO C: HYPOTHESES FAIL (no win rate stratification)
+→ SKIP Phase 1B entirely
+→ Keep simple confluence scoring (Phase 1A)
+→ Proceed directly to Phase 2 (robustness analysis)
+→ Document finding: "Indicator extremity doesn't predict signal quality in our data"
+
+SCENARIO D: INSUFFICIENT DATA (< 50 trades per bin)
+→ Collect more data (run more backtests with attribution)
+→ Revisit validation in 2-4 weeks
+→ Meanwhile, start Phase 2 with Phase 1A attribution
+
+================================================================================
+REVISED PHASE 1B SCOPE (IF VALIDATION PASSES)
+================================================================================
+
+If validation confirms hypotheses, implement Phase 1B with these corrections:
+
+CORRECTION 1: CAPTURE STRENGTH AT ENTRY BAR ONLY
+-------------------------------------------------
+
+In state_machine.py, when entry signal triggers:
+```python
+def _capture_entry_attribution(self, bar_idx, df, ...):
+    # Calculate strength AT THIS BAR (entry bar)
+    strength = registry.calculate_strength(conditions, df, bar_idx)
+
+    # Store in trade record (frozen for entire trade)
+    self.pending_trade_attribution = {
+        'entry_bar': bar_idx,
+        'entry_signal_strength': strength,  # FIXED at entry
+        ...
+    }
+```
+
+Don't recalculate during trade. Use entry bar value for attribution.
+
+CORRECTION 2: NORMALIZE TO STRATEGY THRESHOLDS
+-----------------------------------------------
+
+Extract threshold from condition, not hardcoded:
+```python
+def _calculate_oversold_strength(self, condition, value):
+    threshold = float(condition.right_operand_value)  # e.g., 25
+    strength = 1.0 - (value / threshold)
+    return max(0.0, strength)  # Clamp to 0.0 minimum
+```
+
+CORRECTION 3: COHERENT AVERAGING
+---------------------------------
+
+Option A: Exclude binary fallback from average
+```python
+known_strengths = [s for s in condition_strengths if s is not None]
+if known_strengths:
+    return sum(known_strengths) / len(known_strengths)
+else:
+    return 0.5  # All conditions unknown, neutral
+```
+
+Option B: Convert binary to neutral
+```python
+# If condition met but no strength calc available
+fallback_strength = 0.5  # Neutral (not 1.0)
+```
+
+CORRECTION 4: FIX NEUTRAL ZONE STRENGTH
+----------------------------------------
+
+Neutral zone should return 0.5 (satisfied but not extreme), not 0.0:
+```python
+else:
+    # Neutral zone - condition satisfied but not extreme
+    return 0.5
+```
+
+CORRECTION 5: REMOVE CIRCULAR DEPENDENCY
+-----------------------------------------
+
+Volatility adjustment as method, not wrapper:
+```python
+class HybridStrengthCalculator:
+    def calculate_strength(self, ...):
+        base_strength = self._calculate_base_strength(...)
+
+        if self._should_apply_volatility_adjustment(df):
+            volatility_factor = self._calculate_volatility_factor(df, bar)
+            return base_strength * volatility_factor
+
+        return base_strength
+
+    def _calculate_volatility_factor(self, df, bar):
+        # ATR-based adjustment logic here
+        ...
+```
+
+CORRECTION 6: DOCUMENT TIMEFRAME LIMITATION
+--------------------------------------------
+
+In Phase 1B docs:
+"Signal strength scores are timeframe-specific. Do not compare strength scores
+from daily strategies with 15-minute strategies. Thresholds (RSI 30/70) are
+calibrated for daily charts and may not apply to intraday."
+
+================================================================================
+VALIDATION SCRIPT OUTLINE
+================================================================================
+
+Create: /backend/scripts/validate_phase1b_hypothesis.py
+
+```python
+#!/usr/bin/env python3
+"""
+Validate Phase 1B hypotheses before implementation.
+
+Hypothesis 1: Lower RSI at entry correlates with higher win rate
+Hypothesis 2: Recent MACD crossovers correlate with higher win rate
+Hypothesis 3: Indicator-aware scoring predicts win rate better than confluence
+
+If hypotheses fail, Phase 1B should not be implemented.
+"""
+
+import pandas as pd
+import asyncio
+from sqlalchemy import select
+from app.core.database import get_session
+from app.models.backtest import TradeLog, BacktestRun
+from scipy.stats import chi2_contingency, spearmanr
+import json
+
+async def extract_trade_data():
+    """Extract all Phase 1A trades with attribution data."""
+    async with get_session() as session:
+        stmt = select(TradeLog, BacktestRun).join(
+            BacktestRun, TradeLog.backtest_run_id == BacktestRun.id
+        ).where(
+            BacktestRun.enable_attribution == True,
+            TradeLog.entry_conditions_met.isnot(None)
+        )
+
+        result = await session.execute(stmt)
+        trades = result.all()
+
+    # Convert to DataFrame
+    data = []
+    for trade, backtest in trades:
+        indicator_snapshot = json.loads(trade.indicator_snapshot_entry or '{}')
+        data.append({
+            'entry_date': trade.entry_date,
+            'exit_date': trade.exit_date,
+            'pnl_pct': trade.pnl_pct,
+            'is_win': trade.pnl_pct > 0,
+            'entry_signal_strength': trade.entry_signal_strength,
+            'indicators': indicator_snapshot
+        })
+
+    return pd.DataFrame(data)
+
+def analyze_rsi_hypothesis(df):
+    """Test: Does lower RSI correlate with higher win rate?"""
+    # Extract RSI values (find RSI columns)
+    rsi_cols = [col for col in df.iloc[0]['indicators'].keys() if 'rsi' in col.lower()]
+
+    if not rsi_cols:
+        print("No RSI data found, skipping RSI hypothesis")
+        return
+
+    # Use first RSI column found
+    rsi_col = rsi_cols[0]
+    df['rsi_value'] = df['indicators'].apply(lambda x: x.get(rsi_col))
+
+    # Bin RSI values
+    df['rsi_bin'] = pd.cut(df['rsi_value'],
+                            bins=[0, 20, 25, 28, 30, 100],
+                            labels=['0-20', '20-25', '25-28', '28-30', '30+'])
+
+    # Calculate win rate per bin
+    rsi_analysis = df.groupby('rsi_bin').agg({
+        'is_win': ['count', 'sum', 'mean'],
+        'pnl_pct': 'mean'
+    }).round(3)
+
+    print("\n" + "="*60)
+    print("RSI HYPOTHESIS VALIDATION")
+    print("="*60)
+    print(rsi_analysis)
+
+    # Chi-square test
+    contingency = pd.crosstab(df['rsi_bin'], df['is_win'])
+    chi2, p_value, dof, expected = chi2_contingency(contingency)
+
+    print(f"\nChi-square test: χ²={chi2:.3f}, p-value={p_value:.4f}")
+
+    # Correlation test
+    correlation, corr_p = spearmanr(df['rsi_value'].dropna(),
+                                     df['is_win'])
+    print(f"Spearman correlation: r={correlation:.3f}, p-value={corr_p:.4f}")
+
+    # Verdict
+    if p_value < 0.05 and correlation < -0.15:
+        print("\n✅ HYPOTHESIS VALIDATED: Lower RSI predicts higher win rate")
+        return True
+    else:
+        print("\n❌ HYPOTHESIS FAILED: No significant correlation")
+        return False
+
+def analyze_macd_crossover_hypothesis(df):
+    """Test: Do recent MACD crossovers correlate with higher win rate?"""
+    # TODO: Extract MACD crossover recency from conditions_met
+    # For now, placeholder
+    print("\n" + "="*60)
+    print("MACD CROSSOVER HYPOTHESIS VALIDATION")
+    print("="*60)
+    print("(Not implemented - requires crossover detection logic)")
+    return None
+
+def main():
+    print("Phase 1B Hypothesis Validation")
+    print("="*60)
+
+    # Extract data
+    df = asyncio.run(extract_trade_data())
+    print(f"\nExtracted {len(df)} trades with attribution data")
+
+    if len(df) < 50:
+        print("\n⚠️  WARNING: Insufficient data for validation (need 50+ trades)")
+        print("Collect more backtest data before proceeding with Phase 1B")
+        return
+
+    # Test hypotheses
+    rsi_validated = analyze_rsi_hypothesis(df)
+    macd_validated = analyze_macd_crossover_hypothesis(df)
+
+    # Final verdict
+    print("\n" + "="*60)
+    print("FINAL VERDICT")
+    print("="*60)
+
+    if rsi_validated:
+        print("✅ Proceed with Phase 1B implementation")
+        print("   Indicator-aware scoring is empirically justified")
+    else:
+        print("❌ DO NOT implement Phase 1B")
+        print("   Simple confluence scoring is sufficient")
+        print("   Proceed directly to Phase 2 (robustness analysis)")
+
+if __name__ == '__main__':
+    main()
+```
+
+Run with:
+```bash
+cd backend
+python scripts/validate_phase1b_hypothesis.py
+```
+
+================================================================================
+TIMELINE ADJUSTMENT
+================================================================================
+
+ORIGINAL PLAN:
+Phase 1B → 8-12 hours implementation
+
+REVISED PLAN:
+1. Hypothesis validation: 2-4 hours
+2. Decision point (go/no-go)
+3. If GO: Phase 1B implementation: 8-12 hours (with corrections)
+4. If NO-GO: Skip to Phase 2: 0 hours wasted
+
+TOTAL: 2-4 hours for validation (vs 8-12 hours for blind implementation)
+
+================================================================================
+RECOMMENDATION
+================================================================================
+
+**DO NOT implement Phase 1B yet.**
+
+**INSTEAD:**
+1. Create validation script (2 hours)
+2. Run hypothesis tests on Phase 1A data (30 minutes)
+3. Review results (30 minutes)
+4. Make informed decision:
+   - VALIDATED → Implement Phase 1B with corrections
+   - FAILED → Skip Phase 1B, proceed to Phase 2
+   - INSUFFICIENT DATA → Collect more data, revisit later
+
+This approach:
+- Saves 8-12 hours if hypothesis fails
+- Provides empirical justification if hypothesis validates
+- Builds on actual data, not intuition
+- Follows scientific method (test hypothesis before building on it)
+
+================================================================================
+CONCLUSION
+================================================================================
+
+Your senior is correct. Phase 1B plan was premature.
+
+The core insight: "Don't build elaborate systems on unvalidated assumptions."
+
+**NEXT STEP: Run validation analysis FIRST.**
+
+If validation passes → Implement Phase 1B (with corrections)
+If validation fails → Skip Phase 1B, go to Phase 2 (robustness analysis)
+
+Either way, we save time and build on solid ground.
+
+================================================================================
+END OF CRITICAL FEEDBACK ANALYSIS
+================================================================================
+
+Created: 2026-04-05
+Status: PHASE 1B BLOCKED pending hypothesis validation
+Next: Create and run validation script
+Priority: HIGH (blocks Phase 2 roadmap)
+
+================================================================================

@@ -219,6 +219,11 @@ def test_unique_aliases_allowed() -> None:
     """
     df = make_df()
 
+    # Add some variation to close prices so RSI values differ
+    # Make it oscillate to generate meaningful RSI values
+    import numpy as np
+    df['close'] = df['close'] + 5 * np.sin(np.arange(len(df)) / 10)
+
     # Multiple indicators with unique aliases
     indicators = [
         {
@@ -280,5 +285,7 @@ def test_obv() -> None:
         ],
     )
     assert "obv" in out.columns
-    # OBV is cumulative, so should not have NaNs
-    assert out["obv"].isna().sum() == 0
+    # OBV has 1 NaN at first bar (pandas-ta behavior), rest should be valid
+    assert out["obv"].isna().sum() == 1
+    assert out["obv"].iloc[0] != out["obv"].iloc[0]  # First value is NaN
+    assert_no_recent_nans(out["obv"])

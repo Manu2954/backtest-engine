@@ -11,6 +11,7 @@ yfinance
 pandas
 pandas-ta
 numpy
+scipy
 msgpack
 httpx
 pytest
