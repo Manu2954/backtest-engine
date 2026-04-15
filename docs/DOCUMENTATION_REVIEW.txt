@@ -1,0 +1,83 @@
+# Documentation Review Summary
+
+## Status: Complete ✅
+
+### ✅ Reviewed and Up-to-Date
+
+**INDICATORS.txt**
+- All 11 indicators documented
+- Parameters, examples, and use cases complete
+- No updates needed
+
+**OPERATORS.txt**
+- All 9 operators documented
+- All 4 operand types documented
+- ⚠️ NEEDS UPDATE: Missing Boolean Expression feature (combining condition groups with &&, ||, !)
+
+**POSITION_SIZING.txt**
+- All 4 modes documented correctly (full_capital, percent_capital, fixed_amount, risk_based)
+- No updates needed
+
+**V1_LIMITATIONS.txt** ✅
+- Updated generated date: 2026-04-06
+- Updated status line to reflect Phase 2 focus
+- Removed risk-based from missing position sizing methods
+- Updated data sources section (now includes Binance)
+- Updated condition engine section (now includes boolean expressions, lookback)
+- Added Calmar ratio to current metrics
+- Added authentication deprioritization note
+
+**PHASE1A_COMPLETE.txt** ✅
+- Updated to reflect 100% completion status
+- Updated test count: 155/155 passing
+- Updated helper function details (consolidated to single helper)
+- Updated Phase 1B section to reflect empirical binning replacement
+
+**PHASE1B_PLAN.txt** ✅
+- Added deprecation notice at top
+- Explained why approach was rejected
+- Pointed to EMPIRICAL_BINNING.txt for actual implementation
+
+### ✅ Already Updated
+
+**PROJECT_STATUS.txt** - New comprehensive status doc (created April 6, 2026)
+**BACKTEST_ENGINE_COMPREHENSIVE_GUIDE.txt** - Added note about being pre-Phase 1A/1B
+**backend/docs/EMPIRICAL_BINNING.txt** - New Phase 1B doc (created April 6, 2026)
+
+### 📌 Strategic/Research Docs (No Changes Needed)
+
+- STRATEGIC_DECISIONS_2026_03_19.txt
+- STRATEGIC_PIVOT_ADVANCED_CONCEPTS.txt
+- SMC_*.txt (3 files)
+- LIVE_TRADING_*.txt (2 files)
+- ORDER_BLOCK_DETECTION_RESEARCH.txt
+- PHASE1B_CRITICAL_FEEDBACK.txt
+
+---
+
+## Remaining Updates Needed
+
+### 1. OPERATORS.txt - Add Boolean Expressions Section
+
+Add section explaining:
+- Combining condition groups with expressions
+- Operators: && (AND), || (OR), ! (NOT)
+- Parentheses grouping: `(A && B) || C`
+- Example: `oversold && trending || volume_surge`
+
+---
+
+## Documentation Cleanup Summary
+
+**Before**: 40+ documentation files (many outdated session summaries)
+**After**: 17 essential documentation files
+**Deleted**: 23 files (session summaries, step-by-step guides, outdated status docs)
+**Updated**: 3 files (V1_LIMITATIONS.txt, PHASE1A_COMPLETE.txt, PHASE1B_PLAN.txt)
+**Created**: 2 new files (PROJECT_STATUS.txt, DOCUMENTATION_REVIEW.txt)
+
+---
+
+## Review Completed
+
+All documentation has been reviewed and updated as of April 6, 2026.
+Only remaining task: Add Boolean Expressions section to OPERATORS.txt

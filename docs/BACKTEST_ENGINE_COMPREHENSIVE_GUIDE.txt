@@ -2,12 +2,13 @@
                     BACKTEST ENGINE - COMPREHENSIVE GUIDE
 ================================================================================
 
-NOTE: This guide covers core V1 features. For latest updates see:
-- PROJECT_STATUS.txt - Current project status and Phase 1A/1B features
-- backend/docs/EMPIRICAL_BINNING.txt - Phase 1B empirical binning
-- PHASE1A_COMPLETE.txt - Phase 1A trade attribution
+Last Updated: April 2026 (Includes Phase 1A/1B and Phase 2A features)
 
-Last Updated: March 2026 (Pre-Phase 1A/1B)
+For additional documentation see:
+- PROJECT_STATUS.txt - Current project status and strategic direction
+- backend/docs/EMPIRICAL_BINNING.txt - Technical details on binning implementation
+- PHASE1A_COMPLETE.txt - Trade attribution implementation details
+- PHASE2_PLAN.txt - Robustness analysis roadmap
 
                             Table of Contents
                             -----------------
@@ -34,6 +35,12 @@ PART III: PRACTICAL APPLICATIONS
           3.2  Strategy Development Workflow
           3.3  Performance Optimization
           3.4  Extending the System
+
+PART IV:  ADVANCED FEATURES
+          4.1  Trade Attribution System (Phase 1A)
+          4.2  Empirical Binning Analysis (Phase 1B)
+          4.3  Combining Attribution & Binning
+          4.4  Parameter Sensitivity Analysis (Phase 2A)  ← NEW
 
 ================================================================================
                         PART I: USER PERSPECTIVE
@@ -82,14 +89,42 @@ C. CONDITIONS
 
 D. CONDITION GROUPS
    Collections of conditions combined with AND/OR logic.
+   Groups can be further combined using boolean expressions (&&, ||, !) for
+   complex logic like: (oversold && trending) || breakout
 
-E. BACKTEST RUN
+E. TRADE ATTRIBUTION (Phase 1A)
+   Analysis system that tracks which conditions trigger trades and measures
+   signal strength to distinguish skill from luck. For each trade:
+   - Captures which conditions were met at entry/exit
+   - Calculates signal strength (0.0-1.0) based on confluence
+   - Measures market return during trade (buy-and-hold baseline)
+   - Computes alpha (trade return - market return)
+   - Records indicator snapshots at entry/exit points
+
+F. EMPIRICAL BINNING (Phase 1B)
+   Data-driven validation that shows which indicator ranges correlate with
+   profitable trades. After 50+ trades:
+   - Bins each indicator's values into quintiles
+   - Calculates average P&L per bin
+   - Computes Spearman correlation (indicator value vs P&L)
+   - Identifies statistically significant predictors
+
+G. ROBUSTNESS ANALYSIS (Phase 2A)
+   Parameter sensitivity testing to identify fragile vs robust strategies:
+   - Varies each indicator parameter by ±20% (configurable)
+   - Runs baseline + variant backtests in parallel
+   - Calculates stability score using Coefficient of Variation
+   - Classifies as ROBUST (≥0.8), MODERATE (0.6-0.8), or FRAGILE (<0.6)
+   - Generates risk flags and deployment recommendations
+
+H. BACKTEST RUN
    A single test of a strategy against historical data for a specific:
    - Ticker symbol
    - Date range
    - Initial capital
    - Position sizing rules
    - Risk management settings
+   - Attribution settings (optional)
 
 
 1.3 CREATING A TRADING STRATEGY
@@ -282,10 +317,18 @@ OPTIONAL PARAMETERS:
     - "percent_capital": Use X% of total capital (value = percentage)
     - "fixed_amount": Use fixed dollar amount per trade (value = dollars)
     - "risk_based": Size based on risk percentage and stop distance
+                    (value = risk % of equity to risk per trade)
+
+      Risk-based sizing calculates position size as:
+      Position Size = (Equity × Risk%) / Stop Distance%
+
+      Example: $10,000 equity, 2% risk, 5% stop loss
+      → Position Size = ($10,000 × 0.02) / 0.05 = $4,000
 
   Risk Management:
     - stop_loss_pct:    Exit if price drops X% from entry
     - take_profit_pct:  Exit if price rises X% from entry
+    - dynamic_stop_loss: Indicator-based trailing stop (e.g., ATR-based)
 
   Transaction Costs:
     - commission_per_trade: Fixed cost per trade (e.g., $5)
@@ -297,6 +340,17 @@ OPTIONAL PARAMETERS:
     - frequency:    "daily", "weekly", "monthly", "interval_days"
     - interval_days: Custom interval (if frequency = "interval_days")
     - include_start: Whether to contribute on first bar
+
+  Attribution Analysis (enable_attribution):
+    - true (default): Capture trade attribution data
+    - false:          Skip attribution (slightly faster)
+
+    When enabled, each trade captures:
+    - Which conditions triggered entry/exit
+    - Signal strength (0.0-1.0)
+    - Market return during trade
+    - Alpha (trade return - market return)
+    - Indicator snapshots at entry/exit
 
 
 1.5 UNDERSTANDING RESULTS
@@ -344,6 +398,43 @@ Each trade records:
   - exit_reason: "signal", "stop_loss", "take_profit", "trailing_stop",
                  "force_close"
 
+  Attribution fields (if enabled):
+  - entry_conditions_met: List of condition UUIDs that triggered entry
+  - exit_conditions_met: List of condition UUIDs that triggered exit
+  - entry_signal_strength: Signal strength at entry (0.0-1.0)
+  - market_return_during_trade: Buy-and-hold return for same period
+  - alpha: Trade return - market return (skill vs luck)
+  - indicator_snapshot_entry: All indicator values at entry
+  - indicator_snapshot_exit: All indicator values at exit
+
+ATTRIBUTION REPORT (Phase 1A):
+Strategy-level insights when attribution is enabled:
+  - total_alpha: Sum of alpha across all trades
+  - alpha_percentage: What % of returns came from skill vs market
+  - signal_strength breakdown:
+    * Strong signals (>0.7): Count, win rate, avg alpha
+    * Medium signals (0.3-0.7): Count, win rate, avg alpha
+    * Weak signals (<0.3): Count, win rate, avg alpha
+  - condition_frequency: How often each condition triggered
+
+  Key Insight: Are your strong signals actually better performers?
+
+BINNING ANALYSIS (Phase 1B):
+Indicator validation report (requires 50+ trades):
+  For each indicator used in entry conditions:
+  - Quintile bins showing:
+    * Value range (e.g., RSI 10-30)
+    * Trade count in that range
+    * Average P&L in that range
+    * Win rate in that range
+  - Spearman correlation (indicator value vs P&L)
+  - Statistical significance (p-value)
+  - Summary identifying strongest predictors
+
+  Example: "RSI has -0.72 correlation (p<0.001) - lower RSI = higher profits"
+
+  Key Insight: Which indicator ranges actually correlate with profitable trades?
+
 
 1.6 SUPPORTED FEATURES
 ----------------------
@@ -354,7 +445,17 @@ A. ASSET CLASSES
 
 B. DATA PROVIDERS
    - YFinance: Stocks, ETFs, indices, and crypto (BTC-USD format)
+     * Free tier, rate limited
+     * Intraday data limited to 60 days for stocks
+     * Adjusted for splits/dividends
+
    - Binance: Cryptocurrency pairs (BTCUSDT format)
+     * Direct exchange data feed
+     * Full historical depth
+     * Multiple resolution support
+     * IST timezone support
+
+   Provider is automatically selected based on asset_class parameter.
 
 C. TIME RESOLUTIONS
    Stocks: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
@@ -374,24 +475,51 @@ D. TECHNICAL INDICATORS
    - OBV (On-Balance Volume)
 
 E. POSITION SIZING METHODS
-   - Full capital
-   - Percentage of capital
-   - Fixed dollar amount
-   - Risk-based (Kelly-style)
+   - Full capital: Invests entire available cash balance
+   - Percentage of capital: Fixed % of total equity (e.g., 10%)
+   - Fixed dollar amount: Same dollar amount per trade
+   - Risk-based: Size based on risk % and stop distance
+                 Position Size = (Equity × Risk%) / Stop Distance%
 
 F. RISK MANAGEMENT
-   - Fixed stop loss (percentage)
-   - Fixed take profit (percentage)
-   - Dynamic trailing stop (indicator-based)
+   - Fixed stop loss (percentage from entry price)
+   - Fixed take profit (percentage from entry price)
+   - Dynamic trailing stop (indicator-based, e.g., ATR trailing)
 
 G. TRANSACTION COSTS
-   - Fixed commission per trade
-   - Percentage commission
-   - Slippage simulation
+   - Fixed commission per trade (e.g., $5)
+   - Percentage commission (e.g., 0.1% of trade value)
+   - Slippage simulation (percentage price impact)
 
 H. PERIODIC CONTRIBUTIONS
    - Daily, weekly, monthly, or custom interval
-   - Simulates regular investing/DCA
+   - Dollar-cost averaging simulation
+
+I. ADVANCED LOGIC FEATURES
+   - LOOKBACK operand: Compare current vs historical values
+     Example: "rsi_14 > rsi_14:-5" (RSI higher than 5 bars ago)
+
+   - Boolean expressions: Combine condition groups with &&, ||, !
+     Example: "(oversold && trending) || breakout"
+
+   - Crossover detection: CROSSES_ABOVE, CROSSES_BELOW operators
+   - Trend detection: IS_RISING, IS_FALLING operators
+
+J. ATTRIBUTION & VALIDATION (Phase 1A/1B)
+   - Trade-level attribution: Track which conditions drive profitability
+   - Signal strength scoring: Measure confluence (0.0-1.0)
+   - Alpha calculation: Separate skill from market movement
+   - Empirical binning: Validate indicator effectiveness with statistics
+   - Correlation analysis: Spearman correlation per indicator
+   - Significance testing: Identify statistically valid predictors
+
+K. ROBUSTNESS ANALYSIS (Phase 2A)
+   - Parameter sensitivity testing: Vary params by ±20%
+   - Stability scoring: Coefficient of Variation across variants
+   - Robustness classification: ROBUST / MODERATE / FRAGILE
+   - Risk flag generation: Specific warnings about fragility
+   - Parallel execution: Variant backtests run concurrently via Celery
+   - Actionable recommendations: Deploy / caution / do not deploy
 
 
 ================================================================================
@@ -507,18 +635,26 @@ STAGE 4: CONDITION EVALUATION (condition_engine.py)
 ┌────────────────────────────────────────────────────────────────────────┐
 │                                                                        │
 │  1. For each condition in a group:                                     │
-│     └─ Resolve left operand to Series/scalar                           │
-│     └─ Resolve right operand to Series/scalar                          │
-│     └─ Apply operator → Boolean Series                                 │
+│     └─ Resolve left operand to Series/scalar (INDICATOR/OHLCV/SCALAR) │
+│     └─ Resolve right operand to Series/scalar (or LOOKBACK)           │
+│     └─ Apply operator (GT/LT/CROSSES_ABOVE/IS_RISING) → Boolean Series│
 │                                                                        │
 │  2. Combine conditions with group logic (AND/OR)                       │
 │                                                                        │
-│  3. If using expressions:                                              │
-│     └─ Evaluate each named group                                       │
-│     └─ Build namespace for safe eval                                   │
-│     └─ Execute boolean expression                                      │
+│  3. If using boolean expressions:                                      │
+│     └─ Evaluate each named group independently                         │
+│     └─ Build namespace mapping group names to boolean results          │
+│     └─ Execute boolean expression (&&, ||, !, parentheses)             │
+│     └─ Return final boolean signal                                     │
+│                                                                        │
+│  4. If attribution enabled:                                            │
+│     └─ Track which conditions evaluated to True                        │
+│     └─ Calculate signal strength (confluence-based: 0.0-1.0)           │
+│     └─ Capture indicator snapshot at signal bar                        │
+│     └─ Return (signal, attribution_data) tuple                         │
 │                                                                        │
 │  Output: entry_signal (Boolean Series), exit_signal (Boolean Series)   │
+│          + attribution_data (if enabled)                               │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 
@@ -534,16 +670,38 @@ STAGE 5: BACKTEST SIMULATION (state_machine.py)
 │  For each bar:                                                         │
 │    1. Apply periodic contributions (if configured)                     │
 │    2. Fill pending entry at bar open (with slippage/commission)        │
+│       └─ If attribution enabled: capture entry attribution data        │
 │    3. Fill pending exit at bar open (with slippage/commission)         │
+│       └─ If attribution enabled: capture exit attribution data         │
 │    4. Check risk management (stop loss, take profit, dynamic stop)     │
 │    5. Calculate mark-to-market equity at bar close                     │
-│    6. Evaluate signals for next bar                                    │
+│    6. Evaluate signals for next bar (with attribution if enabled)      │
+│       └─ Capture which conditions triggered, signal strength           │
+│    7. Update equity curve                                              │
 │                                                                        │
 │  At end:                                                               │
 │    - Handle pending entries on last bar                                │
-│    - Force-close open positions at last bar close                      │
+│    - Force close any open positions                                    │
+│    - Calculate trade-level attribution (if enabled):                   │
+│      * Market return during trade (buy-and-hold baseline)              │
+│      * Alpha (trade return - market return)                            │
 │                                                                        │
-│  Output: trade_log (list of TradeRecord), equity_curve (Series)        │
+└────────────────────────────────────────────────────────────────────────┘
+
+STAGE 7: PERSISTENCE (via SQLAlchemy async)
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  1. Create BacktestRun record with results                             │
+│     └─ Store report as JSONB                                           │
+│     └─ Store equity curve as JSONB                                     │
+│     └─ Store enable_attribution flag                                   │
+│                                                                        │
+│  2. Create TradeLog records for each completed trade                   │
+│     └─ Standard fields: entry/exit dates, prices, P&L, duration        │
+│     └─ Attribution fields (if enabled): conditions_met, signal_strength│
+│        alpha, indicator_snapshots                                      │
+│                                                                        │
+│  Output: Persisted backtest results, trade logs with attribution       │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 
@@ -551,7 +709,7 @@ STAGE 6: REPORT GENERATION (report_generator.py)
 ┌────────────────────────────────────────────────────────────────────────┐
 │                                                                        │
 │  1. Calculate performance metrics from equity curve                    │
-│     └─ Total return, CAGR, Sharpe ratio, max drawdown                  │
+│     └─ Total return, CAGR, Sharpe ratio, Calmar ratio, max drawdown   │
 │                                                                        │
 │  2. Calculate trade statistics from trade log                          │
 │     └─ Win rate, avg win/loss, profit factor, durations                │
@@ -559,7 +717,20 @@ STAGE 6: REPORT GENERATION (report_generator.py)
 │  3. Calculate buy-and-hold benchmark                                   │
 │     └─ Alpha, beta, benchmark comparison                               │
 │                                                                        │
-│  Output: report (dict with all metrics)                                │
+│  4. Generate attribution report (if enabled)                           │
+│     └─ Total alpha, alpha percentage                                   │
+│     └─ Signal strength breakdown (strong/medium/weak)                  │
+│     └─ Win rate and avg alpha per strength bin                         │
+│     └─ Condition frequency analysis                                    │
+│                                                                        │
+│  5. Generate binning analysis (if 50+ trades)                          │
+│     └─ Quintile binning for each indicator                             │
+│     └─ Average P&L and win rate per bin                                │
+│     └─ Spearman correlation (indicator vs P&L)                         │
+│     └─ Statistical significance testing (p-values)                     │
+│     └─ Identify strongest predictors                                   │
+│                                                                        │
+│  Output: report (dict with all metrics, attribution, binning)          │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 
@@ -635,9 +806,16 @@ Key Functions:
     - Evaluates a single condition group
     - Returns Boolean Series (True where conditions met)
 
+  evaluate_conditions_with_attribution(df, condition_group, bar_idx, indicators)
+    - NEW: Enhanced version with attribution tracking
+    - Returns (Boolean, attribution_data) tuple
+    - Captures which conditions triggered
+    - Calculates signal strength (confluence-based)
+    - Records indicator snapshot at bar_idx
+
   evaluate_expression(df, condition_groups, expression)
     - Evaluates multiple named groups combined with expression
-    - Safely parses and executes boolean expression
+    - Safely parses and executes boolean expression (&&, ||, !, parentheses)
     - Returns Boolean Series
 
 Internal Functions:
@@ -650,11 +828,12 @@ Internal Functions:
     - Returns Boolean Series
 
   _parse_lookback(value)
-    - Parses "column:offset" format
+    - Parses "column:offset" format (e.g., "rsi_14:-3")
     - Returns (column_name, offset)
 
   _get_lookback_series(df, value)
     - Returns shifted Series for lookback comparisons
+    - Example: "rsi_14:-5" returns RSI from 5 bars ago
 
 Operator Details:
   - GT, LT, EQ, GTE, LTE: Simple comparisons, work with any operands
@@ -669,8 +848,9 @@ D. STATE MACHINE (app/engine/state_machine.py)
 Purpose: Simulate trade execution with realistic fills
 
 Main Function:
-  run_backtest(df, entry_signal, exit_signal, initial_capital, ...)
+  run_backtest(df, entry_signal, exit_signal, initial_capital, enable_attribution=True, ...)
     - Returns (trade_log, equity_curve)
+    - Now supports attribution tracking when enabled
 
 Key Parameters:
   - asset_class: "STOCK" (whole shares) or "CRYPTO" (fractional)
@@ -680,16 +860,19 @@ Key Parameters:
   - commission_per_trade, commission_pct: Transaction costs
   - slippage_pct: Price slippage simulation
   - periodic_contribution: Regular cash additions
+  - enable_attribution: Enable trade attribution tracking (default: True)
 
 State Machine Logic:
   1. NO_POSITION: Check for entry signal
      → If True, set pending_entry = True
+     → If attribution enabled: capture entry conditions met
 
   2. PENDING_ENTRY: At next bar open
      → Calculate position size
      → Apply slippage to price
      → Deduct cost + commission from cash
      → Record entry_date, entry_price, shares
+     → If attribution enabled: capture entry attribution data
 
   3. IN_POSITION: Check for exit conditions
      a. Strategy exit signal
@@ -697,12 +880,14 @@ State Machine Logic:
      c. Take profit triggered (price gained X%)
      d. Dynamic stop triggered (price < indicator value)
      → Set pending_exit = True
+     → If attribution enabled: capture exit conditions met
 
   4. PENDING_EXIT: At next bar open
      → Apply slippage to exit price
      → Deduct commission
      → Add proceeds to cash
      → Record trade in trade_log
+     → If attribution enabled: calculate market return, alpha
 
 Position Sizing Logic:
   - full_capital: shares = cash / price
@@ -728,6 +913,20 @@ TradeRecord Structure:
       exit_date: pd.Timestamp
       exit_price: float
       shares: float
+      pnl: float
+      pnl_pct: float
+      trade_duration_days: int
+      exit_reason: str
+      total_commission: float
+
+      # Attribution fields (Phase 1A - optional)
+      entry_conditions_met: list[str] | None
+      exit_conditions_met: list[str] | None
+      entry_signal_strength: float | None
+      market_return_during_trade: float | None
+      alpha: float | None
+      indicator_snapshot_entry: dict | None
+      indicator_snapshot_exit: dict | None
       pnl: float              # (exit - entry) * shares - commissions
       pnl_pct: float          # pnl / cost * 100
       trade_duration_days: int
@@ -742,13 +941,24 @@ E. REPORT GENERATOR (app/engine/report_generator.py)
 Purpose: Calculate comprehensive performance metrics
 
 Main Function:
-  generate_report(trade_log, equity_curve, initial_capital, benchmark_equity)
+  generate_report(trade_log, equity_curve, initial_capital, benchmark_equity,
+                  enable_attribution=True, indicators=None)
     - Returns dict with all performance metrics
+    - Now generates attribution and binning reports when enabled
 
 Supporting Functions:
   calculate_buy_and_hold_equity(df, initial_capital, asset_class)
     - Simulates buy-and-hold strategy
     - Returns benchmark equity curve
+
+  generate_attribution_report(trade_log)
+    - NEW (Phase 1A): Generates attribution insights
+    - Returns dict with total_alpha, signal strength breakdown, condition frequency
+
+  generate_binning_report(trade_log, indicators)
+    - NEW (Phase 1B): Generates empirical binning analysis
+    - Requires 50+ trades
+    - Returns dict with quintile bins, correlations, significance tests
 
   _max_drawdown(equity)
     - Calculates maximum peak-to-trough decline
@@ -765,6 +975,7 @@ Metric Calculations:
   - total_return_pct: (final - initial) / initial * 100
   - cagr: (final / initial)^(1/years) - 1
   - sharpe_ratio: (mean_daily_return / std_daily_return) * sqrt(252)
+  - calmar_ratio: cagr / abs(max_drawdown)
   - win_rate: len(wins) / total_trades * 100
   - profit_factor: gross_profit / gross_loss
   - alpha: strategy_return - benchmark_return
@@ -850,6 +1061,7 @@ B. BACKTEST MODEL (app/models/backtest.py)
       commission_per_trade: Decimal
       commission_pct: Decimal
       slippage_pct: Decimal
+      enable_attribution: bool (default: True)  # NEW (Phase 1A)
 
       # Relationship
       trades: list[TradeLog]
@@ -867,6 +1079,15 @@ B. BACKTEST MODEL (app/models/backtest.py)
       pnl_pct: Decimal
       trade_duration_days: int
       exit_reason: str (optional)
+
+      # Attribution fields (NEW - Phase 1A)
+      entry_conditions_met: JSONB (list[str], optional)
+      exit_conditions_met: JSONB (list[str], optional)
+      entry_signal_strength: Decimal (optional)
+      market_return_during_trade: Decimal (optional)
+      alpha: Decimal (optional)
+      indicator_snapshot_entry: JSONB (dict, optional)
+      indicator_snapshot_exit: JSONB (dict, optional)
 
 
 C. OHLCV MODEL (app/models/ohlcv.py)
@@ -968,6 +1189,7 @@ C. API SCHEMAS (app/api/schemas/)
     - commission_per_trade: float = 0.0
     - commission_pct: float = 0.0
     - slippage_pct: float = 0.0
+    - enable_attribution: bool = True  # NEW (Phase 1A)
 
 
 2.6 PROVIDER SYSTEM
@@ -1093,6 +1315,54 @@ TASK LIFECYCLE:
   7. On failure: status=FAILED, error_message saved
 
 
+C. ROBUSTNESS TASK (app/tasks/robustness_task.py)
+-------------------------------------------------
+
+  @celery_app.task(name="robustness.parameter_sensitivity")
+  def run_parameter_sensitivity_analysis(
+      strategy_id: str,
+      backtest_params: dict,
+      variation_pct: float = 0.2
+  ) -> str:
+      """
+      Celery task for parameter sensitivity analysis.
+
+      Steps:
+      1. Create RobustnessAnalysis record (status=PENDING)
+      2. Update status to RUNNING
+      3. Load strategy with indicators and conditions
+      4. Run baseline backtest
+      5. Generate parameter variants
+      6. Create temporary strategies for each variant
+      7. Run all variant backtests in parallel via Celery
+      8. Wait for all variants to complete
+      9. Collect metrics from each variant
+      10. Calculate stability score (CV-based)
+      11. Assess robustness level (ROBUST/MODERATE/FRAGILE)
+      12. Generate risk flags and recommendation
+      13. Build comprehensive report
+      14. Clean up temporary strategies
+      15. Update status to COMPLETE with report
+
+      Returns:
+          analysis_id (UUID string)
+      """
+
+ROBUSTNESS TASK LIFECYCLE:
+  1. API endpoint calls run_parameter_sensitivity_analysis.apply_async()
+  2. Task creates RobustnessAnalysis record (status=PENDING)
+  3. Task runs baseline backtest
+  4. Task generates N parameter variants
+  5. Task creates N temporary strategies
+  6. Task dispatches N backtest tasks via Celery
+  7. Task waits for all N backtests to complete
+  8. Task calculates stability metrics
+  9. Task generates report with assessment
+  10. Task cleans up temporary strategies
+  11. On success: status=COMPLETE, report saved
+  12. On failure: status=FAILED, error_message saved, temp strategies cleaned
+
+
 ================================================================================
                      PART III: PRACTICAL APPLICATIONS
 ================================================================================
@@ -1152,16 +1422,34 @@ STEP 3: INITIAL BACKTEST
    - No transaction costs initially
 
 STEP 4: RESULTS ANALYSIS
-   - Review total return, Sharpe ratio, max drawdown
+   - Review total return, Sharpe ratio, Calmar ratio, max drawdown
    - Examine trade log for patterns
    - Compare against buy-and-hold benchmark
    - Check win rate and profit factor
 
+   If attribution enabled:
+   - Review signal strength breakdown (strong/medium/weak)
+   - Analyze condition frequency (which conditions trigger most)
+   - Check alpha vs market return (skill vs luck)
+   - Examine indicator snapshots at trade entry/exit
+
+   If 50+ trades:
+   - Review binning analysis report
+   - Identify which indicator ranges correlate with profitable trades
+   - Look for statistically significant predictors (p < 0.05)
+   - Consider removing indicators with weak correlations
+
 STEP 5: REFINEMENT
-   - Adjust indicator parameters
-   - Add/remove conditions
+   - Adjust indicator parameters based on binning insights
+   - Remove conditions with weak predictive power
+   - Add/strengthen conditions that show high correlation
    - Try different expression combinations
    - Test across multiple time periods
+
+   Attribution-driven refinement:
+   - If weak signals perform as well as strong signals → simplify strategy
+   - If specific conditions rarely trigger → consider removing
+   - If indicator snapshots show clustering → adjust thresholds
 
 STEP 6: REALISTIC SIMULATION
    - Add transaction costs (commissions, slippage)
@@ -1174,6 +1462,27 @@ STEP 7: ROBUSTNESS TESTING
    - Test on different time periods
    - Test on different asset classes
    - Check for overfitting
+
+   Attribution validation:
+   - Compare attribution reports across different time periods
+   - Verify strong signals remain strong in out-of-sample data
+   - Check if binning correlations hold on new data
+   - Ensure alpha remains positive (skill, not luck)
+
+STEP 8: PARAMETER SENSITIVITY ANALYSIS (Phase 2A)
+   - Submit robustness analysis via /robustness/parameter-sensitivity
+   - Review stability score and robustness classification
+   - Check risk flags for specific concerns
+   - Examine per-metric CVs to identify unstable metrics
+
+   Take action based on results:
+   - ROBUST: Proceed to deployment with confidence
+   - MODERATE: Consider narrower parameter ranges, additional filters,
+               or reduced position sizing
+   - FRAGILE: Do NOT deploy; simplify strategy or find robust parameters
+
+   Key insight: A strategy that only works with exact parameter values
+   is unlikely to work in live trading where conditions shift.
 
 
 3.3 PERFORMANCE OPTIMIZATION
@@ -1236,6 +1545,492 @@ E. ADDING NEW RISK MANAGEMENT FEATURES
    3. Track exit reason properly
    4. Update models and schemas
    5. Write unit tests
+
+F. EXTENDING ATTRIBUTION SYSTEM (Phase 1A/1B)
+   1. Create new StrengthCalculator subclass
+      - Implement calculate(conditions_met, total_conditions, ...) method
+      - Register with StrengthCalculatorRegistry
+   2. Add to attribution/calculators/ directory
+   3. For binning enhancements:
+      - Modify binning_analyzer.py for new bin strategies
+      - Add statistical tests (beyond Spearman)
+      - Consider multi-dimensional binning
+   4. Write comprehensive unit tests
+   5. Document calculator behavior and use cases
+
+
+================================================================================
+                      PART IV: ADVANCED FEATURES (PHASE 1)
+================================================================================
+
+
+4.1 TRADE ATTRIBUTION SYSTEM (Phase 1A)
+---------------------------------------
+
+PURPOSE:
+Understand which conditions drive profitability and distinguish skill from luck.
+
+WHAT IT TRACKS:
+For each trade:
+  - Which conditions triggered entry (condition UUIDs)
+  - Which conditions triggered exit (condition UUIDs)
+  - Signal strength at entry (0.0-1.0, confluence-based)
+  - Market return during trade period (buy-and-hold baseline)
+  - Alpha (trade return - market return = skill component)
+  - Indicator values at entry time (full snapshot)
+  - Indicator values at exit time (full snapshot)
+
+STRATEGY-LEVEL INSIGHTS:
+  - Total alpha: Sum of alpha across all trades
+  - Alpha percentage: What % of returns came from skill vs market
+  - Signal strength breakdown:
+    * Strong signals (>0.7): Count, win rate, avg alpha
+    * Medium signals (0.3-0.7): Count, win rate, avg alpha
+    * Weak signals (<0.3): Count, win rate, avg alpha
+  - Condition frequency: How often each condition triggered
+
+KEY QUESTION ANSWERED:
+"Are my strong signals actually better performers than weak signals?"
+
+HOW TO USE:
+1. Enable attribution in backtest request (enabled by default)
+2. After backtest completes, examine report["attribution"]
+3. Compare strong vs weak signal performance
+4. Identify frequently triggered conditions
+5. Review indicator snapshots for patterns
+
+EXAMPLE INSIGHT:
+```
+Strong signals (>0.7): 25 trades, 72% win rate, +3.5% avg alpha
+Weak signals (<0.3): 20 trades, 35% win rate, -0.8% avg alpha
+
+→ Strategy has genuine edge when signals are strong
+→ Consider filtering out trades with signal strength < 0.5
+```
+
+IMPLEMENTATION DETAILS:
+- Pluggable calculator architecture (easy to extend)
+- Phase 1A uses ConfluenceStrengthCalculator (conditions_met / total_conditions)
+- Minimal performance overhead (<5% when enabled)
+- Can be disabled for faster backtests
+
+
+4.2 EMPIRICAL BINNING ANALYSIS (Phase 1B)
+-----------------------------------------
+
+PURPOSE:
+Validate which indicator ranges actually correlate with profitable trades using
+data-driven statistics instead of arbitrary thresholds.
+
+WHAT IT ANALYZES:
+For each indicator used in entry conditions (requires 50+ trades):
+  - Divides indicator values into quintiles (5 bins)
+  - Calculates average P&L per bin
+  - Calculates win rate per bin
+  - Computes trade-level Spearman correlation (indicator value vs P&L)
+  - Tests statistical significance (p-value)
+
+OUTPUT STRUCTURE:
+```json
+{
+  "rsi_14": {
+    "bins": [
+      {"range": [10, 30], "count": 30, "avg_pnl": 250.0, "win_rate": 0.67},
+      {"range": [30, 45], "count": 25, "avg_pnl": 150.0, "win_rate": 0.60},
+      {"range": [45, 60], "count": 20, "avg_pnl": 50.0, "win_rate": 0.50},
+      {"range": [60, 75], "count": 15, "avg_pnl": -50.0, "win_rate": 0.40},
+      {"range": [75, 95], "count": 10, "avg_pnl": -200.0, "win_rate": 0.20}
+    ],
+    "bin_edges": [10, 30, 45, 60, 75, 95],
+    "correlation": -0.72,  // Strong negative (low RSI = high P&L)
+    "p_value": 0.001,      // Highly significant
+    "sample_size": 100
+  },
+  "summary": {
+    "total_indicators": 3,
+    "analyzed_indicators": 2,
+    "significant_indicators": 1,  // p < 0.05
+    "skipped_indicators": ["ema_cross"]  // Crossover-only
+  }
+}
+```
+
+KEY QUESTIONS ANSWERED:
+- Which indicator ranges actually drive profits?
+- Are my indicator assumptions statistically valid?
+- Which indicators are noise vs signal?
+
+INTERPRETATION:
+- **|correlation| > 0.5, p < 0.05**: Strong predictor, optimize around this
+- **|correlation| > 0.3, p < 0.05**: Moderate predictor, useful but not critical
+- **|correlation| < 0.3 or p > 0.05**: Weak/no predictive power, consider removing
+
+HOW TO USE:
+1. Run backtest with 50+ trades
+2. Examine report["binning_analysis"]
+3. Identify indicators with high correlation and low p-value
+4. Adjust strategy to focus on effective indicator ranges
+5. Remove indicators with weak correlations
+
+EXAMPLE INSIGHT:
+```
+RSI: -0.72 correlation (p=0.001)
+→ Lower RSI strongly predicts higher profits
+→ Strategy works best in oversold conditions
+→ Consider filtering trades with RSI > 40
+
+SMA_50: 0.15 correlation (p=0.35)
+→ No statistically significant relationship
+→ SMA_50 crossover not adding value
+→ Consider removing this condition
+```
+
+ADVANTAGES OVER FIXED THRESHOLDS:
+- Data-driven: Learns from actual trade outcomes
+- Asset-agnostic: Bins adapt to each ticker's characteristics
+- Statistical validation: P-values show confidence level
+- No arbitrary rules: No hardcoded "RSI 30/70" assumptions
+
+LIMITATIONS:
+- Requires 50+ trades (not 20 - more data = better statistics)
+- Entry indicators only (exit values are post-hoc)
+- Crossover indicators skipped (no single value to bin)
+- Single-dimension analysis (no multi-indicator interactions yet)
+
+
+4.3 COMBINING ATTRIBUTION & BINNING
+-----------------------------------
+
+These two systems work together:
+
+ATTRIBUTION (Phase 1A) answers:
+- "Are my strong signals better than weak signals?"
+- "Which conditions trigger most often?"
+- "Am I beating the market (alpha) or just riding it?"
+
+BINNING (Phase 1B) answers:
+- "Which indicator RANGES drive the profits?"
+- "Are my indicator assumptions statistically valid?"
+- "Which indicators can I safely remove?"
+
+WORKFLOW:
+1. Run backtest with attribution enabled (50+ trades ideal)
+2. Review attribution report:
+   - Check if strong signals outperform weak signals
+   - Identify frequently triggered conditions
+3. Review binning analysis:
+   - Identify statistically significant predictors
+   - Note which indicator ranges have best P&L
+4. Refine strategy:
+   - Strengthen filters around high-correlation indicators
+   - Remove low-correlation indicators
+   - Adjust thresholds based on binning insights
+5. Re-test and validate improvements hold
+
+
+4.4 PARAMETER SENSITIVITY ANALYSIS (Phase 2A)
+---------------------------------------------
+
+PURPOSE:
+Identify fragile vs robust strategies by testing how performance changes when
+indicator parameters are varied. A robust strategy maintains similar performance
+across parameter variations; a fragile strategy's performance swings wildly,
+suggesting overfitting to specific parameter values.
+
+THE PROBLEM IT SOLVES:
+Traders often "optimize" indicator parameters to maximize backtest returns.
+This creates a false sense of confidence - the strategy works great on historical
+data with those exact parameters, but fails in live trading when market
+conditions shift slightly. Parameter sensitivity analysis exposes this risk.
+
+HOW IT WORKS:
+1. Takes your strategy with its indicator parameters (e.g., RSI period=14)
+2. Generates variants by varying each numeric parameter by ±variation_pct
+   (default ±20%)
+   Example: RSI(14) generates RSI(11) and RSI(17)
+3. Runs baseline backtest + all variant backtests in parallel via Celery
+4. Collects key metrics from each variant (return, Sharpe, win rate, etc.)
+5. Calculates stability score using Coefficient of Variation (CV)
+6. Classifies strategy robustness level
+
+STABILITY SCORE CALCULATION:
+For each metric (total_return_pct, sharpe_ratio, win_rate):
+  1. Collect values from baseline + all variants
+  2. Calculate Coefficient of Variation: CV = std_dev / |mean|
+  3. Average CVs across metrics: mean_CV
+  4. Stability Score = max(0, min(1, 1 - mean_CV))
+
+INTERPRETATION:
+  - CV close to 0: Metrics are stable across variants
+  - CV > 1: Metrics swing more than 100% from the mean
+  - Stability Score 1.0: Perfect stability (all variants same)
+  - Stability Score 0.0: Extreme instability (huge variation)
+
+ROBUSTNESS CLASSIFICATION:
+  - ROBUST (score ≥ 0.8): Metrics vary < 20% across variants
+    → Safe to deploy with confidence
+
+  - MODERATE (score 0.6-0.8): Metrics vary 20-40%
+    → Use with caution; consider tighter parameter ranges
+
+  - FRAGILE (score < 0.6): Metrics vary > 40%
+    → DO NOT DEPLOY; suggests overfitting to specific parameters
+
+EXAMPLE OUTPUT:
+```json
+{
+  "baseline": {
+    "strategy_id": "uuid",
+    "params": {"rsi_14": {"period": 14}, "sma_50": {"period": 50}},
+    "metrics": {
+      "total_return_pct": 25.5,
+      "sharpe_ratio": 1.8,
+      "win_rate": 62.0,
+      "max_drawdown_pct": -15.2,
+      "total_trades": 45
+    }
+  },
+  "variants": [
+    {
+      "variant_label": "rsi_14.period: 14 → 11 (-21.4%)",
+      "variant_params": {
+        "indicator_alias": "rsi_14",
+        "param_name": "period",
+        "original_value": 14,
+        "variant_value": 11,
+        "change_pct": -21.4
+      },
+      "metrics": {
+        "total_return_pct": 22.1,
+        "sharpe_ratio": 1.5,
+        "win_rate": 58.0
+      },
+      "delta_from_baseline": {
+        "total_return_pct": -3.4,
+        "sharpe_ratio": -0.3,
+        "win_rate": -4.0
+      }
+    },
+    {
+      "variant_label": "rsi_14.period: 14 → 17 (+21.4%)",
+      "metrics": {"total_return_pct": 28.2, "sharpe_ratio": 1.9, "win_rate": 65.0},
+      "delta_from_baseline": {"total_return_pct": +2.7, "sharpe_ratio": +0.1}
+    },
+    {
+      "variant_label": "sma_50.period: 50 → 40 (-20.0%)",
+      "metrics": {"total_return_pct": 23.8, "sharpe_ratio": 1.6, "win_rate": 60.0},
+      "delta_from_baseline": {"total_return_pct": -1.7, "sharpe_ratio": -0.2}
+    },
+    {
+      "variant_label": "sma_50.period: 50 → 60 (+20.0%)",
+      "metrics": {"total_return_pct": 26.1, "sharpe_ratio": 1.7, "win_rate": 63.0},
+      "delta_from_baseline": {"total_return_pct": +0.6, "sharpe_ratio": -0.1}
+    }
+  ],
+  "stability_metrics": {
+    "overall_stability_score": 0.85,
+    "per_metric_cv": {
+      "total_return_pct": 0.09,
+      "sharpe_ratio": 0.08,
+      "win_rate": 0.05
+    }
+  },
+  "assessment": {
+    "robustness_level": "ROBUST",
+    "risk_flags": [],
+    "recommendation": "Strategy is robust to parameter changes. Metrics remain stable across variants. Safe to deploy with confidence."
+  }
+}
+```
+
+RISK FLAGS:
+The analysis generates specific warnings when:
+  - Return varies >50% across variants
+  - Sharpe ratio highly parameter-dependent (CV > 0.4)
+  - Win rate unstable (CV > 0.3)
+  - Any variant has negative returns when baseline is positive
+  - Any variant has Sharpe < 1.0 when baseline > 1.0
+
+EXAMPLE RISK FLAGS:
+```json
+"risk_flags": [
+  "Return varies >50% across parameter changes",
+  "3 variants (60%) have negative returns",
+  "2 variants have Sharpe < 1.0"
+]
+```
+
+API ENDPOINTS:
+
+POST /robustness/parameter-sensitivity
+  Submit a parameter sensitivity analysis request.
+
+  Request Body:
+  {
+    "strategy_id": "uuid",
+    "ticker": "AAPL",
+    "asset_class": "STOCK",
+    "start_date": "2022-01-01",
+    "end_date": "2024-01-01",
+    "bar_resolution": "1d",
+    "initial_capital": 10000.0,
+    "variation_pct": 0.2,           // ±20% parameter variation
+    "enable_attribution": false,    // Faster without attribution
+    "commission_per_trade": 1.0,
+    "slippage_pct": 0.05
+  }
+
+  Response:
+  {
+    "id": "analysis-uuid",
+    "strategy_id": "uuid",
+    "analysis_type": "PARAMETER_SENSITIVITY",
+    "status": "PENDING",            // or "RUNNING"
+    "params": {"variation_pct": 0.2, ...},
+    "created_at": "2026-04-15T10:00:00Z"
+  }
+
+GET /robustness/{analysis_id}
+  Poll for analysis status and results.
+
+  Response (when COMPLETE):
+  {
+    "id": "analysis-uuid",
+    "status": "COMPLETE",
+    "report": { ... full report as shown above ... },
+    "completed_at": "2026-04-15T10:05:00Z"
+  }
+
+DELETE /robustness/{analysis_id}
+  Delete an analysis and its associated variant backtests.
+
+HOW TO USE:
+1. Create a strategy with indicator parameters you want to test
+2. Submit parameter sensitivity analysis via API
+3. Poll for completion (status transitions: PENDING → RUNNING → COMPLETE)
+4. Review the report:
+   - Check overall stability score and robustness level
+   - Examine per-metric CVs to see which metrics are most unstable
+   - Review risk flags for specific concerns
+   - Look at individual variant performance to understand sensitivity
+5. Take action based on assessment:
+   - ROBUST: Proceed with confidence
+   - MODERATE: Consider narrower parameter ranges or additional filters
+   - FRAGILE: Do not deploy; simplify strategy or find more robust parameters
+
+EXAMPLE WORKFLOW:
+```
+1. Create strategy: RSI(14) < 30 AND price > SMA(50)
+
+2. Submit analysis:
+   POST /robustness/parameter-sensitivity
+   {
+     "strategy_id": "...",
+     "ticker": "AAPL",
+     "start_date": "2022-01-01",
+     "end_date": "2024-01-01",
+     "variation_pct": 0.2
+   }
+
+3. Wait for completion (~1-5 minutes depending on variants)
+
+4. Review results:
+   Baseline: +25.5% return
+   RSI(11): +22.1% return (Δ -3.4%)
+   RSI(17): +28.2% return (Δ +2.7%)
+   SMA(40): +23.8% return (Δ -1.7%)
+   SMA(60): +26.1% return (Δ +0.6%)
+
+   Stability Score: 0.85 → ROBUST
+
+5. Conclusion: Strategy performs consistently across ±20% parameter
+   variations. The returns range from +22% to +28% (reasonable spread).
+   Safe to deploy.
+```
+
+COMPARISON WITH TRADITIONAL OPTIMIZATION:
+Traditional "parameter optimization" finds the BEST parameters:
+  → RSI(14) gives 25.5% return
+  → RSI(12) gives 28.3% return ← "optimal"
+  → RSI(16) gives 24.1% return
+
+  User picks RSI(12) because it's "best."
+
+Parameter Sensitivity Analysis asks: "What if I'm wrong?"
+  → RSI(12) ±20% = RSI(10) to RSI(14)
+  → If RSI(10) gives -5% and RSI(14) gives +25.5%...
+  → That's a FRAGILE strategy! The "optimal" parameter is on a knife edge.
+
+The goal is not to find the best parameters, but to find ROBUST parameters
+where small errors don't cause large performance swings.
+
+IMPLEMENTATION DETAILS:
+
+Core Module: app/engine/robustness/parameter_sensitivity.py
+  - generate_parameter_variants(strategy_dict, variation_pct)
+    Generates strategy dicts with varied parameters
+  - calculate_stability_score(baseline_metrics, variant_metrics)
+    Returns (stability_score, per_metric_cv_dict)
+  - assess_robustness_level(stability_score)
+    Returns "ROBUST", "MODERATE", or "FRAGILE"
+  - generate_risk_flags(baseline_metrics, variant_metrics, metric_cvs)
+    Returns list of specific warning strings
+  - generate_recommendation(robustness_level, risk_flags, stability_score)
+    Returns actionable recommendation string
+
+Celery Task: app/tasks/robustness_task.py
+  - run_parameter_sensitivity_analysis(strategy_id, backtest_params, variation_pct)
+    Orchestrates the full analysis workflow:
+    1. Creates RobustnessAnalysis record (status=PENDING)
+    2. Loads strategy with indicators and conditions
+    3. Runs baseline backtest
+    4. Generates parameter variants
+    5. Creates temporary strategies for each variant
+    6. Runs all variant backtests in parallel via Celery
+    7. Collects metrics from each variant
+    8. Calculates stability score
+    9. Generates report with assessment
+    10. Cleans up temporary strategies
+    11. Updates analysis record (status=COMPLETE)
+
+Database Models: app/models/robustness.py
+  - RobustnessAnalysis: Stores analysis config and results
+    * id, strategy_id, analysis_type, status
+    * params (JSONB): variation_pct, backtest_params
+    * report (JSONB): full analysis results
+    * created_at, completed_at, error_message
+
+  - RobustnessVariantBacktest: Links variants to backtest runs
+    * analysis_id, backtest_run_id
+    * variant_label, variant_params (JSONB)
+
+API Routes: app/api/routes/robustness.py
+  - POST /robustness/parameter-sensitivity
+  - GET /robustness/{analysis_id}
+  - DELETE /robustness/{analysis_id}
+
+TESTING:
+  - 21 unit tests: tests/unit/test_parameter_sensitivity.py
+  - 3 e2e integration tests: tests/integration/test_parameter_sensitivity_e2e.py
+  - Smoke test: scripts/robustness_smoke.py
+
+PERFORMANCE:
+  - 2 indicators × 1 param each × 2 directions = 4 variants
+  - 4 variant backtests run in parallel via Celery
+  - Typical analysis: 1-5 minutes depending on date range and indicators
+  - Temporary strategies cleaned up after analysis completes
+
+LIMITATIONS:
+  - Only numeric parameters are varied (skips non-numeric like source="close")
+  - Zero or negative parameters are skipped
+  - Small integers may not produce variants (e.g., period=2 ± 20% rounds to 2)
+  - Crossover indicators with no numeric params generate no variants
+  - Requires Celery worker running for backtest execution
+
+
+================================================================================
+                               END OF GUIDE
+================================================================================
 
 
 ================================================================================

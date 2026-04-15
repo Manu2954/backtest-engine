@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-Full-stack indicator-based trading strategy backtesting engine with attribution analysis.
+Full-stack indicator-based trading strategy backtesting engine with attribution analysis and robustness testing.
 
 **Stack**: FastAPI + Python 3.12, React 18 + TypeScript, PostgreSQL 16, Redis 7, Celery
 
-**Maturity**: Production-ready core features, Phase 1 attribution complete
+**Maturity**: Production-ready core features, Phase 1 attribution complete, Phase 2 robustness in progress
 
 ---
 
@@ -139,20 +139,82 @@ Full-stack indicator-based trading strategy backtesting engine with attribution 
 
 ---
 
+### ✅ Phase 2A: Parameter Sensitivity Analysis (100% Complete)
+
+**Purpose**: Identify fragile vs robust strategies by testing parameter stability
+
+**How It Works**:
+1. Vary each numeric indicator parameter by ±variation_pct (default ±20%)
+2. Run baseline backtest + all variant backtests in parallel via Celery
+3. Calculate stability score using Coefficient of Variation across metrics
+4. Classify strategy robustness level
+
+**Robustness Classification**:
+- **ROBUST** (score ≥ 0.8): Metrics vary < 20%, safe to deploy
+- **MODERATE** (score 0.6-0.8): Metrics vary 20-40%, use with caution
+- **FRAGILE** (score < 0.6): Metrics vary > 40%, suggests overfitting
+
+**Example Output**:
+```json
+{
+  "baseline": {
+    "strategy_id": "uuid",
+    "params": {"rsi_14": {"period": 14}, "sma_50": {"period": 50}},
+    "metrics": {"total_return_pct": 25.5, "sharpe_ratio": 1.8, "win_rate": 62.0}
+  },
+  "variants": [
+    {
+      "variant_label": "rsi_14.period: 14 → 11 (-20%)",
+      "metrics": {"total_return_pct": 22.1, "sharpe_ratio": 1.5, "win_rate": 58.0},
+      "delta_from_baseline": {"total_return_pct": -3.4, "sharpe_ratio": -0.3}
+    },
+    // ... more variants
+  ],
+  "stability_metrics": {
+    "overall_stability_score": 0.85,
+    "per_metric_cv": {"total_return_pct": 0.12, "sharpe_ratio": 0.15}
+  },
+  "assessment": {
+    "robustness_level": "ROBUST",
+    "risk_flags": [],
+    "recommendation": "Safe to deploy with confidence"
+  }
+}
+```
+
+**API Endpoints**:
+- `POST /robustness/parameter-sensitivity` - Submit analysis
+- `GET /robustness/{analysis_id}` - Get status and results
+- `DELETE /robustness/{analysis_id}` - Delete analysis
+
+**Database**: Migration 0008_robustness_analysis.py
+- `robustness_analyses` table (stores analysis config and results)
+- `robustness_variant_backtests` table (links variants to backtest runs)
+
+**Tests**:
+- 21 unit tests (parameter_sensitivity.py)
+- 3 e2e integration tests
+- Smoke test: `python scripts/robustness_smoke.py`
+
+**Status**: Fully operational, all tests passing
+
+---
+
 ## Test Status
 
-**Total**: 155 tests
-**Passing**: 155 (100%)
+**Total**: 179+ tests
+**Passing**: 179+ (100%)
 **Failing**: 0
 **Skipped**: 1
 
 **Coverage**:
 - Attribution: 26 tests (21 unit + 5 integration)
 - Binning: 20 tests (17 unit + 3 integration)
+- Robustness: 24 tests (21 unit + 3 e2e integration)
 - State Machine: 17 tests
 - Condition Engine: 25 tests
 - Indicator Layer: 9 tests
-- Other: 58 tests
+- Other: 57+ tests
 
 ---
 
@@ -180,15 +242,25 @@ app/
 │   ├── indicator_layer.py        # Technical indicators (350+ lines)
 │   ├── data_layer.py             # OHLCV fetching (450+ lines)
 │   ├── report_generator.py       # Performance metrics (500+ lines)
-│   └── attribution/
-│       ├── strength_calculator.py
-│       ├── calculators/
-│       │   └── confluence.py     # Phase 1A
-│       └── analysis/
-│           └── binning_analyzer.py  # Phase 1B
+│   ├── attribution/
+│   │   ├── strength_calculator.py
+│   │   ├── calculators/
+│   │   │   └── confluence.py     # Phase 1A
+│   │   └── analysis/
+│   │       └── binning_analyzer.py  # Phase 1B
+│   └── robustness/
+│       └── parameter_sensitivity.py  # Phase 2A
 ├── models/                       # SQLAlchemy models
+│   ├── strategy.py
+│   ├── backtest.py
+│   └── robustness.py             # Phase 2A models
 ├── api/routes/                   # FastAPI endpoints
+│   ├── strategies.py
+│   ├── backtests.py
+│   └── robustness.py             # Phase 2A endpoints
 └── tasks/                        # Celery background tasks
+    ├── backtest_task.py
+    └── robustness_task.py        # Phase 2A task
 ```
 
 ### Frontend (React + TypeScript)
@@ -202,7 +274,7 @@ src/
 ```
 
 ### Database (PostgreSQL)
-- 8 migrations (latest: 0007_trade_attribution.py)
+- 9 migrations (latest: 0008_robustness_analysis.py)
 - UUID primary keys, JSONB for flexible data
 - CASCADE deletes for relationships
 
@@ -240,35 +312,44 @@ src/
 - Tier 2 (QuantConnect): Good execution modeling ($50-200/mo)
 - **Tier 3 (This Engine)**: Truth validation (Tier 3 features, Tier 2 pricing: $100-500/mo)
 
-**Strategic Priorities** (as of April 2026):
+**Strategic Priorities** (as of April 14, 2026):
 1. ✅ Phase 1A: Trade Attribution (COMPLETE)
 2. ✅ Phase 1B: Empirical Binning (COMPLETE)
-3. 🎯 Phase 2: Robustness Scoring (CURRENT PRIORITY)
+3. 🎯 Phase 2: Robustness Scoring (IN PROGRESS)
+   - ✅ Component 1: Parameter Sensitivity Analyzer (COMPLETE)
+   - ⏭️ Component 2: Monte Carlo Simulation (NEXT)
 4. ⏸️  Authentication/Multi-tenancy (DEPRIORITIZED - focus on core value)
 5. ⏸️  API Documentation (DEPRIORITIZED - build features first)
 
 **Phase 2 Roadmap** (Robustness Analysis - 6-8 weeks):
-1. **Parameter Sensitivity Analyzer**
+1. **✅ Parameter Sensitivity Analyzer** (COMPLETE - Week 1-2)
    - Vary indicator parameters by ±20%
-   - Measure performance stability
-   - Identify fragile vs robust strategies
+   - Parallel backtest execution with Celery groups
+   - Measure performance stability with coefficient of variation
+   - Identify fragile vs robust strategies (ROBUST/MODERATE/FRAGILE)
+   - API: POST /robustness/parameter-sensitivity
+   - API: GET /robustness/{analysis_id}
+   - API: DELETE /robustness/{analysis_id}
+   - 21 unit tests passing, 3 e2e tests passing
+   - Database migration 0008 applied
+   - Smoke test: scripts/robustness_smoke.py
 
-2. **Monte Carlo Simulation**
+2. **Monte Carlo Simulation** (Week 3-4) - NEXT
    - 1000+ runs with randomized entry timing
    - Statistical confidence intervals
    - Luck vs skill separation
 
-3. **Walk-Forward Optimization**
+3. **Walk-Forward Optimization** (Week 5-6)
    - Rolling windows on unseen data
    - Out-of-sample validation
    - Overfitting detection
 
-4. **Robustness Confidence Scoring**
+4. **Robustness Confidence Scoring** (Week 7)
    - 0-100 scale based on multiple tests
    - LOW/MEDIUM/HIGH risk assessment
    - Visual robustness dashboard
 
-5. **Regime Detection**
+5. **Regime Detection** (Week 8)
    - Bull/bear/sideways classification
    - Regime-aware performance analysis
    - Strategy adaptation recommendations
@@ -355,12 +436,12 @@ OHLCV_CACHE_TTL_SECONDS=86400
 ### Immediate
 1. ✅ Phase 1A complete (trade attribution)
 2. ✅ Phase 1B complete (empirical binning)
-3. ⏭️ Commit Phase 1A/1B implementation
-4. ⏭️ Run M5 smoke test validation
+3. ✅ Phase 2A complete (parameter sensitivity)
+4. ⏭️ Phase 2B: Monte Carlo simulation
 
-### Phase 2 (Truth Engine)
-1. Parameter sensitivity analyzer
-2. Monte Carlo simulation framework
+### Phase 2 (Truth Engine) - Remaining
+1. ✅ Parameter sensitivity analyzer (COMPLETE)
+2. ⏭️ Monte Carlo simulation framework (NEXT)
 3. Walk-forward optimization engine
 4. Robustness confidence scoring (0-100)
 5. Overfitting risk assessment (LOW/MEDIUM/HIGH)
@@ -381,6 +462,6 @@ OHLCV_CACHE_TTL_SECONDS=86400
 
 ---
 
-**Last Updated**: April 6, 2026
-**Version**: Phase 1 Complete (Attribution + Binning)
-**Test Status**: 155/155 passing (100%)
+**Last Updated**: April 14, 2026
+**Version**: Phase 2A Complete (Parameter Sensitivity)
+**Test Status**: 179+/179+ passing (100%)

@@ -253,7 +253,7 @@ def get_warmup_period(df: pd.DataFrame) -> int:
     # First True value is the first valid bar
     first_valid_idx = valid_rows.idxmax()
     warmup_bars = df.index.get_loc(first_valid_idx)
-
+    print(f"warm up period {warmup_bars}")
     return warmup_bars
 
 

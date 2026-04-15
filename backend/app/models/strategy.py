@@ -48,6 +48,11 @@ class Strategy(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    robustness_analyses = relationship(
+        "RobustnessAnalysis",
+        back_populates="strategy",
+        cascade="all, delete-orphan",
+    )
 
 
 class Indicator(Base):

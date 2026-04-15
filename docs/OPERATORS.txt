@@ -586,6 +586,198 @@ Conditions can be combined using `AND` or `OR` logic:
 **Crossovers:** Use CROSSES_ABOVE, CROSSES_BELOW
 **Momentum:** Use IS_RISING, IS_FALLING
 **Historical comparison:** Use LOOKBACK operand type
-**Combine conditions:** Use AND/OR logic
+**Combine conditions:** Use AND/OR logic within condition groups
+**Complex logic:** Use Boolean Expressions to combine condition groups
+
+
+## Boolean Expressions
+
+**NEW FEATURE:** Combine multiple condition groups with boolean operators.
+
+### What Are Boolean Expressions?
+
+Boolean expressions allow you to create complex logic by combining entire condition groups (not individual conditions). Each condition group evaluates to true/false, and you can combine them using logical operators.
+
+### Supported Operators
+
+- `&&` (AND): Both sides must be true
+- `||` (OR): At least one side must be true
+- `!` (NOT): Inverts the result
+- `()` (Parentheses): Groups expressions for order of precedence
+
+### Expression Format
+
+```
+group_name_1 && group_name_2 || group_name_3
+```
+
+Each name references a condition group's name field. The engine evaluates each group, then applies the boolean logic.
+
+### Example: RSI Oversold AND Price Above SMA
+
+**Strategy:** Enter when RSI is oversold AND price is above moving average.
+
+**Condition Groups:**
+```json
+[
+  {
+    "name": "oversold",
+    "group_type": "ENTRY",
+    "logic_operator": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "INDICATOR",
+        "left_operand_value": "rsi_14",
+        "operator": "LT",
+        "right_operand_type": "SCALAR",
+        "right_operand_value": "30"
+      }
+    ]
+  },
+  {
+    "name": "trending_up",
+    "group_type": "ENTRY",
+    "logic_operator": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "OHLCV",
+        "left_operand_value": "close",
+        "operator": "GT",
+        "right_operand_type": "INDICATOR",
+        "right_operand_value": "sma_50"
+      }
+    ]
+  }
+]
+```
+
+**Boolean Expression:**
+```
+oversold && trending_up
+```
+
+This means: Enter only when BOTH groups evaluate to true.
+
+### Example: Multiple Exit Strategies
+
+**Strategy:** Exit when EITHER profit target hit OR stop loss hit.
+
+**Condition Groups:**
+```json
+[
+  {
+    "name": "profit_target",
+    "group_type": "EXIT",
+    "logic_operator": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "INDICATOR",
+        "left_operand_value": "rsi_14",
+        "operator": "GT",
+        "right_operand_type": "SCALAR",
+        "right_operand_value": "70"
+      }
+    ]
+  },
+  {
+    "name": "stop_loss",
+    "group_type": "EXIT",
+    "logic_operator": "AND",
+    "conditions": [
+      {
+        "left_operand_type": "OHLCV",
+        "left_operand_value": "close",
+        "operator": "LT",
+        "right_operand_type": "INDICATOR",
+        "right_operand_value": "ema_20"
+      }
+    ]
+  }
+]
+```
+
+**Boolean Expression:**
+```
+profit_target || stop_loss
+```
+
+Exit when EITHER condition is met.
+
+### Example: Complex Nested Logic
+
+**Strategy:** Enter when (oversold AND volume spike) OR breakout.
+
+**Boolean Expression:**
+```
+(oversold && volume_surge) || breakout
+```
+
+Parentheses ensure `oversold && volume_surge` is evaluated first.
+
+### Example: Negation
+
+**Strategy:** Enter when oversold BUT NOT in downtrend.
+
+**Boolean Expression:**
+```
+oversold && !downtrend
+```
+
+The `!` operator inverts the `downtrend` group result.
+
+### Common Patterns
+
+**Strong Confluence Entry:**
+```
+oversold && trending && volume_surge
+```
+All three groups must be true (conservative entry).
+
+**Multiple Exit Conditions:**
+```
+take_profit || stop_loss || time_based_exit
+```
+Exit on first condition that triggers (any exit wins).
+
+**Filtered Entry:**
+```
+signal && !low_volume && !choppy_market
+```
+Enter on signal, but exclude when volume is low OR market is choppy.
+
+**Alternative Setups:**
+```
+(ma_crossover && strong_momentum) || (breakout && high_volume)
+```
+Enter using EITHER setup (two different strategies).
+
+### Implementation Details
+
+1. Each condition group evaluates independently (AND/OR within the group)
+2. Group results are combined using boolean expression
+3. Operator precedence: `!` (highest), `&&`, `||` (lowest)
+4. Parentheses override precedence
+5. Group names must be unique and alphanumeric (underscores allowed)
+6. Missing group name in expression → evaluates to false
+
+### When to Use Boolean Expressions
+
+**Use boolean expressions when:**
+- You need (A AND B) OR C logic (can't be expressed with single-level AND/OR)
+- You want to combine multiple independent strategies
+- You need negation (NOT operator)
+- You want explicit control over precedence
+
+**Use simple AND/OR logic when:**
+- All conditions are ANDed or all are ORed
+- Logic fits within a single condition group
+- Simpler is better (don't over-complicate)
+
+### Limitations
+
+- Cannot use boolean expressions within a single condition group (groups have logic_operator for that)
+- Each group name can only appear once in the expression
+- Maximum nesting depth: reasonable (no specific limit, but keep it readable)
+- All referenced groups must exist and be same type (all ENTRY or all EXIT)
 
 All operators work with indicators, OHLCV data, and lookback values. Crossover and trend operators require Series operands (not scalars).
