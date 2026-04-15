@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.backtests import router as backtests_router
+from app.api.routes.robustness import router as robustness_router
 from app.api.routes.strategies import router as strategies_router
 from app.api.routes.tickers import router as tickers_router
 
@@ -22,4 +23,11 @@ app.add_middleware(
 
 app.include_router(strategies_router)
 app.include_router(backtests_router)
+app.include_router(robustness_router)
 app.include_router(tickers_router)
+
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint for smoke tests and monitoring."""
+    return {"status": "healthy"}
