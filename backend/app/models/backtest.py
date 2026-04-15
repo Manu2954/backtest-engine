@@ -42,6 +42,9 @@ class BacktestRun(Base):
     # Attribution feature flag
     enable_attribution: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
+    # Risk-free rate for Sharpe ratio calculation (annual, e.g., 0.05 for 5%)
+    risk_free_rate: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True, default=0.0)
+
     strategy = relationship("Strategy", back_populates="backtest_runs")
     trades = relationship("TradeLog", back_populates="run", cascade="all, delete-orphan")
 

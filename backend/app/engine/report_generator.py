@@ -203,6 +203,7 @@ def generate_report(
     equity_curve: pd.Series,
     initial_capital: float,
     benchmark_equity: pd.Series | None = None,
+    risk_free_rate: float = 0.0,
 ) -> dict[str, Any]:
     equity = _to_series(equity_curve).dropna()
     equity = _ensure_datetime_index(equity)
@@ -217,7 +218,7 @@ def generate_report(
         years = delta.days / 365.25 if hasattr(delta, "days") else 0.0
 
     if years > 0 and initial_capital > 0:
-        cagr = (final_capital / initial_capital) ** (1 / years) - 1
+        cagr = ((final_capital / initial_capital) ** (1 / years) - 1) * 100
     else:
         cagr = 0.0
 
@@ -247,7 +248,10 @@ def generate_report(
 
     daily_returns = equity.pct_change().dropna()
     if not daily_returns.empty and daily_returns.std() != 0:
-        sharpe = (daily_returns.mean() / daily_returns.std()) * (252 ** 0.5)
+        # Convert annual risk-free rate to daily rate
+        daily_rf = (1 + risk_free_rate) ** (1 / 252) - 1
+        excess_returns = daily_returns - daily_rf
+        sharpe = (excess_returns.mean() / daily_returns.std()) * (252 ** 0.5)
     else:
         sharpe = 0.0
 
