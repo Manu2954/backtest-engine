@@ -18,7 +18,7 @@ celery_app.conf.update(
     task_track_started=True,
     task_time_limit=120,
     broker_connection_retry_on_startup=True,
-    include=["app.tasks.backtest_task"],
+    include=["app.tasks.backtest_task", "app.tasks.robustness_task"],
 )
 
 celery_app.autodiscover_tasks(["app.tasks"])

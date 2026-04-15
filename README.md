@@ -14,6 +14,9 @@ The Backtest Engine is designed to help traders and investors test their technic
 - **Historical Comparisons (V2)**: Compare current values to historical values (lookback comparisons) for trend detection
 - **Risk-Based Position Sizing (V2)**: Automatically adjust position size based on risk percentage and stop distance
 - **Pluggable Data Providers (V2)**: Clean provider abstraction for validated, high-quality data sources
+- **Trade Attribution (Phase 1A)**: Track which conditions triggered each trade, calculate signal strength and alpha
+- **Empirical Binning (Phase 1B)**: Data-driven analysis of which indicator ranges correlate with profitable trades
+- **Robustness Analysis (Phase 2)**: Parameter sensitivity testing to identify fragile vs robust strategies
 - **Asynchronous Backtesting**: Run backtests as background jobs using Celery
 - **Historical Data**: Fetch and cache OHLCV data with Redis caching and PostgreSQL persistence
 - **Performance Analytics**: Generate comprehensive reports with equity curves, trade logs, and key metrics
@@ -406,20 +409,25 @@ OHLCV_CACHE_TTL_SECONDS=86400
 ## API Endpoints
 
 ### Strategies
-- `GET /api/strategies` - List all strategies
-- `GET /api/strategies/{id}` - Get strategy details
-- `POST /api/strategies` - Create new strategy
-- `PUT /api/strategies/{id}` - Update strategy
-- `DELETE /api/strategies/{id}` - Delete strategy
+- `GET /strategies` - List all strategies
+- `GET /strategies/{id}` - Get strategy details
+- `POST /strategies` - Create new strategy
+- `PUT /strategies/{id}` - Update strategy
+- `DELETE /strategies/{id}` - Delete strategy
 
 ### Backtests
-- `GET /api/backtests` - List all backtest runs
-- `GET /api/backtests/{id}` - Get backtest results
-- `POST /api/backtests/run` - Submit new backtest
-- `GET /api/backtests/{id}/trades` - Get trade log
+- `GET /backtests` - List all backtest runs
+- `GET /backtests/{id}` - Get backtest results
+- `POST /backtests` - Submit new backtest
+- `GET /backtests/{id}/trades` - Get trade log
+
+### Robustness Analysis
+- `POST /robustness/parameter-sensitivity` - Run parameter sensitivity analysis
+- `GET /robustness/{id}` - Get analysis status and results
+- `DELETE /robustness/{id}` - Delete analysis
 
 ### Tickers
-- `GET /api/tickers/search?q={query}` - Search for ticker symbols
+- `GET /tickers/validate?ticker={symbol}` - Validate ticker symbol
 
 ## Testing
 
@@ -447,6 +455,10 @@ python scripts/m2_smoke.py
 python scripts/m3_smoke.py
 python scripts/m4_smoke.py
 python scripts/m5_smoke.py
+
+# Run feature smoke tests
+python scripts/attribution_smoke.py   # Trade attribution
+python scripts/robustness_smoke.py    # Parameter sensitivity (requires Celery worker)
 
 # Run LOOKBACK feature demo
 python scripts/demo_lookback.py
@@ -508,16 +520,29 @@ The system calculates comprehensive performance statistics:
 ✅ Pluggable provider architecture
 ✅ Asset class support (STOCK and CRYPTO)
 
-### Planned (V2+)
+### Completed (Phase 1 - Attribution)
+✅ Trade attribution (Phase 1A) - track which conditions trigger trades
+✅ Signal strength calculation (confluence-based)
+✅ Alpha calculation (skill vs luck)
+✅ Empirical binning analysis (Phase 1B) - data-driven indicator range validation
+
+### Completed (Phase 2 - Robustness)
+✅ Parameter sensitivity analysis - vary parameters ±20%, measure stability
+✅ Robustness classification (ROBUST/MODERATE/FRAGILE)
+✅ Parallel variant backtesting via Celery
+✅ Stability scoring with coefficient of variation
+
+### Planned (Phase 2+)
+- Monte Carlo simulation (randomized entry timing, confidence intervals)
+- Walk-forward optimization (out-of-sample validation)
+- Robustness confidence scoring (0-100 scale)
+- Regime detection (bull/bear/sideways classification)
 - Portfolio-level backtesting (multiple tickers)
 - Short selling support
 - Parameter optimization/scanning
-- Walk-forward analysis
-- Polygon.io provider integration (validated, high-quality US equities data)
-- Financial Modeling Prep provider (fundamental data support)
+- Polygon.io provider integration
 - Custom indicator formulas
 - Multi-timeframe analysis
-- Pattern recognition (divergence detection)
 
 For detailed limitations and V2 roadmap, see `docs/V1_LIMITATIONS.txt`
 

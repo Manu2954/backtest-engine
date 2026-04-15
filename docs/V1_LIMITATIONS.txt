@@ -1,7 +1,7 @@
 # Version 1 - Current Limitations and Constraints
 
-Generated: 2026-03-08
-Status: All 10 critical/high/medium bugs fixed and merged
+Generated: 2026-04-06 (Post-Phase 1A/1B)
+Status: Core features complete, strategic focus on Truth Engine (Phase 2)
 
 ---
 
@@ -44,40 +44,40 @@ Current methods:
   - full_capital: Use all available cash
   - percent_capital: Use X% of available cash
   - fixed_amount: Use fixed dollar amount
+  - risk_based: Size based on risk % and stop distance
 
 Missing methods:
   - Kelly Criterion (optimal bet sizing)
-  - Risk-based sizing (% of equity risked per trade based on stop distance)
   - Volatility-adjusted sizing (ATR-based)
   - Maximum shares/dollar constraints combined with other methods
   - Fixed fractional (risk fixed % of total equity, not just cash)
   - Optimal f (Ralph Vince)
 
-Impact: Cannot implement professional risk management strategies
+Impact: Cannot implement advanced professional risk management strategies
 
 
 ---
 
 ## 4. DATA SOURCES
 
-### Yahoo Finance Only
-- Single data provider: yfinance library
-- Subject to Yahoo Finance API limitations:
-  * Rate limiting
-  * Data quality issues
-  * Historical data gaps
-  * Service outages
-  * Intraday data limited to last 60 days for stocks
+### Limited Data Providers
+Supported providers:
+  - YahooFinance: stocks/crypto, daily to 1min resolution
+  - Binance: cryptocurrency, multiple resolutions, IST timezone support
+
+Provider-specific limitations:
+  - Yahoo Finance: Rate limiting, data quality issues, historical gaps, intraday limited to 60 days for stocks
+  - Binance: Cryptocurrency only
 
 Missing capabilities:
-  - Multiple data providers (Alpha Vantage, IEX Cloud, Polygon.io, etc.)
+  - Additional providers (Alpha Vantage, IEX Cloud, Polygon.io, etc.)
   - Custom CSV data import
   - Real-time or tick data
   - Alternative data (fundamentals, sentiment, news, etc.)
-  - Cryptocurrency exchanges (Binance, Coinbase Pro)
+  - Traditional exchanges (NYSE, NASDAQ direct feeds)
   - Futures and options data
 
-Impact: Limited data quality and coverage, single point of failure
+Impact: Limited data quality and coverage for certain asset classes
 
 
 ---
@@ -97,28 +97,23 @@ Impact: Cannot test high-frequency strategies or combine timeframes
 
 ## 6. CONDITION ENGINE
 
-### Single-Level Logic Only
-- Only supports single-level AND/OR within a condition group
-- Cannot create nested logic: (A AND B) OR (C AND D)
-- Current structure:
-  * Entry Group: Condition1 AND/OR Condition2 AND/OR Condition3
-  * Exit Group: Condition1 AND/OR Condition2 AND/OR Condition3
+### Logic Capabilities
+Current features:
+  - Basic comparison operators (GT, LT, EQ, GTE, LTE)
+  - Crossover detection (CROSSES_ABOVE, CROSSES_BELOW)
+  - Trend detection (IS_RISING, IS_FALLING)
+  - Boolean expressions (combine condition groups with &&, ||, !)
+  - Lookback comparisons (e.g., "close > close[5]")
 
 Missing capabilities:
   - Arithmetic operations in conditions (e.g., "SMA_20 - SMA_50 > 10")
   - Time-based conditions (e.g., "only trade between 9:30-10:30 AM")
   - Day-of-week filters (e.g., "no trades on Mondays")
-  - Inter-bar conditions (e.g., "highest high in last 20 bars")
-  - Lookback comparisons (e.g., "close > close[5]" - 5 bars ago)
+  - Inter-bar aggregations (e.g., "highest high in last 20 bars")
   - Pattern recognition (e.g., "bullish engulfing candle")
-  - Volume conditions (no direct volume operators)
+  - Volume-specific operators (no direct volume operators)
 
-Supported operators only:
-  - GT, LT, EQ, GTE, LTE (basic comparison)
-  - CROSSES_ABOVE, CROSSES_BELOW (crossover detection)
-  - IS_RISING, IS_FALLING (trend detection)
-
-Impact: Cannot implement complex trading rules or filters
+Impact: Cannot implement complex time-based or pattern-based trading rules
 
 
 ---
@@ -244,14 +239,13 @@ Impact: Cannot model realistic broker constraints and risk limits
 ### Basic Metrics Only
 Current metrics:
   - Total return, win rate, profit factor
-  - Sharpe ratio, max drawdown
+  - Sharpe ratio, Calmar ratio, max drawdown
   - Average win/loss, largest win/loss
   - Trade count, trade duration
   - Buy-and-hold comparison
 
 Missing analytics:
   - Sortino ratio (downside deviation)
-  - Calmar ratio (return/max drawdown)
   - Omega ratio
   - Value at Risk (VaR)
   - Conditional VaR (CVaR)
@@ -272,13 +266,15 @@ Impact: Limited performance analysis and risk assessment
 
 ## 13. USER MANAGEMENT
 
-### No Authentication System
+### No Authentication System (DEPRIORITIZED)
 Current state:
   - Basic User model exists in database
   - No login/logout functionality
   - No password hashing
   - No session management
   - No API authentication
+
+Strategic note: Authentication/multi-tenancy has been DEPRIORITIZED in favor of core "Truth Engine" features (robustness analysis, validation tools). Focus is on building differentiated value proposition before production deployment.
 
 Missing capabilities:
   - User registration/authentication
@@ -290,7 +286,7 @@ Missing capabilities:
   - Resource limits (CPU time, memory)
   - Audit logging (who did what, when)
 
-Impact: Not production-ready, no security
+Impact: Not production-ready for multi-user deployment, intentionally deferred
 
 
 ---

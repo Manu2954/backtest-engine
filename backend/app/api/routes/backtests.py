@@ -43,6 +43,7 @@ async def create_backtest(
         commission_pct=payload.commission_pct,
         slippage_pct=payload.slippage_pct,
         enable_attribution=payload.enable_attribution,
+        risk_free_rate=payload.risk_free_rate,
     )
     session.add(run)
     await session.commit()
@@ -99,3 +100,17 @@ async def get_backtest_trades(
         .offset(offset)
     )
     return result.scalars().all()
+
+
+@router.delete("/{run_id}")
+async def delete_backtest(
+    run_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    result = await session.execute(select(BacktestRun).where(BacktestRun.id == run_id))
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Backtest run not found")
+    await session.delete(run)
+    await session.commit()
+    return {"status": "deleted", "id": str(run_id)}

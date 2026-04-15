@@ -1,5 +1,25 @@
 ================================================================================
-TRADE ATTRIBUTION PHASE 1B - IMPLEMENTATION PLAN
+⚠️ DEPRECATED: This plan was replaced by Empirical Binning approach ⚠️
+================================================================================
+
+DEPRECATION DATE: April 6, 2026
+REASON: Per senior engineer feedback, arbitrary thresholds (RSI 30/70, ADX 25)
+        are subjective curve-fitting with no validation method.
+
+REPLACEMENT: Empirical Binning analysis (data-driven quintile binning)
+SEE: backend/docs/EMPIRICAL_BINNING.txt for actual Phase 1B implementation
+
+WHY THIS APPROACH WAS REJECTED:
+- Arbitrary thresholds baked into calculators (RSI < 30 = "strong")
+- Combinatorial explosion: 5 calculators × multiple params
+- No statistical validation method
+- Asset-specific thresholds needed (BTC ≠ AAPL)
+- Wasted development on potentially ineffective features
+
+KEPT FOR: Historical reference only
+
+================================================================================
+TRADE ATTRIBUTION PHASE 1B - ORIGINAL PLAN (DEPRECATED)
 ================================================================================
 
 Created: 2026-04-05

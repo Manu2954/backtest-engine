@@ -1,0 +1,369 @@
+================================================================================
+                    BACKTEST ENGINE - QUICK START GUIDE
+================================================================================
+
+Get your first backtest running in under 10 minutes.
+
+For comprehensive documentation, see: BACKTEST_ENGINE_COMPREHENSIVE_GUIDE.txt
+
+
+================================================================================
+                              1. SETUP (5 MINUTES)
+================================================================================
+
+PREREQUISITES:
+  - Python 3.12+
+  - Node.js 18+
+  - Docker and Docker Compose
+
+STEP 1: Start Infrastructure
+-----------------------------
+```bash
+cd /path/to/backtest-engine
+docker-compose up -d
+```
+
+This starts PostgreSQL and Redis.
+
+
+STEP 2: Setup Backend
+---------------------
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+alembic upgrade head
+```
+
+
+STEP 3: Start Backend API (Terminal 1)
+--------------------------------------
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+```
+
+Backend running at: http://localhost:8000
+
+
+STEP 4: Start Celery Worker (Terminal 2)
+----------------------------------------
+```bash
+cd backend
+source .venv/bin/activate
+celery -A app.celery_app.celery_app worker --loglevel=info
+```
+
+
+STEP 5: Start Frontend (Terminal 3) - OPTIONAL
+----------------------------------------------
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend running at: http://localhost:5173
+
+Note: Frontend is optional. You can use API directly or via scripts.
+
+
+================================================================================
+                      2. YOUR FIRST BACKTEST (5 MINUTES)
+================================================================================
+
+We'll create a simple RSI oversold strategy and backtest it on Apple stock.
+
+STRATEGY LOGIC:
+  - Entry: Buy when RSI falls below 30 (oversold)
+  - Exit: Sell when RSI rises above 70 (overbought)
+
+
+OPTION A: Using Python Script
+------------------------------
+
+Create `my_first_backtest.py`:
+
+```python
+import requests
+from datetime import datetime, timedelta
+
+API_BASE = "http://localhost:8000"
+
+# Step 1: Create Strategy
+strategy_payload = {
+    "name": "RSI Oversold Strategy",
+    "description": "Buy when RSI < 30, sell when RSI > 70",
+    "indicators": [
+        {
+            "type": "RSI",
+            "alias": "rsi_14",
+            "params": {"period": 14, "source": "close"}
+        }
+    ],
+    "condition_groups": [
+        {
+            "name": "entry",
+            "group_type": "ENTRY",
+            "logic_operator": "AND",
+            "conditions": [
+                {
+                    "left_operand_type": "INDICATOR",
+                    "left_operand_value": "rsi_14",
+                    "operator": "LT",
+                    "right_operand_type": "SCALAR",
+                    "right_operand_value": "30"
+                }
+            ]
+        },
+        {
+            "name": "exit",
+            "group_type": "EXIT",
+            "logic_operator": "AND",
+            "conditions": [
+                {
+                    "left_operand_type": "INDICATOR",
+                    "left_operand_value": "rsi_14",
+                    "operator": "GT",
+                    "right_operand_type": "SCALAR",
+                    "right_operand_value": "70"
+                }
+            ]
+        }
+    ]
+}
+
+response = requests.post(f"{API_BASE}/api/strategies", json=strategy_payload)
+strategy = response.json()
+strategy_id = strategy["id"]
+print(f"Created strategy: {strategy_id}")
+
+
+# Step 2: Run Backtest
+end_date = datetime.now().date()
+start_date = end_date - timedelta(days=365)  # 1 year
+
+backtest_payload = {
+    "strategy_id": strategy_id,
+    "ticker": "AAPL",
+    "asset_class": "STOCK",
+    "start_date": start_date.isoformat(),
+    "end_date": end_date.isoformat(),
+    "initial_capital": 10000.0,
+    "bar_resolution": "1d",
+    "position_size_type": "full_capital",
+    "commission_per_trade": 1.0,
+    "commission_pct": 0.0,
+    "slippage_pct": 0.05
+}
+
+response = requests.post(f"{API_BASE}/api/backtests", json=backtest_payload)
+backtest = response.json()
+backtest_id = backtest["id"]
+print(f"Backtest submitted: {backtest_id}")
+print("Status:", backtest["status"])
+
+
+# Step 3: Wait for completion and get results
+import time
+while True:
+    response = requests.get(f"{API_BASE}/api/backtests/{backtest_id}")
+    backtest = response.json()
+
+    if backtest["status"] == "COMPLETE":
+        print("\nBacktest Complete!")
+        break
+    elif backtest["status"] == "FAILED":
+        print("Backtest failed:", backtest.get("error_message"))
+        exit(1)
+
+    print("Status:", backtest["status"])
+    time.sleep(2)
+
+
+# Step 4: Display Results
+report = backtest["report"]
+
+print("\n" + "="*60)
+print("BACKTEST RESULTS")
+print("="*60)
+print(f"Total Return:       {report['total_return_pct']:.2f}%")
+print(f"CAGR:               {report['cagr']:.2f}%")
+print(f"Sharpe Ratio:       {report['sharpe_ratio']:.2f}")
+print(f"Max Drawdown:       {report['max_drawdown_pct']:.2f}%")
+print(f"Win Rate:           {report['win_rate']:.2f}%")
+print(f"Total Trades:       {report['total_trades']}")
+print(f"Profit Factor:      {report['profit_factor']:.2f}")
+print(f"\nBenchmark Return:   {report['benchmark_return_pct']:.2f}%")
+print(f"Alpha:              {report['alpha']:.2f}%")
+print("="*60)
+```
+
+Run it:
+```bash
+python my_first_backtest.py
+```
+
+
+OPTION B: Using Frontend (If Started)
+-------------------------------------
+1. Open http://localhost:5173
+2. Click "Create Strategy"
+3. Add indicator: RSI, period 14, alias "rsi_14"
+4. Add entry condition: rsi_14 < 30
+5. Add exit condition: rsi_14 > 70
+6. Save strategy
+7. Click "Run Backtest"
+8. Enter: AAPL, 1 year date range, $10,000 initial capital
+9. View results
+
+
+================================================================================
+                        3. UNDERSTANDING YOUR RESULTS
+================================================================================
+
+KEY METRICS EXPLAINED:
+
+Total Return:
+  - Your strategy's percentage gain/loss over the period
+  - Example: 15.5% means you turned $10,000 into $11,550
+
+CAGR (Compound Annual Growth Rate):
+  - Annualized return assuming compounding
+  - Use this to compare strategies over different time periods
+
+Sharpe Ratio:
+  - Risk-adjusted return (higher is better)
+  - > 1.0 = Good, > 2.0 = Excellent, > 3.0 = Outstanding
+  - < 0 = Strategy lost money or too volatile
+
+Max Drawdown:
+  - Largest peak-to-trough decline
+  - Example: -12.3% means at worst you were down 12.3% from peak
+  - Important for risk tolerance assessment
+
+Win Rate:
+  - Percentage of profitable trades
+  - 50%+ is typical for trend-following strategies
+  - High win rate doesn't always mean profitable (could have small wins, big losses)
+
+Profit Factor:
+  - Gross profit / gross loss
+  - > 1.0 = Profitable, > 1.5 = Good, > 2.0 = Excellent
+  - < 1.0 = Strategy loses money
+
+Benchmark Return:
+  - What you'd earn with simple buy-and-hold
+  - If your return < benchmark, strategy underperformed
+
+Alpha:
+  - Your return - benchmark return
+  - Positive alpha = you beat the market
+  - Negative alpha = you underperformed the market
+
+
+ATTRIBUTION INSIGHTS (If 50+ trades):
+
+Signal Strength Breakdown:
+  - Strong signals (>0.7): Should have highest win rate
+  - If weak signals perform as well → strategy may be too simple
+
+Binning Analysis:
+  - Shows which RSI ranges were most profitable
+  - Example: "RSI 10-20: avg P&L $350" → extreme oversold = best entries
+  - Use this to refine entry threshold (maybe RSI < 25 instead of < 30)
+
+
+================================================================================
+                            4. WHAT'S NEXT?
+================================================================================
+
+IMPROVE YOUR STRATEGY:
+  1. Add more indicators (INDICATORS.txt for full list)
+  2. Combine conditions with boolean expressions (OPERATORS.txt)
+  3. Add stop loss and take profit for risk management
+  4. Try different position sizing (risk-based, percent of capital)
+  5. Test on multiple tickers and time periods
+
+ADVANCED FEATURES:
+  - Trade Attribution: Understand which conditions drive profits
+  - Empirical Binning: Validate indicator effectiveness statistically
+  - Dynamic stops: ATR-based trailing stops
+  - Periodic contributions: Dollar-cost averaging simulation
+
+DOCUMENTATION:
+  - BACKTEST_ENGINE_COMPREHENSIVE_GUIDE.txt - Full user and developer guide
+  - INDICATORS.txt - All 11 supported indicators with examples
+  - OPERATORS.txt - All operators (comparisons, crossovers, boolean expressions)
+  - POSITION_SIZING.txt - All position sizing methods
+  - PROJECT_STATUS.txt - Current features and roadmap
+  - V1_LIMITATIONS.txt - Known limitations and future enhancements
+
+
+================================================================================
+                              5. COMMON ISSUES
+================================================================================
+
+ISSUE: "Connection refused" when calling API
+FIX: Make sure backend is running (Terminal 1) and listening on port 8000
+
+ISSUE: Backtest stuck in PENDING status
+FIX: Make sure Celery worker is running (Terminal 2). Check worker logs for errors.
+
+ISSUE: "Insufficient bars after warmup"
+FIX: RSI needs 14+ bars to calculate. Use longer date range (6+ months).
+
+ISSUE: "Invalid ticker symbol"
+FIX: Verify ticker exists. Use Yahoo Finance format:
+     - Stocks: AAPL, MSFT, GOOGL
+     - Crypto: BTC-USD, ETH-USD (or BTCUSDT with Binance)
+
+ISSUE: Docker containers not starting
+FIX: Make sure ports 5432 (PostgreSQL) and 6379 (Redis) are available.
+     Check: `docker-compose ps` and `docker-compose logs`
+
+
+================================================================================
+                              6. EXAMPLE STRATEGIES
+================================================================================
+
+MOVING AVERAGE CROSSOVER:
+  Entry: EMA 20 crosses above SMA 50
+  Exit: EMA 20 crosses below SMA 50
+
+BOLLINGER BAND MEAN REVERSION:
+  Entry: Price touches lower Bollinger Band
+  Exit: Price touches upper Bollinger Band
+
+MOMENTUM BREAKOUT:
+  Entry: ADX > 25 (strong trend) AND price > EMA 20
+  Exit: ADX < 20 (weak trend)
+
+COMBINED CONFIRMATION:
+  Entry: (RSI < 30 AND MACD crosses above signal) OR (price > SMA 50 AND volume surge)
+  Exit: RSI > 70 OR stop loss -5%
+
+See BACKTEST_ENGINE_COMPREHENSIVE_GUIDE.txt Part III for detailed strategy examples.
+
+
+================================================================================
+                                 SUMMARY
+================================================================================
+
+You now know how to:
+  ✓ Set up the backtest engine
+  ✓ Create a simple RSI strategy
+  ✓ Run a backtest on historical data
+  ✓ Interpret key performance metrics
+  ✓ Find advanced documentation
+
+Ready to build more sophisticated strategies? See:
+  - BACKTEST_ENGINE_COMPREHENSIVE_GUIDE.txt (Part I: User Perspective)
+  - INDICATORS.txt (11 technical indicators available)
+  - OPERATORS.txt (9 condition operators + boolean expressions)
+
+Good luck with your backtesting!
+
+================================================================================

@@ -29,6 +29,8 @@ class BacktestCreate(BaseModel):
     slippage_pct: float = 0.0  # Slippage as % of price (e.g., 0.05 for 0.05%)
     # Attribution parameters
     enable_attribution: bool = True  # Enable trade attribution analysis
+    # Risk-free rate for Sharpe ratio calculation
+    risk_free_rate: float = 0.0  # Annual risk-free rate (e.g., 0.05 for 5%)
 
 
 class BacktestOut(BaseModel):
@@ -58,6 +60,7 @@ class BacktestOut(BaseModel):
     commission_pct: float | None
     slippage_pct: float | None
     enable_attribution: bool
+    risk_free_rate: float | None
 
 
 class TradeLogOut(BaseModel):

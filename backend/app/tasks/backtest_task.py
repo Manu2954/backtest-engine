@@ -72,13 +72,20 @@ async def _run_backtest_async(run_id: str) -> None:
                 }
                 for ind in strategy.indicators
             ]
+            logger.info(f"Indicators to compute: {indicators}")
             df = compute_indicators(df, indicators)
 
             # Trim warmup period where indicators have NaN values
             logger.info("Checking for indicator warmup period")
             df, warmup_bars = trim_warmup_period(df)
+
+            # Capture actual trading start date after warmup
+            requested_start_date = run.start_date
+            actual_start_date = df.index[0].date() if not df.empty else requested_start_date
+
             if warmup_bars > 0:
                 logger.info(f"Trimmed {warmup_bars} bars from warmup period. Starting backtest from bar {warmup_bars}.")
+                logger.info(f"Requested start: {requested_start_date}, Actual start after warmup: {actual_start_date}")
 
             # Validate we have enough data after warmup
             if len(df) < 30:
@@ -153,8 +160,20 @@ async def _run_backtest_async(run_id: str) -> None:
             )
 
             report = generate_report(
-                trades, equity_curve, float(run.initial_capital), benchmark_equity=benchmark_equity
+                trades, equity_curve, float(run.initial_capital),
+                benchmark_equity=benchmark_equity,
+                risk_free_rate=float(run.risk_free_rate or 0.0),
             )
+
+            # Add warmup information to report
+            report["requested_start_date"] = str(requested_start_date)
+            report["actual_start_date"] = str(actual_start_date)
+            report["warmup_bars_trimmed"] = warmup_bars
+            if warmup_bars > 0:
+                report["warmup_note"] = (
+                    f"Backtest started {warmup_bars} bars after requested date due to indicator warmup. "
+                    f"Requested: {requested_start_date}, Actual: {actual_start_date}"
+                )
 
             # Generate attribution report if enabled
             if run.enable_attribution:

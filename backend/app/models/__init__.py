@@ -1,6 +1,7 @@
 from app.models.base import Base
 from app.models.backtest import BacktestRun, TradeLog
 from app.models.ohlcv import OhlcvBar
+from app.models.robustness import RobustnessAnalysis, RobustnessVariantBacktest
 from app.models.strategy import Condition, ConditionGroup, Indicator, Strategy, User
 
 __all__ = [
@@ -13,4 +14,6 @@ __all__ = [
     "BacktestRun",
     "TradeLog",
     "OhlcvBar",
+    "RobustnessAnalysis",
+    "RobustnessVariantBacktest",
 ]
