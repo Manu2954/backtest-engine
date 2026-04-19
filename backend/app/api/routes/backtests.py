@@ -15,11 +15,24 @@ from app.tasks.backtest_task import run_backtest_task
 router = APIRouter(prefix="/backtests", tags=["backtests"])
 
 
-@router.post("", response_model=BacktestOut)
+@router.post("", response_model=BacktestOut, summary="Run backtest")
 async def create_backtest(
     payload: BacktestCreate,
     session: AsyncSession = Depends(get_session),
 ) -> BacktestRun:
+    """
+    Execute a backtest for a strategy.
+
+    The backtest runs asynchronously via Celery. Poll the GET endpoint to check status.
+
+    **Status progression**: PENDING → RUNNING → COMPLETE (or FAILED)
+
+    **Report fields** (when COMPLETE):
+    - Performance: total_return_pct, cagr, sharpe_ratio, max_drawdown_pct
+    - Trade stats: total_trades, win_rate, profit_factor, avg_win, avg_loss
+    - Benchmark: benchmark_return_pct, alpha, beta
+    - Warmup info: requested_start_date, actual_start_date, warmup_bars_trimmed
+    """
     strategy = await session.get(Strategy, payload.strategy_id)
     if strategy is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -53,14 +66,15 @@ async def create_backtest(
     return run
 
 
-@router.get("", response_model=list[BacktestOut])
+@router.get("", response_model=list[BacktestOut], summary="List backtests")
 async def list_backtests(
-    user_id: str | None = Query(None),
-    strategy_id: str | None = Query(None),
-    limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
+    user_id: str | None = Query(None, description="Filter by user ID"),
+    strategy_id: str | None = Query(None, description="Filter by strategy ID"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
     session: AsyncSession = Depends(get_session),
 ) -> list[BacktestRun]:
+    """Retrieve all backtests with optional filtering by user or strategy."""
     query = select(BacktestRun)
     if strategy_id:
         query = query.where(BacktestRun.strategy_id == strategy_id)
@@ -73,11 +87,16 @@ async def list_backtests(
     return result.scalars().all()
 
 
-@router.get("/{run_id}", response_model=BacktestOut)
+@router.get("/{run_id}", response_model=BacktestOut, summary="Get backtest")
 async def get_backtest(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> BacktestRun:
+    """
+    Retrieve a backtest by ID.
+
+    Use this endpoint to poll for completion status and retrieve the final report.
+    """
     result = await session.execute(select(BacktestRun).where(BacktestRun.id == run_id))
     run = result.scalar_one_or_none()
     if run is None:
@@ -85,13 +104,18 @@ async def get_backtest(
     return run
 
 
-@router.get("/{run_id}/trades", response_model=list[TradeLogOut])
+@router.get("/{run_id}/trades", response_model=list[TradeLogOut], summary="Get trade log")
 async def get_backtest_trades(
     run_id: UUID,
-    limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
     session: AsyncSession = Depends(get_session),
 ) -> list[TradeLog]:
+    """
+    Retrieve the trade log for a completed backtest.
+
+    Each trade includes entry/exit dates, prices, PnL, and attribution data (if enabled).
+    """
     result = await session.execute(
         select(TradeLog)
         .where(TradeLog.run_id == run_id)
@@ -102,11 +126,12 @@ async def get_backtest_trades(
     return result.scalars().all()
 
 
-@router.delete("/{run_id}")
+@router.delete("/{run_id}", summary="Delete backtest")
 async def delete_backtest(
     run_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Delete a backtest and all associated trade logs."""
     result = await session.execute(select(BacktestRun).where(BacktestRun.id == run_id))
     run = result.scalar_one_or_none()
     if run is None:

@@ -18,13 +18,18 @@ from app.models.strategy import Condition, ConditionGroup, Indicator, Strategy
 router = APIRouter(prefix="/strategies", tags=["strategies"])
 
 
-@router.get("", response_model=list[StrategyOut])
+@router.get("", response_model=list[StrategyOut], summary="List strategies")
 async def list_strategies(
-    user_id: str | None = Query(None),
-    limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
+    user_id: str | None = Query(None, description="Filter by user ID"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
     session: AsyncSession = Depends(get_session),
 ) -> list[Strategy]:
+    """
+    Retrieve all strategies with their indicators and condition groups.
+
+    Supports pagination via limit/offset parameters.
+    """
     query = select(Strategy).options(
         selectinload(Strategy.indicators),
         selectinload(Strategy.condition_groups).selectinload(ConditionGroup.conditions),
@@ -36,11 +41,22 @@ async def list_strategies(
     return result.scalars().all()
 
 
-@router.post("", response_model=StrategyOut)
+@router.post("", response_model=StrategyOut, summary="Create strategy")
 async def create_strategy(
     payload: StrategyCreate,
     session: AsyncSession = Depends(get_session),
 ) -> Strategy:
+    """
+    Create a new trading strategy.
+
+    A strategy consists of:
+    - **Indicators**: Technical indicators (SMA, EMA, RSI, MACD, etc.) with configurable parameters
+    - **Entry conditions**: Rules that trigger position entry (e.g., SMA crossover, RSI oversold)
+    - **Exit conditions**: Rules that trigger position exit
+
+    Conditions can be combined using AND/OR logic and grouped into named groups
+    for complex entry/exit expressions like `(groupA AND groupB) OR groupC`.
+    """
     strategy = Strategy(
         name=payload.name,
         description=payload.description,
@@ -80,23 +96,29 @@ async def create_strategy(
     return await _fetch_strategy(session, strategy.id)
 
 
-@router.get("/{strategy_id}", response_model=StrategyOut)
+@router.get("/{strategy_id}", response_model=StrategyOut, summary="Get strategy")
 async def get_strategy(
     strategy_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> Strategy:
+    """Retrieve a strategy by ID with all indicators and condition groups."""
     strategy = await _fetch_strategy(session, strategy_id)
     if strategy is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
     return strategy
 
 
-@router.put("/{strategy_id}", response_model=StrategyOut)
+@router.put("/{strategy_id}", response_model=StrategyOut, summary="Update strategy")
 async def update_strategy(
     strategy_id: str,
     payload: StrategyUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> Strategy:
+    """
+    Update an existing strategy.
+
+    Replaces all indicators and condition groups with the new values.
+    """
     strategy = await _fetch_strategy(session, strategy_id)
     if strategy is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -141,11 +163,16 @@ async def update_strategy(
     return await _fetch_strategy(session, strategy.id)
 
 
-@router.delete("/{strategy_id}")
+@router.delete("/{strategy_id}", summary="Delete strategy")
 async def delete_strategy(
     strategy_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    """
+    Delete a strategy and all associated backtests.
+
+    This action is irreversible.
+    """
     strategy = await session.get(Strategy, strategy_id)
     if strategy is None:
         raise HTTPException(status_code=404, detail="Strategy not found")

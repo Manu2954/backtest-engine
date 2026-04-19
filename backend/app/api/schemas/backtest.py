@@ -4,84 +4,96 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BacktestCreate(BaseModel):
-    strategy_id: UUID
-    ticker: str
-    asset_class: str
-    start_date: date
-    end_date: date
-    bar_resolution: str = "1d"
-    initial_capital: float
-    provider: str | None = None  # Data provider: "yfinance" or "binance" (auto-selected if None)
-    periodic_contribution: dict[str, Any] | None = None
-    # Position sizing parameters
-    position_size_type: str = "full_capital"  # "full_capital" | "percent_capital" | "fixed_amount"
-    position_size_value: float = 100.0  # Percentage or dollar amount
-    # Risk management parameters
-    stop_loss_pct: float | None = None  # Stop loss percentage (e.g., 5.0 for 5%)
-    take_profit_pct: float | None = None  # Take profit percentage (e.g., 10.0 for 10%)
-    # Transaction cost parameters
-    commission_per_trade: float = 0.0  # Fixed commission per trade (e.g., $5)
-    commission_pct: float = 0.0  # Commission as % of trade value (e.g., 0.1 for 0.1%)
-    slippage_pct: float = 0.0  # Slippage as % of price (e.g., 0.05 for 0.05%)
-    # Attribution parameters
-    enable_attribution: bool = True  # Enable trade attribution analysis
-    # Risk-free rate for Sharpe ratio calculation
-    risk_free_rate: float = 0.0  # Annual risk-free rate (e.g., 0.05 for 5%)
+    """Request payload for creating a new backtest run."""
+
+    strategy_id: UUID = Field(..., description="ID of the strategy to backtest")
+    ticker: str = Field(..., description="Ticker symbol (e.g., AAPL, BTCUSDT)")
+    asset_class: str = Field(..., description="STOCK or CRYPTO")
+    start_date: date = Field(..., description="Backtest start date")
+    end_date: date = Field(..., description="Backtest end date")
+    bar_resolution: str = Field("1d", description="Bar interval: 1m, 5m, 15m, 1h, 1d")
+    initial_capital: float = Field(..., description="Starting capital in dollars")
+    provider: str | None = Field(None, description="Data provider: yfinance or binance (auto-selected if None)")
+    periodic_contribution: dict[str, Any] | None = Field(None, description="Periodic cash contributions config")
+
+    # Position sizing
+    position_size_type: str = Field("full_capital", description="full_capital, percent_capital, fixed_amount, or risk_based")
+    position_size_value: float = Field(100.0, description="Percentage (0-100) or dollar amount depending on type")
+
+    # Risk management
+    stop_loss_pct: float | None = Field(None, description="Stop loss percentage (e.g., 5.0 for 5%)")
+    take_profit_pct: float | None = Field(None, description="Take profit percentage (e.g., 10.0 for 10%)")
+
+    # Transaction costs
+    commission_per_trade: float = Field(0.0, description="Fixed commission per trade in dollars")
+    commission_pct: float = Field(0.0, description="Commission as percentage of trade value")
+    slippage_pct: float = Field(0.0, description="Slippage as percentage of price")
+
+    # Attribution
+    enable_attribution: bool = Field(True, description="Enable trade attribution analysis")
+
+    # Sharpe ratio
+    risk_free_rate: float = Field(0.0, description="Annual risk-free rate for Sharpe ratio (e.g., 0.05 for 5%)")
 
 
 class BacktestOut(BaseModel):
+    """Response payload for a backtest run."""
+
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    strategy_id: UUID
-    ticker: str
-    asset_class: str
-    provider: str | None
-    start_date: date
-    end_date: date
-    bar_resolution: str
-    initial_capital: float
-    status: str
-    celery_task_id: str | None
-    created_at: datetime | None
-    completed_at: datetime | None
-    error_message: str | None
-    report: dict[str, Any] | None
-    periodic_contribution: dict[str, Any] | None
-    position_size_type: str | None
-    position_size_value: float | None
-    stop_loss_pct: float | None
-    take_profit_pct: float | None
-    commission_per_trade: float | None
-    commission_pct: float | None
-    slippage_pct: float | None
+    id: UUID = Field(..., description="Unique backtest ID")
+    strategy_id: UUID = Field(..., description="Strategy ID")
+    ticker: str = Field(..., description="Ticker symbol")
+    asset_class: str = Field(..., description="STOCK or CRYPTO")
+    provider: str | None = Field(None, description="Data provider used")
+    start_date: date = Field(..., description="Backtest start date")
+    end_date: date = Field(..., description="Backtest end date")
+    bar_resolution: str = Field(..., description="Bar interval")
+    initial_capital: float = Field(..., description="Starting capital")
+    status: str = Field(..., description="PENDING, RUNNING, COMPLETE, or FAILED")
+    celery_task_id: str | None = Field(None, description="Background task ID")
+    created_at: datetime | None = Field(None, description="Creation timestamp")
+    completed_at: datetime | None = Field(None, description="Completion timestamp")
+    error_message: str | None = Field(None, description="Error message if FAILED")
+    report: dict[str, Any] | None = Field(None, description="Performance report when COMPLETE")
+    periodic_contribution: dict[str, Any] | None = None
+    position_size_type: str | None = None
+    position_size_value: float | None = None
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
+    commission_per_trade: float | None = None
+    commission_pct: float | None = None
+    slippage_pct: float | None = None
     enable_attribution: bool
-    risk_free_rate: float | None
+    risk_free_rate: float | None = Field(None, description="Risk-free rate used for Sharpe ratio")
 
 
 class TradeLogOut(BaseModel):
+    """Individual trade record from a backtest."""
+
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    run_id: UUID
-    entry_date: date
-    entry_price: float
-    exit_date: date
-    exit_price: float
-    shares: float
-    pnl: float
-    pnl_pct: float
-    trade_duration_days: int
-    exit_reason: str | None
-    # Attribution fields (optional)
-    entry_conditions_met: list[str] | None = None
-    exit_conditions_met: list[str] | None = None
-    entry_signal_strength: float | None = None
-    market_return_during_trade: float | None = None
-    alpha: float | None = None
-    indicator_snapshot_entry: dict[str, Any] | None = None
-    indicator_snapshot_exit: dict[str, Any] | None = None
+    id: UUID = Field(..., description="Unique trade ID")
+    run_id: UUID = Field(..., description="Parent backtest ID")
+    entry_date: date = Field(..., description="Position entry date")
+    entry_price: float = Field(..., description="Entry fill price")
+    exit_date: date = Field(..., description="Position exit date")
+    exit_price: float = Field(..., description="Exit fill price")
+    shares: float = Field(..., description="Number of shares/units")
+    pnl: float = Field(..., description="Profit/loss in dollars")
+    pnl_pct: float = Field(..., description="Profit/loss as percentage")
+    trade_duration_days: int = Field(..., description="Days position was held")
+    exit_reason: str | None = Field(None, description="signal, stop_loss, take_profit, or force_close")
+
+    # Attribution fields
+    entry_conditions_met: list[str] | None = Field(None, description="Condition IDs that triggered entry")
+    exit_conditions_met: list[str] | None = Field(None, description="Condition IDs that triggered exit")
+    entry_signal_strength: float | None = Field(None, description="Signal confluence score (0-1)")
+    market_return_during_trade: float | None = Field(None, description="Buy-and-hold return during trade")
+    alpha: float | None = Field(None, description="Trade return minus market return")
+    indicator_snapshot_entry: dict[str, Any] | None = Field(None, description="Indicator values at entry")
+    indicator_snapshot_exit: dict[str, Any] | None = Field(None, description="Indicator values at exit")

@@ -1,11 +1,14 @@
 """
-Celery task for parameter sensitivity analysis.
+Celery tasks for robustness analysis.
 
-Orchestrates parallel backtest execution for strategy variants.
+Includes:
+- Parameter sensitivity analysis
+- Walk-forward validation
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -24,10 +27,18 @@ from app.engine.robustness.parameter_sensitivity import (
     generate_recommendation,
     generate_risk_flags,
 )
+from app.engine.robustness.walk_forward import (
+    generate_windows,
+    calculate_consistency_score as calculate_wf_consistency_score,
+    assess_walk_forward_results,
+    build_walk_forward_report,
+)
 from app.models.backtest import BacktestRun
 from app.models.robustness import RobustnessAnalysis, RobustnessVariantBacktest
 from app.models.strategy import Strategy, Indicator, ConditionGroup, Condition
 from app.tasks.backtest_task import run_backtest_task
+
+logger = logging.getLogger(__name__)
 
 
 async def _create_temporary_strategy(
@@ -578,3 +589,283 @@ async def _run_analysis_async(
             error_message=str(e),
         )
         raise
+
+
+# =============================================================================
+# Walk-Forward Validation
+# =============================================================================
+
+@celery_app.task(name="robustness.walk_forward")
+def run_walk_forward_validation(
+    strategy_id: str,
+    backtest_params: dict[str, Any],
+    window_count: int = 5,
+) -> str:
+    """
+    Run walk-forward validation.
+
+    Tests strategy across rolling time windows to detect period-dependency.
+    Uses fixed parameters - validates if strategy works consistently.
+
+    Args:
+        strategy_id: UUID of strategy to analyze
+        backtest_params: Backtest configuration (ticker, dates, capital, etc.)
+        window_count: Number of windows to divide data into (default: 5)
+
+    Returns:
+        analysis_id (UUID string)
+    """
+    engine = create_async_engine(
+        settings.database_url,
+        echo=False,
+        future=True,
+        poolclass=NullPool,
+    )
+    session_maker = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    try:
+        return asyncio.run(
+            _run_walk_forward_async(
+                strategy_id,
+                backtest_params,
+                window_count,
+                session_maker,
+            )
+        )
+    finally:
+        asyncio.run(engine.dispose())
+
+
+async def _run_walk_forward_async(
+    strategy_id: str,
+    backtest_params: dict[str, Any],
+    window_count: int,
+    session_maker,
+) -> str:
+    """Async implementation of walk-forward validation."""
+    from app.engine.data_layer import fetch_ohlcv_async
+    from app.engine.indicator_layer import compute_indicators, trim_warmup_period
+    from app.engine.condition_engine import evaluate_conditions, evaluate_expression
+    from app.engine.state_machine import run_backtest
+    from app.engine.report_generator import generate_report
+
+    strategy_uuid = UUID(strategy_id)
+
+    # Create analysis record
+    analysis = await _create_walk_forward_analysis_record(
+        strategy_uuid,
+        {
+            "window_count": window_count,
+            "backtest_params": backtest_params,
+        },
+        session_maker,
+    )
+
+    try:
+        await _update_analysis_status(analysis.id, "RUNNING", session_maker)
+
+        # Load strategy
+        strategy = await _get_strategy(strategy_uuid, session_maker)
+
+        # Parse dates
+        start_date = backtest_params["start_date"]
+        end_date = backtest_params["end_date"]
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+        # Step 1: Fetch full OHLCV data
+        logger.info(f"Walk-forward: Fetching OHLCV for {backtest_params['ticker']}")
+        async with session_maker() as session:
+            df = await fetch_ohlcv_async(
+                backtest_params["ticker"],
+                start_date,
+                end_date,
+                backtest_params.get("bar_resolution", "1d"),
+                backtest_params.get("asset_class", "STOCK"),
+                session=session,
+                provider=backtest_params.get("provider"),
+            )
+
+        # Step 2: Compute all indicators once
+        logger.info("Walk-forward: Computing indicators")
+        indicators = [
+            {
+                "indicator_type": ind.indicator_type,
+                "alias": ind.alias,
+                "params": ind.params,
+            }
+            for ind in strategy.indicators
+        ]
+        df = compute_indicators(df, indicators)
+
+        # Step 3: Trim warmup once
+        logger.info("Walk-forward: Trimming warmup")
+        df, warmup_bars = trim_warmup_period(df)
+
+        if len(df) < window_count * 10:
+            raise ValueError(
+                f"Insufficient data after warmup: {len(df)} bars for {window_count} windows. "
+                f"Need at least {window_count * 10} bars."
+            )
+
+        # Step 4: Generate windows
+        logger.info(f"Walk-forward: Generating {window_count} windows from {len(df)} bars")
+        windows = generate_windows(df, window_count)
+
+        # Build condition groups for evaluation
+        entry_groups_dict = {}
+        exit_groups_dict = {}
+        entry_group_legacy = None
+        exit_group_legacy = None
+
+        for cg in strategy.condition_groups:
+            group_payload = {
+                "logic": cg.logic,
+                "conditions": [
+                    {
+                        "id": str(c.id),
+                        "left_operand_type": c.left_operand_type,
+                        "left_operand_value": c.left_operand_value,
+                        "operator": c.operator,
+                        "right_operand_type": c.right_operand_type,
+                        "right_operand_value": c.right_operand_value,
+                    }
+                    for c in cg.conditions
+                ],
+            }
+
+            if cg.group_type == "ENTRY":
+                if cg.group_name:
+                    entry_groups_dict[cg.group_name] = group_payload
+                else:
+                    entry_group_legacy = group_payload
+            elif cg.group_type == "EXIT":
+                if cg.group_name:
+                    exit_groups_dict[cg.group_name] = group_payload
+                else:
+                    exit_group_legacy = group_payload
+
+        # Step 5: Run backtest for each window
+        window_results = []
+        initial_capital = float(backtest_params["initial_capital"])
+
+        for window in windows:
+            logger.info(f"Walk-forward: Processing window {window.index}/{window_count}")
+
+            # Slice dataframe for this window
+            df_window = df.iloc[window.start_idx:window.end_idx + 1].copy()
+
+            # Evaluate entry/exit signals on window
+            if strategy.entry_expression:
+                entry_signal = evaluate_expression(df_window, entry_groups_dict, strategy.entry_expression)
+            else:
+                entry_signal = evaluate_conditions(df_window, entry_group_legacy)
+
+            if strategy.exit_expression:
+                exit_signal = evaluate_expression(df_window, exit_groups_dict, strategy.exit_expression)
+            else:
+                exit_signal = evaluate_conditions(df_window, exit_group_legacy)
+
+            # Run backtest
+            trades, equity_curve = run_backtest(
+                df=df_window,
+                entry_signal=entry_signal,
+                exit_signal=exit_signal,
+                initial_capital=initial_capital,
+                asset_class=backtest_params.get("asset_class", "STOCK"),
+                position_size_type=backtest_params.get("position_size_type", "full_capital"),
+                position_size_value=float(backtest_params.get("position_size_value", 100.0)),
+                stop_loss_pct=float(backtest_params["stop_loss_pct"]) if backtest_params.get("stop_loss_pct") else None,
+                take_profit_pct=float(backtest_params["take_profit_pct"]) if backtest_params.get("take_profit_pct") else None,
+                commission_per_trade=float(backtest_params.get("commission_per_trade", 0.0)),
+                commission_pct=float(backtest_params.get("commission_pct", 0.0)),
+                slippage_pct=float(backtest_params.get("slippage_pct", 0.0)),
+            )
+
+            # Generate report for window
+            report = generate_report(trades, equity_curve, initial_capital)
+
+            # Build window result
+            period_str = f"{window.start_date} to {window.end_date}"
+            trade_count = report.get("total_trades", 0)
+
+            window_results.append({
+                "period": period_str,
+                "start_date": str(window.start_date),
+                "end_date": str(window.end_date),
+                "metrics": {
+                    "total_return_pct": round(report.get("total_return_pct", 0.0), 2),
+                    "sharpe_ratio": round(report.get("sharpe_ratio", 0.0), 2),
+                    "max_drawdown_pct": round(report.get("max_drawdown_pct", 0.0), 2),
+                    "win_rate": round(report.get("win_rate", 0.0), 2),
+                    "total_trades": trade_count,
+                },
+            })
+
+        # Step 6: Calculate consistency and assessment
+        logger.info("Walk-forward: Calculating consistency score")
+        consistency_score, metric_cvs = calculate_wf_consistency_score(window_results)
+        assessment = assess_walk_forward_results(window_results, consistency_score)
+
+        # Step 7: Build report
+        report = build_walk_forward_report(
+            window_results,
+            consistency_score,
+            metric_cvs,
+            assessment,
+        )
+
+        # Add metadata
+        report["metadata"] = {
+            "strategy_id": strategy_id,
+            "ticker": backtest_params["ticker"],
+            "full_period": f"{start_date} to {end_date}",
+            "warmup_bars_trimmed": warmup_bars,
+            "total_bars_analyzed": len(df),
+        }
+
+        await _update_analysis_status(
+            analysis.id,
+            "COMPLETE",
+            session_maker,
+            report=report,
+        )
+        return str(analysis.id)
+
+    except Exception as e:
+        logger.exception(f"Walk-forward validation failed: {e}")
+        await _update_analysis_status(
+            analysis.id,
+            "FAILED",
+            session_maker,
+            error_message=str(e),
+        )
+        raise
+
+
+async def _create_walk_forward_analysis_record(
+    strategy_id: UUID,
+    params: dict[str, Any],
+    session_maker,
+) -> RobustnessAnalysis:
+    """Create initial analysis record for walk-forward validation."""
+    analysis = RobustnessAnalysis(
+        id=uuid4(),
+        strategy_id=strategy_id,
+        analysis_type="WALK_FORWARD",
+        status="PENDING",
+        params=params,
+    )
+
+    async with session_maker() as session:
+        session.add(analysis)
+        await session.commit()
+        await session.refresh(analysis)
+
+    return analysis
