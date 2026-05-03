@@ -1,0 +1,207 @@
+Feature Conditioning Implementation Status
+============================================
+
+DATE: 2026-05-03
+
+CONTEXT
+-------
+Quant feedback: "Don't classify regimes. Extract features (vol, trend, autocorr)
+and find which predict trade success. Report actionable conditions."
+
+Problem with regime detection:
+  - "Trade in BULL regimes" → How do you detect "BULL" in production?
+  - Labels are descriptive (backward-looking), not predictive
+
+Solution needed:
+  - "Trade when vol ∈ [0.015, 0.025] AND trend_strength > 0.6" (directly measurable)
+
+WHAT WE BUILT (v1 - COMPLETE)
+------------------------------
+
+✅ Single-Feature Conditional Analysis
+  - Extracts 7 features at trade entry (vol, trend_strength, trend_slope, etc.)
+  - Bins each feature into quartiles
+  - Finds winning/losing ranges per feature
+  - Calculates feature importance (variance method)
+  - Generates actionable recommendations
+
+✅ Files Created:
+  - backend/app/engine/robustness/feature_conditioning.py (395 lines)
+  - backend/app/api/schemas/robustness.py (added FeatureConditioningCreate)
+  - backend/app/tasks/robustness_task.py (added run_feature_conditioning task)
+  - backend/app/api/routes/robustness.py (added /feature-conditioning endpoint)
+  - backend/scripts/smoke_feature_conditioning.py (smoke test)
+  - docs/FEATURE_CONDITIONING.txt (comprehensive documentation)
+
+✅ Smoke Test Results (BTC 2023-2025, 50 trades):
+  - Top condition: trend_slope ∈ [0.00116, 0.004892] → 91.7% win rate
+  - Feature importance: trend_slope (1.0), volatility (0.829), returns_autocorr (0.629)
+  - Output: Actionable, measurable conditions ✅
+
+✅ API Endpoint:
+  POST /api/robustness/feature-conditioning
+  {
+    "strategy_id": "uuid",
+    "ticker": "BTC-USD",
+    "lookback_window": 50,
+    "min_trades_per_bin": 10,
+    ...
+  }
+
+✅ Features Extracted (all real-time computable, no lookahead):
+  1. volatility - rolling std of log returns
+  2. trend_strength - R² from OLS regression (0-1)
+  3. trend_slope - OLS slope (directional signal)
+  4. price_vs_sma50 - (price - SMA50) / SMA50
+  5. returns_autocorr - lag-1 autocorr (mean reversion signal)
+  6. rsi_level - RSI at entry (optional, if strategy uses it)
+  7. atr_pct - ATR as % of price (optional)
+
+WHAT'S MISSING (v2 - FUTURE)
+-----------------------------
+
+❌ Multi-Feature Combinations
+  Current:
+    - "Trade when trend_slope > 0.001" (single feature)
+    - "Trade when volatility ∈ [0.02, 0.03]" (single feature)
+
+  Needed:
+    - "Trade when vol ∈ [0.015, 0.025] AND trend_strength > 0.6" (combination)
+    - "Trade when vol ∈ [0.02, 0.03] AND autocorr < -0.2 AND slope > 0" (3-way)
+
+Why not implemented yet:
+  - Single-feature addresses 80% of the use case
+  - Combinations require decision trees or combinatorial search
+  - Risk of overfitting with sparse data in multi-dimensional bins
+  - Harder to interpret
+  - Want to validate single-feature approach first with users
+
+THE GAP: SINGLE vs MULTI-FEATURE
+---------------------------------
+
+What we have (single-feature):
+  ✅ Fast to compute
+  ✅ Easy to interpret ("vol too high" = clear)
+  ✅ Production-ready (add as simple filters)
+  ✅ Low overfitting risk
+  ❌ Misses interaction effects ("vol matters more when trend weak")
+
+What quant firms use (multi-feature):
+  ✅ Finds interaction effects
+  ✅ More precise conditions
+  ✅ Higher win rates on combinations
+  ❌ Complex (decision trees, grid search)
+  ❌ Needs more trades (sparse data in 3D)
+  ❌ Overfitting risk
+  ❌ Harder to explain to users
+
+FUTURE OPTIONS
+--------------
+
+Option 1: Ship single-feature as-is
+  - Let users manually combine ("filter on vol AND trend")
+  - Iterate based on real usage feedback
+  - Safest approach, validates concept first
+
+Option 2: Add full multi-feature now
+  - Use sklearn decision tree to find best splits
+  - Report top 5 feature combinations with metrics
+  - Most sophisticated but highest risk
+
+Option 3: Hybrid (2-feature pairs only)
+  - Test all pairwise combinations (7 features = 21 pairs)
+  - Report top 3 pairs: "vol ∈ [X,Y] AND trend > Z"
+  - Middle ground: more powerful than single, less risky than full tree
+  - Add optional parameter: find_combinations=True (default False)
+
+IMPLEMENTATION SKETCH (Option 3)
+---------------------------------
+
+def analyze_feature_pairs(trades_with_features, min_trades_per_bin):
+    """Find winning 2-feature combinations."""
+    feature_names = list(trades_with_features[0]["features"].keys())
+
+    best_combinations = []
+
+    for feat1, feat2 in itertools.combinations(feature_names, 2):
+        # Bin feat1 and feat2 into quartiles
+        # Create 4x4 grid = 16 bins
+        # Calculate win rate per bin
+        # Find bins with win_rate > 65% and >=15 trades
+        # Report: "feat1 ∈ [X,Y] AND feat2 ∈ [A,B]"
+        ...
+
+    return sorted(best_combinations, key=lambda x: x['win_rate'], reverse=True)[:10]
+
+Challenges:
+  - Need 16 * min_trades_per_bin = 160+ trades for 4x4 grid
+  - Combinatorial explosion: 7 features = 21 pairs = 336 bins total
+  - May not find any high-confidence combinations if data sparse
+
+DECISION NEEDED
+----------------
+
+Before proceeding with v2 (multi-feature):
+  1. Validate v1 works with real user strategies
+  2. Check: do users have enough trades? (need 100+ for pairs)
+  3. Check: do single-feature conditions actually help in practice?
+  4. Get feedback: do users want combinations or is single enough?
+
+Current status: v1 READY FOR PRODUCTION
+Next step: User testing, then decide on v2 based on feedback
+
+RELATED WORK
+------------
+
+Regime Detection (parallel system, kept separate):
+  - Purpose: Macro analysis, research, event-based classification
+  - Output: "Strategy performed well in BULL markets"
+  - Use case: Understanding strategy behavior, not production filtering
+  - Status: Complete (3 strategies: l1_trend, pelt_directional, pelt_volatility)
+
+Feature Conditioning:
+  - Purpose: Pre-trade filtering, production decisions
+  - Output: "Trade when vol ∈ [0.02, 0.03]"
+  - Use case: Real-time trade filtering, actionable conditions
+  - Status: v1 complete (single-feature), v2 pending (multi-feature)
+
+Both coexist - different use cases, both valuable.
+
+FILES TO REFERENCE
+------------------
+
+Implementation:
+  - backend/app/engine/robustness/feature_conditioning.py
+  - backend/app/tasks/robustness_task.py (line ~1200+)
+  - backend/app/api/routes/robustness.py (line ~295+)
+
+Documentation:
+  - docs/FEATURE_CONDITIONING.txt (user-facing guide)
+  - This file (implementation status)
+
+Tests:
+  - backend/scripts/smoke_feature_conditioning.py (working, all tests pass)
+
+PENDING TASKS (if continuing with v2)
+--------------------------------------
+
+[ ] Implement analyze_feature_pairs() for 2-feature combinations
+[ ] Add find_combinations parameter to API schema
+[ ] Update task to conditionally run pair analysis
+[ ] Add pair analysis to report structure
+[ ] Test with high-trade-count strategy (100+ trades)
+[ ] Update documentation with combination examples
+[ ] Add smoke test for pair analysis
+
+NOTES
+-----
+
+- Single-feature is NOT a compromise - it's a valid v1 that solves the core problem
+- The quant's critique was about actionability (labels vs features), not single vs multi
+- Multi-feature is an enhancement, not a requirement for launch
+- Decision deferred pending user feedback
+
+---
+
+STATUS: Implementation paused at v1 (single-feature).
+Ready for production use. Multi-feature deferred to v2 based on user needs.

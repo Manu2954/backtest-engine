@@ -4,6 +4,7 @@ Celery tasks for robustness analysis.
 Includes:
 - Parameter sensitivity analysis
 - Walk-forward validation
+- Regime detection
 """
 from __future__ import annotations
 
@@ -32,6 +33,18 @@ from app.engine.robustness.walk_forward import (
     calculate_consistency_score as calculate_wf_consistency_score,
     assess_walk_forward_results,
     build_walk_forward_report,
+)
+from app.engine.robustness.regime_detection import (
+    detect_regimes,
+    analyze_trades_by_regime,
+    calculate_regime_distribution,
+    assess_regime_dependency,
+    build_regime_report,
+)
+from app.engine.robustness.feature_conditioning import (
+    extract_trade_features,
+    analyze_feature_conditions,
+    build_feature_conditioning_report,
 )
 from app.models.backtest import BacktestRun
 from app.models.robustness import RobustnessAnalysis, RobustnessVariantBacktest
@@ -869,3 +882,577 @@ async def _create_walk_forward_analysis_record(
         await session.refresh(analysis)
 
     return analysis
+
+
+# =============================================================================
+# Regime Detection
+# =============================================================================
+
+@celery_app.task(name="robustness.regime_detection")
+def run_regime_detection(
+    strategy_id: str,
+    backtest_params: dict[str, Any],
+    segmentation_strategy: str = "pelt_volatility",
+    k: float = 0.015,
+    penalty: float | None = None,
+    min_segment_length: int = 20,
+    vol_window: int = 20,
+) -> str:
+    """
+    Run regime detection analysis.
+
+    Detects market regimes and analyzes strategy performance per regime.
+
+    Args:
+        strategy_id: UUID of strategy to analyze
+        backtest_params: Backtest configuration (ticker, dates, capital, etc.)
+        segmentation_strategy: "l1_trend", "pelt_directional", or "pelt_volatility"
+        k: L1 smoothing parameter (only for l1_trend, range 0.01-0.03)
+        penalty: PELT penalty (only for PELT strategies, None = auto)
+        min_segment_length: Min bars per segment (PELT only)
+        vol_window: Window for rolling calculations (PELT only)
+
+    Returns:
+        analysis_id (UUID string)
+    """
+    engine = create_async_engine(
+        settings.database_url,
+        echo=False,
+        future=True,
+        poolclass=NullPool,
+    )
+    session_maker = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    try:
+        return asyncio.run(
+            _run_regime_detection_async(
+                strategy_id,
+                backtest_params,
+                segmentation_strategy,
+                k,
+                penalty,
+                min_segment_length,
+                vol_window,
+                session_maker,
+            )
+        )
+    finally:
+        asyncio.run(engine.dispose())
+
+
+async def _run_regime_detection_async(
+    strategy_id: str,
+    backtest_params: dict[str, Any],
+    segmentation_strategy: str,
+    k: float,
+    penalty: float | None,
+    min_segment_length: int,
+    vol_window: int,
+    session_maker,
+) -> str:
+    """Async implementation of regime detection analysis."""
+    from app.engine.data_layer import fetch_ohlcv_async
+    from app.engine.indicator_layer import compute_indicators, trim_warmup_period
+    from app.engine.condition_engine import evaluate_conditions, evaluate_expression
+    from app.engine.state_machine import run_backtest
+    from app.engine.report_generator import generate_report
+
+    strategy_uuid = UUID(strategy_id)
+
+    # Create analysis record
+    analysis = await _create_regime_detection_analysis_record(
+        strategy_uuid,
+        {
+            "segmentation_strategy": segmentation_strategy,
+            "k": k,
+            "penalty": penalty,
+            "min_segment_length": min_segment_length,
+            "vol_window": vol_window,
+            "backtest_params": backtest_params,
+        },
+        session_maker,
+    )
+
+    try:
+        await _update_analysis_status(analysis.id, "RUNNING", session_maker)
+
+        # Load strategy
+        strategy = await _get_strategy(strategy_uuid, session_maker)
+
+        # Parse dates
+        start_date = backtest_params["start_date"]
+        end_date = backtest_params["end_date"]
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+        # Step 1: Fetch full OHLCV data
+        logger.info(f"Regime detection: Fetching OHLCV for {backtest_params['ticker']}")
+        async with session_maker() as session:
+            df = await fetch_ohlcv_async(
+                backtest_params["ticker"],
+                start_date,
+                end_date,
+                backtest_params.get("bar_resolution", "1d"),
+                backtest_params.get("asset_class", "STOCK"),
+                session=session,
+                provider=backtest_params.get("provider"),
+            )
+
+        # Step 2: Detect regimes on raw OHLCV data (before indicators)
+        logger.info(f"Regime detection: Detecting regimes with {segmentation_strategy} strategy")
+        segments, regime_labels = detect_regimes(
+            df,
+            strategy=segmentation_strategy,
+            k=k,
+            penalty=penalty,
+            min_segment_length=min_segment_length,
+            vol_window=vol_window,
+        )
+
+        logger.info(f"Regime detection: Found {len(segments)} regime segments")
+
+        # Step 3: Compute indicators for backtest
+        logger.info("Regime detection: Computing indicators")
+        indicators = [
+            {
+                "indicator_type": ind.indicator_type,
+                "alias": ind.alias,
+                "params": ind.params,
+            }
+            for ind in strategy.indicators
+        ]
+        df = compute_indicators(df, indicators)
+
+        # Step 4: Trim warmup
+        logger.info("Regime detection: Trimming warmup")
+        df, warmup_bars = trim_warmup_period(df)
+
+        # Also trim regime labels to match
+        regime_labels = regime_labels.loc[df.index]
+
+        if len(df) < 30:
+            raise ValueError(
+                f"Insufficient data after warmup: {len(df)} bars. Need at least 30."
+            )
+
+        # Build condition groups for evaluation
+        entry_groups_dict = {}
+        exit_groups_dict = {}
+        entry_group_legacy = None
+        exit_group_legacy = None
+
+        for cg in strategy.condition_groups:
+            group_payload = {
+                "logic": cg.logic,
+                "conditions": [
+                    {
+                        "id": str(c.id),
+                        "left_operand_type": c.left_operand_type,
+                        "left_operand_value": c.left_operand_value,
+                        "operator": c.operator,
+                        "right_operand_type": c.right_operand_type,
+                        "right_operand_value": c.right_operand_value,
+                    }
+                    for c in cg.conditions
+                ],
+            }
+
+            if cg.group_type == "ENTRY":
+                if cg.group_name:
+                    entry_groups_dict[cg.group_name] = group_payload
+                else:
+                    entry_group_legacy = group_payload
+            elif cg.group_type == "EXIT":
+                if cg.group_name:
+                    exit_groups_dict[cg.group_name] = group_payload
+                else:
+                    exit_group_legacy = group_payload
+
+        # Step 5: Run full backtest
+        logger.info("Regime detection: Running backtest")
+        initial_capital = float(backtest_params["initial_capital"])
+
+        # Evaluate entry/exit signals
+        if strategy.entry_expression:
+            entry_signal = evaluate_expression(df, entry_groups_dict, strategy.entry_expression)
+        else:
+            entry_signal = evaluate_conditions(df, entry_group_legacy)
+
+        if strategy.exit_expression:
+            exit_signal = evaluate_expression(df, exit_groups_dict, strategy.exit_expression)
+        else:
+            exit_signal = evaluate_conditions(df, exit_group_legacy)
+
+        trades, equity_curve = run_backtest(
+            df=df,
+            entry_signal=entry_signal,
+            exit_signal=exit_signal,
+            initial_capital=initial_capital,
+            asset_class=backtest_params.get("asset_class", "STOCK"),
+            position_size_type=backtest_params.get("position_size_type", "full_capital"),
+            position_size_value=float(backtest_params.get("position_size_value", 100.0)),
+            stop_loss_pct=float(backtest_params["stop_loss_pct"]) if backtest_params.get("stop_loss_pct") else None,
+            take_profit_pct=float(backtest_params["take_profit_pct"]) if backtest_params.get("take_profit_pct") else None,
+            commission_per_trade=float(backtest_params.get("commission_per_trade", 0.0)),
+            commission_pct=float(backtest_params.get("commission_pct", 0.0)),
+            slippage_pct=float(backtest_params.get("slippage_pct", 0.0)),
+        )
+
+        # Convert trades to dict format
+        trades_dicts = [
+            {
+                "entry_date": t.entry_time,
+                "exit_date": t.exit_time,
+                "pnl_pct": t.pnl_pct,
+            }
+            for t in trades
+        ]
+
+        # Step 6: Analyze trades by regime
+        logger.info("Regime detection: Analyzing trades by regime")
+        regime_metrics = analyze_trades_by_regime(trades_dicts, regime_labels)
+
+        # Step 7: Calculate distribution and dependency
+        regime_distribution = calculate_regime_distribution(regime_labels)
+        dependency_level, dependency_score = assess_regime_dependency(regime_metrics)
+
+        # Step 8: Build report
+        logger.info("Regime detection: Building report")
+        report = build_regime_report(
+            segments,
+            regime_labels,
+            regime_metrics,
+            regime_distribution,
+            dependency_level,
+            dependency_score,
+        )
+
+        # Add metadata
+        report["metadata"] = {
+            "strategy_id": strategy_id,
+            "ticker": backtest_params["ticker"],
+            "period": f"{start_date} to {end_date}",
+            "warmup_bars_trimmed": warmup_bars,
+            "total_bars_analyzed": len(df),
+            "params": {
+                "penalty": penalty,
+                "min_segment_length": min_segment_length,
+                "vol_window": vol_window,
+                "local_window": local_window,
+                "n_clusters": n_clusters,
+            },
+        }
+
+        # Add overall backtest metrics for reference
+        overall_report = generate_report(trades, equity_curve, initial_capital)
+        report["overall_backtest"] = {
+            "total_return_pct": round(overall_report.get("total_return_pct", 0.0), 2),
+            "sharpe_ratio": round(overall_report.get("sharpe_ratio", 0.0), 2),
+            "max_drawdown_pct": round(overall_report.get("max_drawdown_pct", 0.0), 2),
+            "win_rate": round(overall_report.get("win_rate", 0.0), 2),
+            "total_trades": overall_report.get("total_trades", 0),
+        }
+
+        await _update_analysis_status(
+            analysis.id,
+            "COMPLETE",
+            session_maker,
+            report=report,
+        )
+        return str(analysis.id)
+
+    except Exception as e:
+        logger.exception(f"Regime detection failed: {e}")
+        await _update_analysis_status(
+            analysis.id,
+            "FAILED",
+            session_maker,
+            error_message=str(e),
+        )
+        raise
+
+
+async def _create_regime_detection_analysis_record(
+    strategy_id: UUID,
+    params: dict[str, Any],
+    session_maker,
+) -> RobustnessAnalysis:
+    """Create initial analysis record for regime detection."""
+    analysis = RobustnessAnalysis(
+        id=uuid4(),
+        strategy_id=strategy_id,
+        analysis_type="REGIME_DETECTION",
+        status="PENDING",
+        params=params,
+    )
+
+    async with session_maker() as session:
+        session.add(analysis)
+        await session.commit()
+        await session.refresh(analysis)
+
+    return analysis
+
+
+
+# =============================================================================
+# Feature Conditioning
+# =============================================================================
+
+@celery_app.task(name="robustness.feature_conditioning")
+def run_feature_conditioning(
+    strategy_id: str,
+    backtest_params: dict[str, Any],
+    lookback_window: int = 50,
+    min_trades_per_bin: int = 10,
+) -> str:
+    """
+    Run feature-based conditional analysis.
+
+    Extracts observable features at trade entry and finds which feature
+    combinations predict trade success.
+
+    Args:
+        strategy_id: UUID of strategy to analyze
+        backtest_params: Backtest configuration (ticker, dates, capital, etc.)
+        lookback_window: Bars for rolling feature calculations
+        min_trades_per_bin: Minimum trades to consider a condition reliable
+
+    Returns:
+        analysis_id (UUID string)
+    """
+    engine = create_async_engine(
+        settings.database_url,
+        echo=False,
+        future=True,
+        poolclass=NullPool,
+    )
+    session_maker = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    try:
+        return asyncio.run(
+            _run_feature_conditioning_async(
+                strategy_id,
+                backtest_params,
+                lookback_window,
+                min_trades_per_bin,
+                session_maker,
+            )
+        )
+    finally:
+        asyncio.run(engine.dispose())
+
+
+async def _run_feature_conditioning_async(
+    strategy_id: str,
+    backtest_params: dict[str, Any],
+    lookback_window: int,
+    min_trades_per_bin: int,
+    session_maker,
+) -> str:
+    """Async implementation of feature conditioning analysis."""
+    from app.engine.data_layer import fetch_ohlcv_async
+    from app.engine.indicator_layer import compute_indicators, trim_warmup_period
+    from app.engine.condition_engine import evaluate_conditions, evaluate_expression
+    from app.engine.state_machine import run_backtest
+    from app.engine.report_generator import generate_report
+
+    strategy_uuid = UUID(strategy_id)
+
+    # Create analysis record
+    analysis = await _create_feature_conditioning_analysis_record(
+        strategy_uuid,
+        {
+            "lookback_window": lookback_window,
+            "min_trades_per_bin": min_trades_per_bin,
+            "backtest_params": backtest_params,
+        },
+        session_maker,
+    )
+
+    try:
+        await _update_analysis_status(analysis.id, "RUNNING", session_maker)
+
+        # Load strategy
+        strategy = await _get_strategy(strategy_uuid, session_maker)
+
+        # Parse dates
+        start_date = backtest_params["start_date"]
+        end_date = backtest_params["end_date"]
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+        # Step 1: Fetch OHLCV data
+        logger.info(f"Feature conditioning: Fetching OHLCV for {backtest_params[\"ticker\"]}")
+        async with session_maker() as session:
+            df = await fetch_ohlcv_async(
+                backtest_params["ticker"],
+                start_date,
+                end_date,
+                backtest_params.get("bar_resolution", "1d"),
+                backtest_params.get("asset_class", "STOCK"),
+                session=session,
+            )
+
+        if df.empty:
+            raise ValueError("No OHLCV data fetched")
+
+        # Step 2: Compute indicators
+        logger.info("Feature conditioning: Computing indicators")
+        indicator_data = {
+            ind.alias: {
+                "indicator_type": ind.indicator_type,
+                "params": ind.params,
+            }
+            for ind in strategy.indicators
+        }
+        df = compute_indicators(df, indicator_data)
+        df = trim_warmup_period(df)
+
+        # Step 3: Build condition groups
+        entry_groups_dict = {}
+        exit_groups_dict = {}
+        entry_group_legacy = None
+        exit_group_legacy = None
+
+        for cg in strategy.condition_groups:
+            group_payload = {
+                "logic": cg.logic,
+                "conditions": [
+                    {
+                        "id": str(c.id),
+                        "left_operand_type": c.left_operand_type,
+                        "left_operand_value": c.left_operand_value,
+                        "operator": c.operator,
+                        "right_operand_type": c.right_operand_type,
+                        "right_operand_value": c.right_operand_value,
+                    }
+                    for c in cg.conditions
+                ],
+            }
+
+            if cg.group_type == "ENTRY":
+                if cg.group_name:
+                    entry_groups_dict[cg.group_name] = group_payload
+                else:
+                    entry_group_legacy = group_payload
+            elif cg.group_type == "EXIT":
+                if cg.group_name:
+                    exit_groups_dict[cg.group_name] = group_payload
+                else:
+                    exit_group_legacy = group_payload
+
+        # Step 4: Run full backtest
+        logger.info("Feature conditioning: Running backtest")
+        initial_capital = float(backtest_params["initial_capital"])
+
+        # Evaluate entry/exit signals
+        if strategy.entry_expression:
+            entry_signal = evaluate_expression(df, entry_groups_dict, strategy.entry_expression)
+        else:
+            entry_signal = evaluate_conditions(df, entry_group_legacy)
+
+        if strategy.exit_expression:
+            exit_signal = evaluate_expression(df, exit_groups_dict, strategy.exit_expression)
+        else:
+            exit_signal = evaluate_conditions(df, exit_group_legacy)
+
+        trades, equity_curve = run_backtest(
+            df=df,
+            entry_signal=entry_signal,
+            exit_signal=exit_signal,
+            initial_capital=initial_capital,
+            asset_class=backtest_params.get("asset_class", "STOCK"),
+            position_size_type=backtest_params.get("position_size_type", "full_capital"),
+            position_size_value=float(backtest_params.get("position_size_value", 100.0)),
+            stop_loss_pct=backtest_params.get("stop_loss_pct"),
+            take_profit_pct=backtest_params.get("take_profit_pct"),
+            commission_per_trade=float(backtest_params.get("commission_per_trade", 0.0)),
+            commission_pct=float(backtest_params.get("commission_pct", 0.0)),
+            slippage_pct=float(backtest_params.get("slippage_pct", 0.0)),
+        )
+
+        logger.info(f"Feature conditioning: Got {len(trades)} trades")
+
+        if len(trades) < min_trades_per_bin * 2:
+            raise ValueError(f"Not enough trades ({len(trades)}) for feature analysis (need at least {min_trades_per_bin * 2})")
+
+        # Step 5: Extract features at entry time for each trade
+        logger.info("Feature conditioning: Extracting features at entry")
+        trades_with_features = extract_trade_features(trades, df, lookback_window)
+
+        logger.info(f"Feature conditioning: Extracted features for {len(trades_with_features)} trades")
+
+        # Step 6: Analyze feature conditions
+        logger.info("Feature conditioning: Analyzing feature conditions")
+        condition_analysis = analyze_feature_conditions(trades_with_features, min_trades_per_bin)
+
+        # Step 7: Get overall metrics for comparison
+        overall_report = generate_report(trades, equity_curve, initial_capital)
+        overall_metrics = {
+            "total_return_pct": round(overall_report.get("total_return_pct", 0.0), 2),
+            "sharpe_ratio": round(overall_report.get("sharpe_ratio", 0.0), 2),
+            "max_drawdown_pct": round(overall_report.get("max_drawdown_pct", 0.0), 2),
+            "win_rate": round(overall_report.get("win_rate", 0.0), 2),
+            "total_trades": overall_report.get("total_trades", 0),
+        }
+
+        # Step 8: Build report
+        report = build_feature_conditioning_report(
+            trades_with_features,
+            condition_analysis,
+            overall_metrics,
+        )
+
+        await _update_analysis_status(
+            analysis.id,
+            "COMPLETE",
+            session_maker,
+            report=report,
+        )
+        return str(analysis.id)
+
+    except Exception as e:
+        logger.exception(f"Feature conditioning failed: {e}")
+        await _update_analysis_status(
+            analysis.id,
+            "FAILED",
+            session_maker,
+            error_message=str(e),
+        )
+        raise
+
+
+async def _create_feature_conditioning_analysis_record(
+    strategy_id: UUID,
+    params: dict[str, Any],
+    session_maker,
+) -> RobustnessAnalysis:
+    """Create initial analysis record for feature conditioning."""
+    analysis = RobustnessAnalysis(
+        id=uuid4(),
+        strategy_id=strategy_id,
+        analysis_type="FEATURE_CONDITIONING",
+        status="PENDING",
+        params=params,
+    )
+
+    async with session_maker() as session:
+        session.add(analysis)
+        await session.commit()
+        await session.refresh(analysis)
+
+    return analysis
+

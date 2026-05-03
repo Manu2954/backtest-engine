@@ -1,0 +1,3729 @@
+================================================================================
+                    REGIME DETECTION FOR FINANCIAL MARKETS
+                         A Comprehensive Textbook
+================================================================================
+
+                              Table of Contents
+--------------------------------------------------------------------------------
+
+Chapter 1:  Foundations - Time Series and Market Regimes
+Chapter 2:  Changepoint Detection Theory
+Chapter 3:  Signal Design for Regime Detection
+Chapter 4:  Clustering and Regime Classification
+Chapter 5:  Hidden Markov Models for Regime Detection
+Chapter 6:  Feature Engineering for Regime Classification
+Chapter 7:  Pathological Cases and Edge Conditions
+Chapter 8:  Implementation Details and Design Decisions
+Chapter 9:  Alternative Approaches Comparison
+Chapter 10: Using Regime Detection for Strategy Analysis
+
+================================================================================
+                                  CHAPTER 1
+                    FOUNDATIONS - TIME SERIES AND MARKET REGIMES
+================================================================================
+
+1.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+Before we can detect "regimes" in financial markets, we must establish a
+rigorous foundation. This chapter answers the fundamental questions:
+
+    - What is a time series?
+    - What makes financial time series special?
+    - What do we mean by "regime"?
+    - Why does regime detection matter for trading?
+
+Understanding these foundations is critical because many regime detection
+failures stem from conceptual misunderstandings, not implementation bugs.
+
+
+1.2 TIME SERIES: DEFINITION AND PROPERTIES
+--------------------------------------------------------------------------------
+
+DEFINITION 1.1 (Time Series)
+    A time series is a sequence of observations {X_t} indexed by time t,
+    where t belongs to some index set T (typically T = {1, 2, 3, ...} for
+    discrete time or T = [0, ∞) for continuous time).
+
+In financial markets, our time series are typically:
+    - Price series: P_t (e.g., closing prices)
+    - Return series: R_t = (P_t - P_{t-1}) / P_{t-1}  (simple returns)
+    - Log return series: r_t = log(P_t / P_{t-1})    (log returns)
+
+EXAMPLE 1.1
+    Daily closing prices of SPY from 2020-01-01 to 2020-12-31:
+
+    Date        Price       Return      Log Return
+    2020-01-02  324.87      --          --
+    2020-01-03  322.41      -0.76%      -0.0076
+    2020-01-06  321.52      -0.28%      -0.0028
+    ...         ...         ...         ...
+
+KEY PROPERTIES OF TIME SERIES:
+
+1. Temporal Ordering: The order matters. Shuffling destroys information.
+
+2. Autocorrelation: Observations may be correlated with their past values.
+
+   DEFINITION 1.2 (Autocorrelation)
+       The autocorrelation at lag k is:
+       ρ(k) = Corr(X_t, X_{t-k}) = Cov(X_t, X_{t-k}) / Var(X_t)
+
+   Financial returns typically have:
+   - Near-zero autocorrelation in returns (weak form efficiency)
+   - Positive autocorrelation in squared returns (volatility clustering)
+
+3. Distributional Properties: The distribution of X_t may vary over time.
+
+
+1.3 STATIONARITY: THE CENTRAL CONCEPT
+--------------------------------------------------------------------------------
+
+DEFINITION 1.3 (Strict Stationarity)
+    A time series {X_t} is strictly stationary if the joint distribution
+    of (X_{t1}, X_{t2}, ..., X_{tk}) is identical to the joint distribution
+    of (X_{t1+h}, X_{t2+h}, ..., X_{tk+h}) for all t1, t2, ..., tk and all h.
+
+In plain English: the statistical properties don't change over time.
+
+DEFINITION 1.4 (Weak/Covariance Stationarity)
+    A time series {X_t} is weakly stationary if:
+    1. E[X_t] = μ for all t (constant mean)
+    2. Var(X_t) = σ² for all t (constant variance)
+    3. Cov(X_t, X_{t-k}) = γ(k) depends only on k, not on t
+
+Weak stationarity is the practical definition used in most applications.
+
+WHY STATIONARITY MATTERS:
+
+Most statistical models assume stationarity. If a series is non-stationary,
+standard methods give misleading results.
+
+EXAMPLE 1.2 (Spurious Results from Non-Stationarity)
+    If you regress two independent random walks on each other, you'll
+    often find "significant" relationships that don't exist. This is
+    the spurious regression problem.
+
+TESTING FOR STATIONARITY:
+
+1. Augmented Dickey-Fuller (ADF) Test
+   - H0: Series has a unit root (non-stationary)
+   - H1: Series is stationary
+
+2. KPSS Test
+   - H0: Series is stationary
+   - H1: Series has a unit root
+
+3. Visual inspection: Does the series look like it wanders without bound?
+
+
+1.4 NON-STATIONARITY IN FINANCIAL MARKETS
+--------------------------------------------------------------------------------
+
+Financial price series are almost always non-stationary. This is fundamental.
+
+THEOREM 1.1 (Prices vs Returns)
+    If prices follow a random walk: P_t = P_{t-1} + ε_t
+    Then prices are non-stationary (variance grows with time)
+    But returns r_t = P_t - P_{t-1} = ε_t are stationary (if ε_t is i.i.d.)
+
+This is why we typically work with RETURNS, not prices.
+
+HOWEVER, even returns exhibit non-stationarity in practice:
+
+1. TIME-VARYING VOLATILITY
+
+   Volatility clusters: high volatility tends to follow high volatility.
+
+   EXAMPLE 1.3 (Volatility Clustering)
+       March 2020 (COVID crash): Daily SPY volatility ~5%
+       July 2020 (recovery):     Daily SPY volatility ~1%
+
+   The variance of returns is NOT constant over time.
+
+2. TIME-VARYING MEAN
+
+   Bull markets have positive mean returns; bear markets have negative.
+
+   EXAMPLE 1.4 (Time-Varying Mean)
+       2019 SPY: Mean daily return ≈ +0.12%
+       Q1 2020:  Mean daily return ≈ -0.50%
+
+3. TIME-VARYING CORRELATIONS
+
+   Asset correlations increase during crises ("correlation breakdown").
+
+4. STRUCTURAL BREAKS
+
+   Major events (policy changes, crises) can permanently alter behavior.
+
+
+1.5 WHAT IS A REGIME?
+--------------------------------------------------------------------------------
+
+DEFINITION 1.5 (Regime - Informal)
+    A regime is a period during which the statistical properties of a
+    time series remain approximately constant. A regime change occurs
+    when these properties shift to a new stable configuration.
+
+DEFINITION 1.6 (Regime - Formal)
+    Let {X_t} be a time series. A regime is characterized by a parameter
+    vector θ that determines the distribution of X_t:
+
+        X_t | S_t = j ~ F(θ_j)
+
+    where S_t ∈ {1, 2, ..., K} is the regime indicator at time t, and
+    θ_j is the parameter vector for regime j.
+
+EXAMPLE 1.5 (Gaussian Regime Model)
+    Suppose returns follow:
+        r_t | S_t = j ~ Normal(μ_j, σ_j²)
+
+    With two regimes:
+        Regime 1 (Bull):  μ₁ = +0.1%, σ₁ = 1.0%
+        Regime 2 (Bear):  μ₂ = -0.2%, σ₂ = 2.5%
+
+    This model captures both the mean shift AND volatility shift
+    between bull and bear markets.
+
+KEY INSIGHT: The definition of "regime" depends on WHAT properties you care
+about. Different parameterizations lead to different regime definitions.
+
+
+1.6 TYPES OF REGIMES
+--------------------------------------------------------------------------------
+
+Not all regime definitions are equal. The choice depends on your use case.
+
+TYPE 1: TREND REGIMES
+
+Definition: Based on the DIRECTION of price movement.
+
+    BULL:     Sustained upward price movement
+    BEAR:     Sustained downward price movement
+    SIDEWAYS: No clear directional trend
+
+Mathematical characterization:
+    - BULL:     E[r_t] > 0, often with positive slope in prices
+    - BEAR:     E[r_t] < 0, often with negative slope in prices
+    - SIDEWAYS: E[r_t] ≈ 0, prices oscillate around a mean
+
+Use case: Trend-following strategies care about direction.
+
+
+TYPE 2: VOLATILITY REGIMES
+
+Definition: Based on the MAGNITUDE of price fluctuations.
+
+    LOW_VOL:  Small daily moves, calm markets
+    HIGH_VOL: Large daily moves, turbulent markets
+
+Mathematical characterization:
+    - LOW_VOL:  Var(r_t) < threshold
+    - HIGH_VOL: Var(r_t) > threshold
+
+Use case: Options pricing, risk management, position sizing.
+
+
+TYPE 3: MARKET CHARACTER REGIMES
+
+Definition: Based on HOW prices move (trending vs mean-reverting).
+
+    TRENDING:       Momentum persists, autocorrelation > 0
+    MEAN_REVERTING: Prices revert to mean, autocorrelation < 0
+    RANDOM:         No predictable pattern, autocorrelation ≈ 0
+
+Mathematical characterization:
+    - TRENDING:       ρ(1) > 0 (yesterday's return predicts today's)
+    - MEAN_REVERTING: ρ(1) < 0 (yesterday's return reverses)
+    - RANDOM:         ρ(1) ≈ 0 (no predictability)
+
+Use case: Strategy selection (momentum vs mean-reversion).
+
+
+TYPE 4: COMPOSITE REGIMES
+
+Real markets exhibit combinations:
+
+    Example: "High-volatility bear market"
+    - Trend: BEAR (negative mean return)
+    - Volatility: HIGH_VOL (large fluctuations)
+
+    Example: "Low-volatility bull market"
+    - Trend: BULL (positive mean return)
+    - Volatility: LOW_VOL (steady grind higher)
+
+Our implementation focuses on TREND REGIMES (BULL/BEAR/SIDEWAYS) because
+they're most actionable for strategy analysis.
+
+
+1.7 WHY REGIME DETECTION MATTERS
+--------------------------------------------------------------------------------
+
+REASON 1: STRATEGY PERFORMANCE IS REGIME-DEPENDENT
+
+Most trading strategies perform differently across regimes:
+
+    Strategy Type         Best Regime       Worst Regime
+    ─────────────────────────────────────────────────────
+    Trend-following       TRENDING          SIDEWAYS
+    Mean-reversion        SIDEWAYS          TRENDING
+    Buy-and-hold          BULL              BEAR
+    Volatility selling    LOW_VOL           HIGH_VOL
+
+If you don't know which regime you're in, you can't assess strategy fitness.
+
+REASON 2: RISK MANAGEMENT
+
+Risk varies dramatically by regime:
+
+    - Bear markets: Drawdowns are deeper and faster
+    - High volatility: Stop-losses trigger more frequently
+    - Regime transitions: Maximum danger (model breaks down)
+
+Regime awareness enables adaptive risk management.
+
+REASON 3: AVOIDING OVERFITTING
+
+A strategy that only works in bull markets will fail in bear markets.
+Regime-aware backtesting reveals this vulnerability BEFORE live trading.
+
+REASON 4: STRATEGY ALLOCATION
+
+Multi-strategy portfolios can allocate capital based on regime:
+
+    - Regime = BULL: Increase trend-following allocation
+    - Regime = SIDEWAYS: Increase mean-reversion allocation
+    - Regime = HIGH_VOL: Reduce leverage across all strategies
+
+
+1.8 THE FUNDAMENTAL TRADE-OFF
+--------------------------------------------------------------------------------
+
+Regime detection faces an unavoidable trade-off:
+
+    SENSITIVITY vs STABILITY
+
+HIGH SENSITIVITY (detect many regime changes):
+    ✓ Catches short-term shifts quickly
+    ✗ Many false positives (whipsaws)
+    ✗ Regimes become too short to be actionable
+
+LOW SENSITIVITY (detect few regime changes):
+    ✓ Stable regime labels
+    ✓ Fewer false positives
+    ✗ Slow to detect actual changes
+    ✗ May miss important transitions
+
+There is no "correct" sensitivity level. It depends on:
+    - Your trading timeframe
+    - Cost of being wrong (false positive vs false negative)
+    - Strategy requirements
+
+EXAMPLE 1.6 (Timeframe Dependence)
+    A day trader might want regimes that last hours.
+    A position trader might want regimes that last months.
+    The same price series produces different "correct" regimes!
+
+
+1.9 MATHEMATICAL FORMALIZATION
+--------------------------------------------------------------------------------
+
+Let's formalize the regime detection problem.
+
+SETUP:
+    - Observed time series: {X_t}_{t=1}^{T}
+    - True (unobserved) regime sequence: {S_t}_{t=1}^{T} where S_t ∈ {1,...,K}
+    - Regime parameters: {θ_1, ..., θ_K}
+
+GOAL:
+    Estimate the regime sequence {Ŝ_t} from observations {X_t}.
+
+APPROACHES:
+
+1. SUPERVISED (if we have labeled regimes):
+
+   Train a classifier: Ŝ_t = f(X_{t-w:t}) where w is a lookback window.
+
+   Problem: We rarely have labeled regime data.
+
+2. UNSUPERVISED (no labels):
+
+   a) Changepoint Detection + Clustering:
+      - Step 1: Find times τ₁, τ₂, ... where distribution changes
+      - Step 2: Cluster segments into K regime types
+
+   b) Hidden Markov Models:
+      - Model regime transitions as Markov chain
+      - Learn parameters via EM algorithm
+      - Infer most likely regime sequence
+
+3. HYBRID:
+
+   Combine changepoint detection with rule-based classification.
+
+Our implementation uses approach 2a: PELT for changepoints, GMM for clustering.
+
+
+1.10 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS:
+
+1. Time series have temporal structure that must be respected.
+
+2. Financial markets are NON-STATIONARY: means, variances, and correlations
+   change over time. This is why regime detection is necessary.
+
+3. A REGIME is a period of approximately constant statistical properties.
+   The definition depends on WHICH properties you measure.
+
+4. TREND REGIMES (BULL/BEAR/SIDEWAYS) are based on price direction.
+   VOLATILITY REGIMES are based on fluctuation magnitude.
+   MARKET CHARACTER REGIMES are based on autocorrelation structure.
+
+5. Regime detection matters because:
+   - Strategy performance is regime-dependent
+   - Risk varies by regime
+   - Regime-aware analysis prevents overfitting
+
+6. The fundamental trade-off is SENSITIVITY vs STABILITY.
+
+LOOKING AHEAD:
+
+Chapter 2 will develop the theory of CHANGEPOINT DETECTION: how do we find
+the times at which regime changes occur?
+
+
+================================================================================
+                                  CHAPTER 2
+                        CHANGEPOINT DETECTION THEORY
+================================================================================
+
+2.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+Once we accept that markets have regimes, the next question is:
+
+    "Where do the regime boundaries occur?"
+
+This is the CHANGEPOINT DETECTION problem. This chapter develops the theory
+from first principles, culminating in the PELT algorithm we use.
+
+
+2.2 WHAT IS A CHANGEPOINT?
+--------------------------------------------------------------------------------
+
+DEFINITION 2.1 (Changepoint)
+    A changepoint is a time τ at which the statistical properties of a
+    time series change. Formally, if {X_t} has distribution F_1 for t < τ
+    and distribution F_2 for t ≥ τ, then τ is a changepoint.
+
+EXAMPLE 2.1 (Mean Shift)
+    Consider: X_t = μ_t + ε_t where ε_t ~ N(0, 1)
+
+    If μ_t = 0 for t < 50 and μ_t = 2 for t ≥ 50,
+    then τ = 50 is a changepoint in the mean.
+
+    Visually:
+
+    |     ·  ·      · ·   |          ·  · ·  ·
+    |  ·    ·    ·        |       ·         ·   ·
+    | ·  ·    · ·    ·    |    ·    ·   ·
+    |    ·       ·        |  ·         ·    ·
+    +─────────────────────+──────────────────────>
+                         τ=50                    t
+
+EXAMPLE 2.2 (Variance Shift)
+    X_t = ε_t where:
+    - ε_t ~ N(0, 1) for t < 50
+    - ε_t ~ N(0, 4) for t ≥ 50
+
+    The mean stays at 0, but variance quadruples at τ = 50.
+
+EXAMPLE 2.3 (Multiple Changepoints)
+    Real data typically has MULTIPLE changepoints:
+
+    Segment 1: t ∈ [1, τ₁)      properties θ₁
+    Segment 2: t ∈ [τ₁, τ₂)    properties θ₂
+    Segment 3: t ∈ [τ₂, τ₃)    properties θ₃
+    ...
+
+    We need to find ALL changepoints: {τ₁, τ₂, τ₃, ...}
+
+
+2.3 PROBLEM FORMULATION
+--------------------------------------------------------------------------------
+
+FORMAL PROBLEM STATEMENT:
+
+Given:
+    - Time series {X_t}_{t=1}^{T}
+    - Number of changepoints m (unknown or specified)
+
+Find:
+    - Changepoint locations τ = {τ₁, τ₂, ..., τ_m}
+    - Such that data is well-described by piecewise-constant parameters
+
+APPROACHES:
+
+1. KNOWN NUMBER OF CHANGEPOINTS:
+   Find exactly m changepoints that best explain the data.
+
+2. UNKNOWN NUMBER OF CHANGEPOINTS:
+   Find the number m AND locations {τ₁, ..., τ_m} jointly.
+   Requires penalizing model complexity.
+
+Real-world regime detection uses approach 2 (unknown number).
+
+
+2.4 COST FUNCTIONS
+--------------------------------------------------------------------------------
+
+We need a way to measure how well a segment fits a model. This is the
+COST FUNCTION (also called loss function or objective function).
+
+DEFINITION 2.2 (Segment Cost)
+    The cost C(X_{a:b}) measures how poorly data from time a to b
+    fits a single-regime model. Lower cost = better fit.
+
+COMMON COST FUNCTIONS:
+
+1. L2 COST (Gaussian assumption)
+
+   C_L2(X_{a:b}) = Σ_{t=a}^{b} (X_t - X̄_{a:b})²
+
+   where X̄_{a:b} = (1/(b-a+1)) Σ_{t=a}^{b} X_t is the segment mean.
+
+   Interpretation: Sum of squared deviations from segment mean.
+   Assumes: Data is Gaussian with constant mean within segment.
+
+   EXAMPLE 2.4
+       Segment data: [2, 3, 2, 3, 2]
+       Mean: 2.4
+       L2 cost: (2-2.4)² + (3-2.4)² + (2-2.4)² + (3-2.4)² + (2-2.4)²
+              = 0.16 + 0.36 + 0.16 + 0.36 + 0.16 = 1.2
+
+2. L1 COST (Robust to outliers)
+
+   C_L1(X_{a:b}) = Σ_{t=a}^{b} |X_t - median(X_{a:b})|
+
+   Interpretation: Sum of absolute deviations from median.
+   More robust to outliers than L2.
+
+3. LIKELIHOOD-BASED COST
+
+   C_LL(X_{a:b}) = -2 · log L(θ̂ | X_{a:b})
+
+   where θ̂ is the MLE for the segment.
+
+   For Gaussian with unknown mean and variance:
+   C_LL(X_{a:b}) = n · log(σ̂²) + n
+   where σ̂² = (1/n) Σ(X_t - X̄)²
+
+4. RBF (RADIAL BASIS FUNCTION) KERNEL COST
+
+   C_RBF(X_{a:b}) = n - Σ_{i,j} K(X_i, X_j) / n
+
+   where K(x,y) = exp(-γ||x-y||²) is the RBF kernel.
+
+   Non-parametric: doesn't assume specific distribution.
+   Good for detecting changes in general distributional shape.
+
+MULTIVARIATE COST:
+
+When X_t is a vector (e.g., [returns, volatility]), extend naturally:
+
+   C_L2(X_{a:b}) = Σ_{t=a}^{b} ||X_t - X̄_{a:b}||²
+
+   where ||·|| is the Euclidean norm.
+
+
+2.5 THE OPTIMIZATION PROBLEM
+--------------------------------------------------------------------------------
+
+TOTAL COST:
+
+Given changepoints τ = {τ₁, ..., τ_m}, the total cost is:
+
+   J(τ) = C(X_{1:τ₁}) + C(X_{τ₁+1:τ₂}) + ... + C(X_{τ_m+1:T})
+        = Σ_{i=0}^{m} C(X_{τ_i+1:τ_{i+1}})
+
+where τ₀ = 0 and τ_{m+1} = T by convention.
+
+PENALIZED COST:
+
+To avoid overfitting (finding too many changepoints), add a penalty:
+
+   J_pen(τ) = J(τ) + λ · |τ|
+
+where |τ| = m is the number of changepoints and λ is the penalty parameter.
+
+OPTIMIZATION PROBLEM:
+
+   τ* = argmin_τ J_pen(τ) = argmin_τ [Σ_i C(X_{segment_i}) + λ · m]
+
+This balances:
+   - Low cost (fits data well) → more changepoints
+   - Low penalty (simple model) → fewer changepoints
+
+
+2.6 PENALTY SELECTION
+--------------------------------------------------------------------------------
+
+The penalty λ controls the sensitivity-stability trade-off.
+
+GUIDELINES:
+
+   λ too small → Too many changepoints (overfitting)
+   λ too large → Too few changepoints (underfitting)
+
+COMMON CHOICES:
+
+1. BIC (BAYESIAN INFORMATION CRITERION)
+
+   λ_BIC = log(T)
+
+   where T is the series length.
+
+   Derivation: Comes from Bayesian model selection, penalizing by
+   the number of parameters (proportional to m) scaled by log(T).
+
+2. AIC (AKAIKE INFORMATION CRITERION)
+
+   λ_AIC = 2
+
+   Constant penalty per changepoint. Less conservative than BIC.
+
+3. MODIFIED BIC
+
+   λ_mBIC = c · log(T)
+
+   where c > 1 is a constant (often c = 1.5 or 2).
+   More conservative for long series.
+
+4. CROSS-VALIDATION
+
+   - Split data into train/validation
+   - Try different λ values
+   - Choose λ that minimizes validation cost
+
+   Problem: Computationally expensive; requires careful splitting.
+
+5. ELBOW METHOD
+
+   - Plot number of changepoints vs λ
+   - Find "elbow" where adding more changepoints doesn't help much
+
+OUR CHOICE:
+
+We use λ = log(T), the BIC penalty. For T = 1500 bars:
+
+   λ = log(1500) ≈ 7.3
+
+This provides a reasonable balance for daily financial data.
+
+
+2.7 SOLVING THE OPTIMIZATION: ALGORITHMS
+--------------------------------------------------------------------------------
+
+Finding optimal changepoints is computationally challenging. Let's examine
+the algorithms from simple to sophisticated.
+
+ALGORITHM 1: BRUTE FORCE
+
+   For each possible set of changepoints τ:
+       Compute J_pen(τ)
+   Return τ with minimum J_pen
+
+Complexity: O(2^T) - exponential in series length. INFEASIBLE.
+
+
+ALGORITHM 2: BINARY SEGMENTATION
+
+Idea: Greedily find one changepoint at a time.
+
+   BinarySegmentation(X, λ):
+       τ* = argmin_τ [C(X_{1:τ}) + C(X_{τ+1:T})]
+       if C(X) - C(X_{1:τ*}) - C(X_{τ*+1:T}) > λ:
+           changepoints = {τ*}
+           changepoints += BinarySegmentation(X_{1:τ*}, λ)
+           changepoints += BinarySegmentation(X_{τ*+1:T}, λ)
+           return changepoints
+       else:
+           return {}
+
+Complexity: O(T log T) average, O(T²) worst case.
+
+Problem:
+   - Greedy approach may miss optimal solution
+   - Order of detection affects results
+   - First changepoint "locks in" and may be suboptimal
+
+
+ALGORITHM 3: OPTIMAL PARTITIONING (Dynamic Programming)
+
+Idea: Find globally optimal solution via dynamic programming.
+
+Define F(t) = minimum penalized cost for data X_{1:t}.
+
+Recurrence:
+   F(t) = min_{s < t} [F(s) + C(X_{s+1:t}) + λ]
+
+with F(0) = -λ (so first segment doesn't get penalized).
+
+To find changepoints, track which s achieved the minimum at each t.
+
+Complexity: O(T²) - quadratic in series length.
+
+Problem: O(T²) is slow for long series (T = 10000 → 100 million operations).
+
+
+ALGORITHM 4: PELT (Pruned Exact Linear Time)
+
+Idea: Optimal partitioning with pruning to achieve O(T) complexity.
+
+Key insight: Many candidate split points can be PRUNED (eliminated from
+consideration) because they can never be optimal.
+
+PRUNING RULE:
+   If at time t we have F(s) + C(X_{s+1:t}) > F(t), then s can be
+   pruned and never reconsidered for any future time t' > t.
+
+Intuition: If adding more data to segment [s+1, t] makes it worse than
+the best segmentation ending at t, then it will only get worse as we
+add even more data.
+
+PELT ALGORITHM:
+
+   PELT(X, λ):
+       T = length(X)
+       F[0] = -λ
+       candidates = {0}
+
+       for t = 1 to T:
+           # Find best split point
+           F[t] = min_{s ∈ candidates} [F[s] + C(X_{s+1:t}) + λ]
+           best_s[t] = argmin achieving above
+
+           # Prune candidates
+           candidates = {s ∈ candidates : F[s] + C(X_{s+1:t}) ≤ F[t]} ∪ {t}
+
+       # Backtrack to find changepoints
+       changepoints = []
+       t = T
+       while t > 0:
+           changepoints.prepend(best_s[t])
+           t = best_s[t]
+
+       return changepoints
+
+Complexity: O(T) expected for data with changepoints!
+
+Why O(T)? On average, the number of candidates stays bounded because
+pruning removes candidates at roughly the same rate they're added.
+
+
+2.8 PELT: DETAILED WALKTHROUGH
+--------------------------------------------------------------------------------
+
+Let's trace through PELT on a small example.
+
+EXAMPLE 2.5
+
+Data: X = [1, 1, 1, 5, 5, 5]  (mean shift at t=4)
+Cost function: L2 (sum of squared deviations from mean)
+Penalty: λ = 2
+
+STEP-BY-STEP:
+
+Initialize:
+   F[0] = -2  (= -λ)
+   candidates = {0}
+
+t = 1:
+   Only candidate is s = 0
+   F[1] = F[0] + C(X_{1:1}) + λ
+        = -2 + 0 + 2 = 0
+   best_s[1] = 0
+   candidates = {0, 1}
+
+t = 2:
+   Candidate s = 0: F[0] + C(X_{1:2}) + λ = -2 + 0 + 2 = 0
+   Candidate s = 1: F[1] + C(X_{2:2}) + λ = 0 + 0 + 2 = 2
+
+   F[2] = min(0, 2) = 0
+   best_s[2] = 0
+
+   Pruning: F[1] + C(X_{2:2}) = 0 + 0 = 0 ≤ F[2] = 0 ✓ (keep)
+   candidates = {0, 1, 2}
+
+t = 3:
+   Candidate s = 0: F[0] + C([1,1,1]) + λ = -2 + 0 + 2 = 0
+   Candidate s = 1: F[1] + C([1,1]) + λ = 0 + 0 + 2 = 2
+   Candidate s = 2: F[2] + C([1]) + λ = 0 + 0 + 2 = 2
+
+   F[3] = 0
+   best_s[3] = 0
+   candidates = {0, 1, 2, 3}  (all survive pruning)
+
+t = 4:
+   Candidate s = 0: F[0] + C([1,1,1,5]) + λ = -2 + 12 + 2 = 12
+   Candidate s = 1: F[1] + C([1,1,5]) + λ = 0 + 8 + 2 = 10
+   Candidate s = 2: F[2] + C([1,5]) + λ = 0 + 8 + 2 = 10
+   Candidate s = 3: F[3] + C([5]) + λ = 0 + 0 + 2 = 2
+
+   F[4] = 2
+   best_s[4] = 3  ← Changepoint detected!
+
+   Pruning: s=0,1,2 all have cost > F[4], prune them
+   candidates = {3, 4}
+
+t = 5:
+   Candidate s = 3: F[3] + C([5,5]) + λ = 0 + 0 + 2 = 2
+   Candidate s = 4: F[4] + C([5]) + λ = 2 + 0 + 2 = 4
+
+   F[5] = 2
+   best_s[5] = 3
+   candidates = {3, 5}
+
+t = 6:
+   Candidate s = 3: F[3] + C([5,5,5]) + λ = 0 + 0 + 2 = 2
+   Candidate s = 5: F[5] + C([5]) + λ = 2 + 0 + 2 = 4
+
+   F[6] = 2
+   best_s[6] = 3
+
+BACKTRACK:
+   t = 6: best_s[6] = 3 → changepoint at 3
+   t = 3: best_s[3] = 0 → stop
+
+   Changepoints = {3}  (meaning segment 1-3, segment 4-6)
+
+This correctly identifies the mean shift between t=3 and t=4!
+
+
+2.9 MINIMUM SEGMENT LENGTH
+--------------------------------------------------------------------------------
+
+An important practical constraint is the MINIMUM SEGMENT LENGTH.
+
+MOTIVATION:
+
+1. Statistical reliability: Very short segments have unreliable statistics.
+   With only 5 data points, you can't estimate mean/variance well.
+
+2. Actionability: A "regime" lasting 3 days isn't useful for most strategies.
+
+3. Overfitting prevention: Without minimum length, PELT might fit noise.
+
+IMPLEMENTATION:
+
+Modify PELT to only consider candidates s where t - s ≥ min_length:
+
+   candidates = {s : t - s ≥ min_length and F[s] + C(X_{s+1:t}) ≤ F[t]}
+
+OUR CHOICE:
+
+We use min_segment_length = 20 bars (about one trading month for daily data).
+
+
+2.10 ONLINE VS OFFLINE DETECTION
+--------------------------------------------------------------------------------
+
+OFFLINE DETECTION (what we use):
+
+   - Have ALL data available
+   - Find changepoints retrospectively
+   - Can look at future data when detecting past changepoints
+   - Better accuracy, but not real-time
+
+ONLINE DETECTION:
+
+   - Data arrives sequentially
+   - Detect changepoints as they happen
+   - Cannot look at future data
+   - Lower accuracy, but real-time
+
+EXAMPLE 2.6 (Online vs Offline)
+
+   Data: [1, 1, 1, 3, 3, 3, 3, 3]
+
+   Offline: Immediately identifies changepoint at t=4
+   Online:  At t=4, sees [1,1,1,3]. Is this a changepoint or noise?
+            At t=5, sees [1,1,1,3,3]. More confident...
+            At t=7, sees [1,1,1,3,3,3,3]. Now confident!
+
+   Online detection has DELAY.
+
+ONLINE ALGORITHMS:
+
+1. BOCPD (Bayesian Online Changepoint Detection)
+   - Maintains probability distribution over run lengths
+   - Updates probabilities with each new observation
+   - Declares changepoint when probability exceeds threshold
+
+2. CUSUM (Cumulative Sum Control Chart)
+   - Tracks cumulative deviation from expected value
+   - Signals change when cumulative sum exceeds threshold
+
+For BACKTESTING, offline detection is appropriate because we have all
+historical data. For LIVE TRADING, online detection would be needed.
+
+
+2.11 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS:
+
+1. A CHANGEPOINT is where statistical properties shift.
+
+2. We find changepoints by minimizing PENALIZED COST:
+   J_pen(τ) = Σ_i C(segment_i) + λ · |τ|
+
+3. The PENALTY λ controls sensitivity vs stability trade-off.
+   - BIC penalty: λ = log(T)
+   - Higher λ → fewer changepoints
+
+4. COST FUNCTIONS measure segment homogeneity:
+   - L2: Sum of squared deviations (Gaussian assumption)
+   - RBF: Kernel-based (non-parametric)
+
+5. PELT algorithm achieves O(T) complexity through pruning:
+   - Exact solution (not approximate)
+   - Prunes candidates that can never be optimal
+
+6. MINIMUM SEGMENT LENGTH prevents overfitting and ensures
+   statistical reliability.
+
+CRITICAL INSIGHT:
+
+PELT finds changepoints in WHATEVER SIGNAL you give it. If you give it:
+   - Returns → finds return distribution changes
+   - Volatility → finds volatility changes
+   - Price → finds price level changes
+
+The signal design (Chapter 3) is just as important as the algorithm.
+
+
+================================================================================
+                                  CHAPTER 3
+                     SIGNAL DESIGN FOR REGIME DETECTION
+================================================================================
+
+3.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+Chapter 2 showed HOW to find changepoints. This chapter addresses the
+equally important question: changepoints in WHAT?
+
+The SIGNAL you feed to PELT determines what kind of regime changes you detect.
+This is perhaps the most underappreciated aspect of regime detection.
+
+CRITICAL PRINCIPLE:
+
+    PELT finds changepoints where the SIGNAL's statistical properties change.
+    It knows nothing about "bull markets" or "bear markets" - only numbers.
+
+
+3.2 THE SIGNAL CHOICE PROBLEM
+--------------------------------------------------------------------------------
+
+Consider detecting regime changes in SPY during 2018-2020.
+
+WHAT CHANGES DURING A BEAR MARKET?
+
+1. Price level: Decreases
+2. Returns: Become negative on average
+3. Volatility: Often increases
+4. Correlations: Increase (flight to safety)
+5. Volume: Often increases
+
+Each of these could define a "regime change." Which should we use?
+
+FUNDAMENTAL QUESTION:
+
+    What aspect of market behavior do we CARE about for our use case?
+
+For TREND regime detection (BULL/BEAR/SIDEWAYS), we care about DIRECTION.
+But direction is hard to capture in a single signal.
+
+
+3.3 COMMON SIGNALS AND WHAT THEY DETECT
+--------------------------------------------------------------------------------
+
+SIGNAL 1: RAW RETURNS
+
+   r_t = (P_t - P_{t-1}) / P_{t-1}
+
+What PELT detects: Changes in return DISTRIBUTION (mean AND variance).
+
+Problem: Returns are noisy. Individual returns fluctuate wildly even
+within a stable regime. PELT may detect noise as changepoints.
+
+   Bull market returns: [-1%, +2%, -0.5%, +1.5%, -0.8%, +2.1%, ...]
+   Bear market returns: [+1%, -2%, +0.5%, -1.5%, +0.8%, -2.1%, ...]
+
+The overlap is huge! Hard to distinguish without smoothing.
+
+
+SIGNAL 2: ROLLING MEAN RETURN
+
+   μ_t = (1/w) Σ_{i=0}^{w-1} r_{t-i}
+
+What PELT detects: Changes in the SMOOTHED average return.
+
+Better for trend detection because smoothing reduces noise.
+
+Problem: Lag. A 20-day rolling mean takes 20 days to fully reflect
+a regime change.
+
+   Regime change at t=50
+   Rolling mean (w=20) doesn't fully adjust until t=70
+
+
+SIGNAL 3: ROLLING VOLATILITY
+
+   σ_t = std(r_{t-w+1:t})
+
+What PELT detects: Changes in VOLATILITY level.
+
+This detects volatility regimes (LOW_VOL vs HIGH_VOL), NOT trend regimes.
+
+Problem for trend detection: A V-shaped crash-and-recovery has HIGH
+volatility throughout. PELT sees one volatility regime, not two
+directional regimes.
+
+
+SIGNAL 4: CUMULATIVE RETURNS
+
+   C_t = Σ_{i=1}^{t} r_i  (or C_t = P_t / P_0 - 1)
+
+What PELT detects: Changes in the SLOPE of cumulative returns.
+
+Good for trend detection because:
+   - Bull market: C_t increases → positive slope
+   - Bear market: C_t decreases → negative slope
+   - Sideways: C_t flat → zero slope
+
+PELT with RBF kernel on cumulative returns detects where the slope changes.
+
+
+SIGNAL 5: PRICE RELATIVE TO MOVING AVERAGE
+
+   D_t = P_t / SMA_t - 1
+
+What PELT detects: Changes in price POSITION relative to trend.
+
+   D_t > 0: Price above SMA (bullish)
+   D_t < 0: Price below SMA (bearish)
+   D_t ≈ 0: Price near SMA (neutral)
+
+
+SIGNAL 6: MULTIVARIATE SIGNALS
+
+   X_t = [r_t, σ_t]  (returns and volatility)
+
+What PELT detects: Changes in EITHER returns OR volatility.
+
+This is what our implementation uses. Problem: It conflates two
+different types of regime changes.
+
+
+3.4 THE V-SHAPE PROBLEM REVISITED
+--------------------------------------------------------------------------------
+
+Recall the ICICI Bank example from our discussion:
+
+   Price: 300 → 250 → 350  (drop then recovery)
+
+What different signals show:
+
+SIGNAL: [log_returns, volatility]
+
+   During drop:     returns negative, volatility HIGH
+   During recovery: returns positive, volatility HIGH
+
+   PELT sees: Volatility is HIGH throughout → no changepoint at bottom
+
+SIGNAL: cumulative_returns
+
+   During drop:     cumulative return decreasing
+   During recovery: cumulative return increasing
+
+   PELT sees: Slope changes from negative to positive → changepoint at bottom!
+
+SIGNAL: price_vs_SMA
+
+   During drop:     price < SMA (negative)
+   During recovery: price > SMA (positive, eventually)
+
+   PELT sees: Sign change → changepoint (with some lag)
+
+LESSON:
+
+   The V-bottom is invisible to [returns, volatility] because volatility
+   doesn't change at the bottom. It's visible to cumulative returns
+   because the DIRECTION changes.
+
+
+3.5 DESIGNING SIGNALS FOR TREND REGIMES
+--------------------------------------------------------------------------------
+
+Our goal: Detect BULL/BEAR/SIDEWAYS based on price DIRECTION.
+
+REQUIREMENTS FOR A GOOD TREND SIGNAL:
+
+1. Captures DIRECTION (positive vs negative movement)
+2. Smoothed enough to avoid noise-induced changepoints
+3. Sensitive enough to detect real regime changes
+4. Minimal lag (responds quickly to actual changes)
+
+PROPOSED SIGNAL FOR TREND DETECTION:
+
+   X_t = [rolling_return_t, momentum_t]
+
+Where:
+   rolling_return_t = (P_t - P_{t-w}) / P_{t-w}  (w-period return)
+   momentum_t = P_t / SMA_t - 1                  (price vs moving average)
+
+Why this works:
+
+   BULL MARKET:  rolling_return > 0, momentum > 0
+   BEAR MARKET:  rolling_return < 0, momentum < 0
+   TRANSITION:   One changes sign before the other
+
+PELT will detect when BOTH signals shift together (high confidence) or
+when one shifts significantly (possible transition).
+
+
+3.6 SIGNAL NORMALIZATION
+--------------------------------------------------------------------------------
+
+Before feeding signals to PELT, normalization is important.
+
+WHY NORMALIZE?
+
+Different signals have different scales:
+   - Returns: typically ±5%
+   - Volatility: typically 0.5% - 5%
+   - Price/SMA: typically ±20%
+
+If unnormalized, PELT weights high-variance signals more heavily.
+
+NORMALIZATION METHODS:
+
+1. Z-SCORE NORMALIZATION
+
+   X_normalized = (X - mean(X)) / std(X)
+
+   Centers at 0, scales to unit variance.
+   Problem: Requires knowing mean/std in advance (look-ahead).
+
+2. ROLLING Z-SCORE
+
+   X_normalized_t = (X_t - rolling_mean_t) / rolling_std_t
+
+   No look-ahead, but adapts slowly.
+
+3. ROBUST SCALING
+
+   X_normalized = (X - median(X)) / IQR(X)
+
+   Uses median and interquartile range. Robust to outliers.
+
+4. MIN-MAX SCALING
+
+   X_normalized = (X - min(X)) / (max(X) - min(X))
+
+   Scales to [0, 1]. Requires knowing min/max.
+
+OUR APPROACH:
+
+We use z-score normalization computed on the full series. This is
+acceptable for BACKTESTING (we have all data) but would need to be
+replaced with rolling normalization for live trading.
+
+
+3.7 MULTIVARIATE SIGNAL CONSIDERATIONS
+--------------------------------------------------------------------------------
+
+When using multiple signals X_t = [x1_t, x2_t, ...], additional
+considerations arise.
+
+CORRELATION BETWEEN SIGNALS:
+
+If x1 and x2 are highly correlated, they provide redundant information.
+PELT effectively weights the correlated direction more heavily.
+
+EXAMPLE 3.1 (Correlated Signals)
+
+   x1 = rolling_return
+   x2 = momentum
+
+   These are correlated (both measure direction). A bull market has
+   both x1 > 0 and x2 > 0.
+
+   Not necessarily bad - correlation means they agree on regime.
+
+EXAMPLE 3.2 (Uncorrelated Signals)
+
+   x1 = rolling_return  (direction)
+   x2 = rolling_volatility  (magnitude)
+
+   These are less correlated. Bull market can have low or high volatility.
+
+   Risk: PELT finds changepoints when EITHER changes. This conflates
+   directional and volatility regimes.
+
+DIMENSIONALITY:
+
+More signals = more complex patterns to detect.
+   - 2 signals: PELT finds changes in 2D distribution
+   - 10 signals: PELT finds changes in 10D distribution
+
+Too many signals can lead to:
+   - Overfitting (finding spurious changepoints)
+   - Slower computation
+   - Harder interpretation
+
+RECOMMENDATION: Use 2-3 well-chosen signals, not many correlated ones.
+
+
+3.8 KERNEL CHOICE IN PELT
+--------------------------------------------------------------------------------
+
+PELT uses a COST FUNCTION (kernel) to measure segment homogeneity.
+The kernel choice affects what kind of changes are detected.
+
+LINEAR KERNEL (L2 COST):
+
+   C(X_{a:b}) = Σ ||X_t - X̄||²
+
+Detects changes in MEAN.
+
+   Before: X_t ~ N([1,1], I)
+   After:  X_t ~ N([3,3], I)
+   → Detected!
+
+   Before: X_t ~ N([0,0], I)
+   After:  X_t ~ N([0,0], 4I)  (same mean, different variance)
+   → NOT detected!
+
+RBF KERNEL:
+
+   C(X_{a:b}) = n - (1/n²) Σ_{i,j} exp(-γ||X_i - X_j||²)
+
+Detects changes in GENERAL DISTRIBUTION SHAPE.
+
+   Can detect changes in mean, variance, skewness, or any other
+   distributional property.
+
+   More flexible but harder to interpret.
+
+OUR CHOICE:
+
+We use RBF kernel because regime changes may involve multiple
+distributional properties (mean, variance, etc.).
+
+
+3.9 PRACTICAL SIGNAL DESIGN WORKFLOW
+--------------------------------------------------------------------------------
+
+STEP 1: Define what "regime" means for your use case.
+
+   - Trend regime (BULL/BEAR/SIDEWAYS)? → need directional signals
+   - Volatility regime? → need volatility signals
+   - Both? → need both types
+
+STEP 2: List candidate signals.
+
+   For trend regimes:
+   - Rolling returns (various windows)
+   - Momentum (price vs SMA)
+   - Cumulative returns
+   - SMA slope
+
+STEP 3: Visualize signals alongside known regime changes.
+
+   Plot signals during a known bear market (e.g., Q1 2020).
+   Do they clearly indicate the regime?
+
+STEP 4: Test PELT with different signals.
+
+   Run PELT on each candidate signal.
+   Compare detected changepoints to known regime changes.
+
+STEP 5: Select signals that detect what you care about.
+
+   If goal is trend detection, choose signals that find trend changes.
+   Discard signals that find volatility changes instead.
+
+STEP 6: Combine signals if needed.
+
+   Multivariate PELT can use 2-3 complementary signals.
+   Ensure signals aren't too correlated or too independent.
+
+
+3.10 WHY OUR ORIGINAL SIGNAL CHOICE WAS SUBOPTIMAL
+--------------------------------------------------------------------------------
+
+Our implementation uses:
+
+   X_t = [log_returns_t, rolling_volatility_t]
+
+ANALYSIS:
+
+1. log_returns_t:
+   - Very noisy (daily returns fluctuate wildly)
+   - Contains directional information but obscured by noise
+   - PELT finds changes in return distribution (mean AND variance)
+
+2. rolling_volatility_t:
+   - Smooth, stable signal
+   - Contains NO directional information
+   - PELT finds volatility regime changes
+
+COMBINED EFFECT:
+
+The smooth volatility signal dominates. PELT primarily finds
+VOLATILITY changepoints, not TREND changepoints.
+
+This is why the V-bottom wasn't detected: volatility was high
+throughout both the drop and recovery.
+
+BETTER ALTERNATIVE:
+
+   X_t = [rolling_return_t, price_vs_sma_t]
+
+Both signals contain directional information. PELT will find
+changes in DIRECTION.
+
+
+3.11 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS:
+
+1. The SIGNAL determines what PELT detects. Algorithm is agnostic to
+   financial meaning - it only sees numbers.
+
+2. For TREND regime detection, signals must capture DIRECTION:
+   - Rolling returns (smoothed)
+   - Price vs moving average
+   - Cumulative returns
+
+3. VOLATILITY-based signals detect volatility regimes, NOT trend regimes.
+   This causes the V-shape problem.
+
+4. NORMALIZATION ensures signals contribute equally.
+
+5. MULTIVARIATE signals:
+   - Choose complementary signals (not redundant)
+   - 2-3 signals is usually sufficient
+   - Too many → overfitting
+
+6. RBF kernel detects general distributional changes.
+   Linear kernel only detects mean changes.
+
+CRITICAL LESSON:
+
+   If you want to detect trend changes, use trend-based signals.
+   Our original [returns, volatility] signal was suboptimal for
+   trend regime detection.
+
+
+================================================================================
+                                  CHAPTER 4
+                    CLUSTERING AND REGIME CLASSIFICATION
+================================================================================
+
+4.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+After PELT segments the time series, we have boundaries but not labels.
+
+   Segment 1: bars 1-100    → ???
+   Segment 2: bars 101-250  → ???
+   Segment 3: bars 251-400  → ???
+
+We need to CLASSIFY each segment as BULL, BEAR, or SIDEWAYS.
+
+This chapter covers clustering algorithms for regime classification.
+
+
+4.2 WHY CLUSTERING?
+--------------------------------------------------------------------------------
+
+APPROACH 1: RULE-BASED CLASSIFICATION
+
+   if slope > 0 and mean_return > 0:
+       regime = BULL
+   elif slope < 0 and mean_return < 0:
+       regime = BEAR
+   else:
+       regime = SIDEWAYS
+
+Problem: Requires choosing thresholds manually.
+   - What if slope = 0.01? Is that BULL or SIDEWAYS?
+   - Thresholds that work for SPY may fail for Bitcoin.
+
+APPROACH 2: DATA-DRIVEN CLUSTERING
+
+Let the algorithm learn regime boundaries from data.
+
+   - No manual thresholds
+   - Adapts to different assets/timeframes
+   - Statistically principled
+
+This is why we use Gaussian Mixture Models (GMM).
+
+
+4.3 K-MEANS CLUSTERING
+--------------------------------------------------------------------------------
+
+Before GMM, let's understand K-Means as a baseline.
+
+ALGORITHM:
+
+   K-Means(X, K):
+       Initialize K centroids μ₁, ..., μ_K randomly
+       Repeat until convergence:
+           # Assignment step
+           For each point x_i:
+               Assign x_i to closest centroid: c_i = argmin_k ||x_i - μ_k||
+
+           # Update step
+           For each cluster k:
+               μ_k = mean of all points assigned to cluster k
+
+       Return cluster assignments
+
+EXAMPLE 4.1 (K-Means with K=2)
+
+   Data: [(1,1), (1.5, 0.5), (2, 1), (5, 5), (5.5, 4.5), (6, 5)]
+
+   Initialize: μ₁ = (1, 1), μ₂ = (6, 5)
+
+   Iteration 1:
+       Point (1,1): closer to μ₁ → cluster 1
+       Point (1.5, 0.5): closer to μ₁ → cluster 1
+       Point (2, 1): closer to μ₁ → cluster 1
+       Point (5, 5): closer to μ₂ → cluster 2
+       Point (5.5, 4.5): closer to μ₂ → cluster 2
+       Point (6, 5): closer to μ₂ → cluster 2
+
+       New μ₁ = (1.5, 0.83), New μ₂ = (5.5, 4.83)
+
+   Converged (assignments don't change).
+
+LIMITATIONS OF K-MEANS:
+
+1. Hard assignments: Each point belongs to exactly one cluster.
+   No uncertainty quantification.
+
+2. Spherical clusters: Assumes clusters are roughly spherical.
+   Fails for elongated or non-convex clusters.
+
+3. Equal cluster sizes: Tends to create equal-sized clusters
+   even when natural clusters have different sizes.
+
+
+4.4 GAUSSIAN MIXTURE MODELS (GMM)
+--------------------------------------------------------------------------------
+
+GMM addresses K-Means limitations by modeling clusters as probability
+distributions.
+
+GENERATIVE MODEL:
+
+   For each data point x_i:
+       1. Choose cluster k with probability π_k (mixing weight)
+       2. Draw x_i from Gaussian: x_i ~ N(μ_k, Σ_k)
+
+MATHEMATICAL FORMULATION:
+
+   P(x) = Σ_{k=1}^{K} π_k · N(x | μ_k, Σ_k)
+
+Where:
+   - π_k = probability of cluster k (mixing weights, Σπ_k = 1)
+   - μ_k = mean of cluster k
+   - Σ_k = covariance matrix of cluster k
+   - N(x | μ, Σ) = Gaussian density
+
+KEY DIFFERENCE FROM K-MEANS:
+
+K-Means: Point x belongs to cluster k with probability 0 or 1.
+GMM: Point x belongs to cluster k with probability P(k|x) ∈ [0, 1].
+
+EXAMPLE 4.2 (GMM Soft Assignments)
+
+   Point x is equidistant from two cluster centers.
+
+   K-Means: Arbitrarily assigns to one cluster.
+   GMM: P(cluster 1 | x) = 0.5, P(cluster 2 | x) = 0.5
+
+   This uncertainty is informative! The point is genuinely ambiguous.
+
+
+4.5 EXPECTATION-MAXIMIZATION (EM) ALGORITHM
+--------------------------------------------------------------------------------
+
+GMM parameters (π, μ, Σ) are learned via the EM algorithm.
+
+GOAL: Maximize log-likelihood
+
+   L(θ) = Σ_i log P(x_i | θ) = Σ_i log [Σ_k π_k · N(x_i | μ_k, Σ_k)]
+
+PROBLEM: This is hard to optimize directly because of the sum inside log.
+
+SOLUTION: EM algorithm iterates between two steps.
+
+E-STEP (Expectation):
+
+   Compute responsibility of cluster k for point i:
+
+   γ_{ik} = P(z_i = k | x_i) = [π_k · N(x_i | μ_k, Σ_k)] / [Σ_j π_j · N(x_i | μ_j, Σ_j)]
+
+   Interpretation: γ_{ik} is probability that point i came from cluster k.
+
+M-STEP (Maximization):
+
+   Update parameters using responsibilities:
+
+   N_k = Σ_i γ_{ik}                           (effective cluster size)
+   π_k = N_k / N                              (mixing weight)
+   μ_k = (1/N_k) Σ_i γ_{ik} · x_i            (weighted mean)
+   Σ_k = (1/N_k) Σ_i γ_{ik} · (x_i - μ_k)(x_i - μ_k)ᵀ  (weighted covariance)
+
+ALGORITHM:
+
+   EM(X, K):
+       Initialize parameters (π, μ, Σ) randomly
+       Repeat until convergence:
+           # E-step
+           For each point i and cluster k:
+               γ_{ik} = P(k | x_i)  using current parameters
+
+           # M-step
+           Update π, μ, Σ using γ
+
+       Return parameters and responsibilities
+
+CONVERGENCE:
+
+EM is guaranteed to increase (or maintain) the likelihood at each step.
+However, it may converge to a LOCAL maximum, not global.
+
+Solution: Run EM multiple times with different initializations,
+keep the result with highest likelihood.
+
+
+4.6 COVARIANCE TYPES IN GMM
+--------------------------------------------------------------------------------
+
+The covariance matrix Σ_k determines the shape of cluster k.
+
+FULL COVARIANCE:
+
+   Σ_k is a full d×d positive definite matrix.
+   Cluster can be any ellipsoid shape and orientation.
+
+   Parameters per cluster: d + d(d+1)/2 = d(d+3)/2
+   For d=4: 14 parameters per cluster
+
+   Most flexible but most parameters → risk of overfitting.
+
+TIED COVARIANCE:
+
+   All clusters share the same covariance: Σ_k = Σ for all k.
+   Clusters have same shape but different centers.
+
+   Parameters: K·d + d(d+1)/2
+   Fewer parameters, less flexible.
+
+DIAGONAL COVARIANCE:
+
+   Σ_k is diagonal (features are independent given cluster).
+   Clusters are axis-aligned ellipsoids.
+
+   Parameters per cluster: d + d = 2d
+   For d=4: 8 parameters per cluster
+
+SPHERICAL COVARIANCE:
+
+   Σ_k = σ_k² · I (clusters are spheres).
+   Parameters per cluster: d + 1
+   For d=4: 5 parameters per cluster
+
+   Most restrictive, equivalent to K-Means with soft assignments.
+
+OUR CHOICE:
+
+We use FULL covariance because regime clusters may have complex shapes.
+For example, SIDEWAYS regime might have high variance in volatility
+but low variance in return direction.
+
+
+4.7 SELECTING NUMBER OF CLUSTERS
+--------------------------------------------------------------------------------
+
+How many regimes (clusters) should we use?
+
+METHOD 1: DOMAIN KNOWLEDGE
+
+   For trend regimes: K=3 (BULL, BEAR, SIDEWAYS) is natural.
+   This is our choice.
+
+METHOD 2: BIC (BAYESIAN INFORMATION CRITERION)
+
+   BIC = -2·log(L) + p·log(N)
+
+   Where:
+   - L = maximized likelihood
+   - p = number of parameters
+   - N = number of data points
+
+   Lower BIC is better. Penalizes complexity.
+
+   TRY K = 2, 3, 4, 5
+   Choose K with lowest BIC.
+
+METHOD 3: SILHOUETTE SCORE
+
+   For each point i:
+       a(i) = average distance to points in same cluster
+       b(i) = average distance to points in nearest other cluster
+       s(i) = (b(i) - a(i)) / max(a(i), b(i))
+
+   Silhouette score = mean of s(i) over all points.
+   Higher is better (max = 1).
+
+METHOD 4: ELBOW METHOD
+
+   Plot likelihood vs K.
+   Find "elbow" where adding clusters doesn't help much.
+
+PRACTICAL CONSIDERATION:
+
+For regime detection, K=3 is standard (BULL/BEAR/SIDEWAYS).
+Using more clusters creates sub-regimes that may be harder to interpret.
+
+
+4.8 SEGMENT-LEVEL VS BAR-LEVEL CLUSTERING
+--------------------------------------------------------------------------------
+
+A key design choice: what do we cluster?
+
+OPTION A: CLUSTER SEGMENTS
+
+   Compute features for each segment, then cluster segments.
+
+   Features per segment: [mean_slope, mean_R², mean_return, mean_vol]
+
+   Number of points: Number of segments (often 5-20)
+
+   Problem: Very few data points! GMM can't fit reliably.
+
+OPTION B: CLUSTER BARS
+
+   Compute features for each bar, then cluster bars.
+
+   Features per bar: [slope, R², return, vol]
+
+   Number of points: Number of bars (often 500-2000)
+
+   Then: Assign segment label by majority vote of its bars.
+
+   Advantage: Many more data points for robust clustering.
+
+OUR CHOICE:
+
+We cluster BARS, not segments. This ensures we have enough data points
+for reliable GMM fitting regardless of how many segments PELT finds.
+
+MAJORITY VOTE:
+
+   For segment with bars [b1, b2, ..., bn]:
+       count = [count of bars in cluster 0, 1, 2]
+       segment_cluster = argmax(count)
+
+   Example:
+       Segment has 100 bars.
+       Bar clusters: 70 in cluster 1, 25 in cluster 2, 5 in cluster 0
+       Segment assigned to cluster 1.
+
+
+4.9 FROM CLUSTERS TO REGIME LABELS
+--------------------------------------------------------------------------------
+
+GMM gives us cluster assignments (0, 1, 2), not regime labels (BULL, BEAR, SIDEWAYS).
+
+How do we map cluster IDs to meaningful labels?
+
+APPROACH: INTERPRET CLUSTER CENTERS
+
+Each GMM cluster has a center μ_k = [slope_k, r2_k, return_k, vol_k].
+
+INTERPRETATION RULES:
+
+   If slope > 0 AND mean_return > 0:
+       → BULL (price going up)
+
+   If slope < 0 AND mean_return < 0:
+       → BEAR (price going down)
+
+   If slope ≈ 0 OR signals conflict OR R² very low:
+       → SIDEWAYS (no clear trend)
+
+EXAMPLE 4.3 (Cluster Interpretation)
+
+   Cluster 0 center: [+0.05, 0.8, +0.1%, 1.0%]
+       → Positive slope, high R², positive return
+       → BULL
+
+   Cluster 1 center: [-0.08, 0.7, -0.15%, 1.5%]
+       → Negative slope, high R², negative return
+       → BEAR
+
+   Cluster 2 center: [+0.01, 0.2, -0.02%, 2.0%]
+       → Slope near zero, low R², conflicting return
+       → SIDEWAYS
+
+HANDLING EDGE CASES:
+
+What if two clusters both map to BULL?
+   → Merge them, or treat one as "strong bull" vs "weak bull"
+
+What if no cluster maps to BEAR?
+   → The data may not contain a bear market period
+   → BEAR regime will have 0% of time
+
+
+4.10 PRACTICAL ISSUES
+--------------------------------------------------------------------------------
+
+ISSUE 1: SINGULAR COVARIANCE
+
+If a cluster has very few points or points are nearly identical,
+the covariance matrix becomes singular (non-invertible).
+
+Solution: Add regularization.
+
+   Σ_k = Σ_k + ε·I
+
+Our implementation uses reg_covar=1e-5 in sklearn GMM.
+
+ISSUE 2: NUMERICAL OVERFLOW
+
+With high-dimensional features or extreme values, Gaussian densities
+can overflow (become 0 or infinity).
+
+Solution: Clip extreme values before clustering.
+
+   X_clipped = np.clip(X, -10, 10)  # after normalization
+
+ISSUE 3: RANDOM INITIALIZATION
+
+GMM with random initialization may converge to different solutions.
+
+Solution: Use multiple initializations (n_init=10), keep best.
+
+ISSUE 4: EMPTY CLUSTERS
+
+Sometimes a cluster ends up with no points.
+
+Solution: sklearn handles this automatically by reinitializing.
+
+
+4.11 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS:
+
+1. After PELT segments the data, we need to CLASSIFY segments into regimes.
+
+2. GMM provides data-driven clustering without manual thresholds:
+   - Learns regime characteristics from data
+   - Provides soft assignments (uncertainty)
+   - Flexible cluster shapes (full covariance)
+
+3. EM algorithm learns GMM parameters:
+   - E-step: Compute point responsibilities
+   - M-step: Update parameters
+   - Converges to (local) maximum likelihood
+
+4. We cluster BARS, not segments, for statistical reliability.
+   Then assign segment labels by majority vote.
+
+5. Cluster centers are interpreted using feature signs:
+   - Positive slope + positive return → BULL
+   - Negative slope + negative return → BEAR
+   - Conflicting or weak signals → SIDEWAYS
+
+6. Practical issues (singularity, overflow, initialization) require
+   careful handling: regularization, clipping, multiple inits.
+
+
+================================================================================
+                                  CHAPTER 5
+                 HIDDEN MARKOV MODELS FOR REGIME DETECTION
+================================================================================
+
+5.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+Hidden Markov Models (HMMs) are a powerful alternative to PELT+GMM for
+regime detection. This chapter explains HMM theory and compares approaches.
+
+
+5.2 HMM INTUITION
+--------------------------------------------------------------------------------
+
+ANALOGY: THE WEATHER AND UMBRELLA PROBLEM
+
+Imagine you're locked in a basement with no windows. Each day, someone
+enters carrying either an umbrella or no umbrella. From observing
+umbrellas, can you infer the weather sequence?
+
+   Weather (hidden):  [Sunny, Sunny, Rainy, Rainy, Sunny, ...]
+   Umbrella (observed): [No, No, Yes, Yes, No, ...]
+
+The weather is the HIDDEN STATE. The umbrella is the OBSERVATION.
+Weather today depends on weather yesterday (Markov property).
+
+MARKET ANALOGY:
+
+   Regime (hidden):   [BULL, BULL, BEAR, BEAR, SIDEWAYS, ...]
+   Returns (observed): [+1%, +0.5%, -2%, -1.5%, +0.1%, ...]
+
+We observe returns. We want to infer the hidden regime sequence.
+
+
+5.3 HMM FORMAL DEFINITION
+--------------------------------------------------------------------------------
+
+COMPONENTS:
+
+1. HIDDEN STATES: S = {s_1, s_2, ..., s_K}
+   For regime detection: S = {BULL, BEAR, SIDEWAYS}
+
+2. OBSERVATIONS: {X_t}_{t=1}^{T}
+   For markets: daily returns, prices, or features
+
+3. INITIAL DISTRIBUTION: π_k = P(S_1 = s_k)
+   Probability of starting in each state.
+
+4. TRANSITION MATRIX: A_{jk} = P(S_t = s_k | S_{t-1} = s_j)
+   Probability of moving from state j to state k.
+
+   Example (3-state):
+                   BULL  BEAR  SIDE
+   From BULL:     [0.95  0.03  0.02]
+   From BEAR:     [0.05  0.90  0.05]
+   From SIDEWAYS: [0.10  0.10  0.80]
+
+   Interpretation: 95% chance of staying in BULL, 3% of transitioning to BEAR.
+
+5. EMISSION DISTRIBUTION: B_k(x) = P(X_t = x | S_t = s_k)
+   Probability of observing x when in state k.
+
+   Often Gaussian: X_t | S_t = k ~ N(μ_k, Σ_k)
+
+MARKOV PROPERTY:
+
+   P(S_t | S_1, ..., S_{t-1}) = P(S_t | S_{t-1})
+
+The future state depends only on the current state, not the full history.
+
+
+5.4 THE THREE FUNDAMENTAL HMM PROBLEMS
+--------------------------------------------------------------------------------
+
+PROBLEM 1: EVALUATION (LIKELIHOOD)
+
+   Given: Model parameters λ = (π, A, B), observation sequence X_{1:T}
+   Find: P(X_{1:T} | λ)
+
+   "How likely is this observation sequence under the model?"
+
+PROBLEM 2: DECODING (STATE INFERENCE)
+
+   Given: Model parameters λ, observation sequence X_{1:T}
+   Find: Most likely state sequence S_{1:T}*
+
+   "What regime was the market in at each time?"
+
+   This is what we want for regime detection!
+
+PROBLEM 3: LEARNING (PARAMETER ESTIMATION)
+
+   Given: Observation sequence X_{1:T}
+   Find: Model parameters λ* that maximize P(X_{1:T} | λ)
+
+   "Learn the regime characteristics from data."
+
+
+5.5 THE FORWARD ALGORITHM (PROBLEM 1)
+--------------------------------------------------------------------------------
+
+Computes P(X_{1:T} | λ) efficiently.
+
+NAIVE APPROACH:
+
+   Sum over all possible state sequences:
+   P(X) = Σ_{S} P(X, S) = Σ_{S} P(X|S) P(S)
+
+   Problem: K^T possible sequences → exponential complexity!
+
+FORWARD ALGORITHM:
+
+Define forward variable:
+   α_t(k) = P(X_{1:t}, S_t = k | λ)
+   "Probability of observations up to t AND being in state k at time t"
+
+RECURSION:
+
+   Initialization:
+       α_1(k) = π_k · B_k(X_1)
+
+   Induction:
+       α_t(k) = [Σ_j α_{t-1}(j) · A_{jk}] · B_k(X_t)
+
+   Termination:
+       P(X_{1:T} | λ) = Σ_k α_T(k)
+
+COMPLEXITY: O(K²T) - polynomial, not exponential!
+
+INTUITION:
+
+At each time t, we only track K values (one per state), not all
+possible paths. The Markov property allows this compression.
+
+
+5.6 THE BACKWARD ALGORITHM
+--------------------------------------------------------------------------------
+
+Computes "future" probabilities, used for learning.
+
+Define backward variable:
+   β_t(k) = P(X_{t+1:T} | S_t = k, λ)
+   "Probability of future observations GIVEN being in state k at time t"
+
+RECURSION:
+
+   Initialization:
+       β_T(k) = 1 for all k
+
+   Induction (going backwards):
+       β_t(k) = Σ_j A_{kj} · B_j(X_{t+1}) · β_{t+1}(j)
+
+COMBINING FORWARD AND BACKWARD:
+
+   P(S_t = k | X_{1:T}) ∝ α_t(k) · β_t(k)
+
+This gives the POSTERIOR probability of being in state k at time t,
+given ALL observations (past AND future).
+
+
+5.7 THE VITERBI ALGORITHM (PROBLEM 2)
+--------------------------------------------------------------------------------
+
+Finds the most likely state sequence.
+
+NAIVE APPROACH:
+
+   Check all K^T sequences, find one with highest P(S | X).
+   Exponential complexity!
+
+VITERBI ALGORITHM (Dynamic Programming):
+
+Define:
+   δ_t(k) = max_{S_{1:t-1}} P(S_{1:t-1}, S_t = k, X_{1:t})
+   "Probability of best path ending in state k at time t"
+
+RECURSION:
+
+   Initialization:
+       δ_1(k) = π_k · B_k(X_1)
+       ψ_1(k) = 0  (no predecessor)
+
+   Induction:
+       δ_t(k) = max_j [δ_{t-1}(j) · A_{jk}] · B_k(X_t)
+       ψ_t(k) = argmax_j [δ_{t-1}(j) · A_{jk}]
+
+   Termination:
+       S_T* = argmax_k δ_T(k)
+
+   Backtracking:
+       S_t* = ψ_{t+1}(S_{t+1}*)
+
+RESULT: Most likely state sequence S_{1:T}*.
+
+COMPLEXITY: O(K²T)
+
+
+5.8 THE BAUM-WELCH ALGORITHM (PROBLEM 3)
+--------------------------------------------------------------------------------
+
+Learns HMM parameters from data using EM.
+
+E-STEP: Compute expected state occupancies and transitions.
+
+Define:
+   γ_t(k) = P(S_t = k | X_{1:T}, λ)
+          = α_t(k) · β_t(k) / P(X)
+
+   ξ_t(j,k) = P(S_t = j, S_{t+1} = k | X_{1:T}, λ)
+            = α_t(j) · A_{jk} · B_k(X_{t+1}) · β_{t+1}(k) / P(X)
+
+M-STEP: Update parameters.
+
+   π_k = γ_1(k)
+
+   A_{jk} = Σ_t ξ_t(j,k) / Σ_t γ_t(j)
+
+   For Gaussian emissions:
+       μ_k = Σ_t γ_t(k) · X_t / Σ_t γ_t(k)
+       Σ_k = Σ_t γ_t(k) · (X_t - μ_k)(X_t - μ_k)ᵀ / Σ_t γ_t(k)
+
+ITERATION: Repeat E and M steps until convergence.
+
+
+5.9 HMM VS PELT+GMM COMPARISON
+--------------------------------------------------------------------------------
+
+                        HMM                     PELT+GMM
+─────────────────────────────────────────────────────────────────────────
+Regime structure        Markov transitions      Independent segments
+
+Temporal modeling       Explicit (transition    Implicit (through
+                        probabilities)          changepoint detection)
+
+Output                  Probabilistic states    Hard segment labels
+                        at each time
+
+Changepoint detection   Implicit (transition    Explicit (PELT finds
+                        probability spikes)     boundaries)
+
+Computational cost      O(K²T) per EM iter      O(T) PELT + O(NK²) GMM
+
+Look-ahead bias         Standard Viterbi uses   PELT is non-causal
+                        future observations     (uses full series)
+
+Number of regimes       Must specify K          Must specify K
+
+Interpretability        Moderate (need to       Good (segments have
+                        examine posteriors)     clear features)
+
+Regime persistence      Built-in (transition    Enforced by min
+                        matrix encourages       segment length
+                        staying in state)
+
+
+5.10 LOOK-AHEAD BIAS IN HMM
+--------------------------------------------------------------------------------
+
+IMPORTANT WARNING FOR BACKTESTING:
+
+Standard HMM algorithms (Viterbi, Forward-Backward) use FUTURE observations
+to infer PAST states.
+
+EXAMPLE:
+
+   At time t=100, Viterbi uses observations X_{1:200} to decide S_{100}.
+   This means S_{100} depends on information not available at t=100.
+
+FOR BACKTESTING: This is acceptable because we're doing POST-HOC analysis.
+We want the best estimate of regimes given all data.
+
+FOR LIVE TRADING: Cannot use standard HMM. Must use FILTERING:
+   P(S_t | X_{1:t})  not  P(S_t | X_{1:T})
+
+This gives the online estimate using only past observations.
+
+
+5.11 WHEN TO USE HMM VS PELT+GMM
+--------------------------------------------------------------------------------
+
+USE HMM WHEN:
+
+1. Regime persistence matters: HMM naturally models tendency to stay
+   in same regime (high diagonal in transition matrix).
+
+2. You want probabilistic output: HMM gives P(regime) at each time,
+   not hard labels.
+
+3. Regime transitions are gradual: HMM can model soft transitions.
+
+USE PELT+GMM WHEN:
+
+1. Interpretability is key: Explicit segments with features are
+   easier to understand and explain.
+
+2. Computational simplicity: PELT is O(T), faster than EM iterations.
+
+3. Regime changes are abrupt: PELT is designed for sharp changepoints.
+
+4. Minimum segment length is important: PELT enforces this directly.
+
+OUR CHOICE:
+
+We use PELT+GMM because:
+- Explicit segment boundaries are more interpretable
+- Easier to explain regime features to users
+- Computational simplicity
+- Our regimes (BULL/BEAR/SIDEWAYS) have reasonably sharp transitions
+
+
+5.12 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS:
+
+1. HMM models regimes as hidden states with Markov transitions.
+
+2. Three fundamental problems:
+   - Evaluation: Forward algorithm
+   - Decoding: Viterbi algorithm
+   - Learning: Baum-Welch (EM)
+
+3. HMM pros:
+   - Principled probabilistic framework
+   - Models regime persistence naturally
+   - Soft state assignments
+
+4. HMM cons:
+   - Look-ahead bias in standard algorithms
+   - Less interpretable than explicit segments
+   - More complex implementation
+
+5. For backtesting analysis, both HMM and PELT+GMM are valid.
+   We chose PELT+GMM for interpretability.
+
+
+================================================================================
+                                  CHAPTER 6
+                 FEATURE ENGINEERING FOR REGIME CLASSIFICATION
+================================================================================
+
+6.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+After PELT segments the data, we need FEATURES to classify each segment.
+Good features capture the essence of regime differences. Bad features
+lead to misclassification.
+
+This chapter details the feature engineering for regime detection.
+
+
+6.2 WHAT MAKES A GOOD FEATURE?
+--------------------------------------------------------------------------------
+
+CRITERIA FOR REGIME FEATURES:
+
+1. DISCRIMINATIVE: Different regimes should have different feature values.
+
+   Good: Slope (BULL ≈ +0.1, BEAR ≈ -0.1, SIDEWAYS ≈ 0)
+   Bad: Volume (similar across regimes)
+
+2. ROBUST: Not overly sensitive to noise or outliers.
+
+   Good: R² (bounded 0-1, resistant to outliers)
+   Bad: Max daily return (single outlier dominates)
+
+3. INTERPRETABLE: Can explain what feature captures.
+
+   Good: "Average daily return percentage"
+   Bad: "Third principal component of wavelet coefficients"
+
+4. COMPUTABLE: Can calculate from available data.
+
+   Good: Derived from OHLCV
+   Bad: Requires sentiment data we don't have
+
+
+6.3 OUR FEATURE SET
+--------------------------------------------------------------------------------
+
+We use four features per bar:
+
+FEATURE 1: SLOPE (from OLS regression)
+
+   For segment [a, b], fit: P_t = α + β·t + ε
+
+   slope = β / mean(P)  (normalized by price level)
+
+   Interpretation:
+   - Positive slope → prices trending up
+   - Negative slope → prices trending down
+   - Near-zero slope → flat
+
+   Units: Percent change per bar
+
+
+FEATURE 2: R² (coefficient of determination)
+
+   R² = 1 - SS_res / SS_tot
+      = 1 - Σ(P_t - P̂_t)² / Σ(P_t - P̄)²
+
+   Interpretation:
+   - R² near 1 → strong linear trend
+   - R² near 0 → no linear trend (noisy or curved)
+
+   Why it matters:
+   - High slope + high R² = confident trend
+   - High slope + low R² = unreliable trend
+   - Low slope + low R² = sideways/choppy
+
+   Range: [0, 1]
+
+
+FEATURE 3: MEAN RETURN
+
+   mean_return = (1/n) Σ r_t  where r_t = (P_t - P_{t-1}) / P_{t-1}
+
+   Interpretation:
+   - Positive mean → gaining on average
+   - Negative mean → losing on average
+
+   Difference from slope:
+   - Slope: Overall direction from start to end
+   - Mean return: Average of daily moves
+
+   These usually agree, but can differ:
+   - V-shape: Slope ≈ 0, but mean return depends on timing
+
+
+FEATURE 4: STANDARD DEVIATION OF RETURNS
+
+   std_return = std(r_t)
+
+   Interpretation:
+   - High std → volatile, large daily swings
+   - Low std → calm, small daily moves
+
+   Useful for distinguishing:
+   - SIDEWAYS + low std = quiet consolidation
+   - SIDEWAYS + high std = choppy, whipsaw-prone
+
+
+6.4 SEGMENT-WIDE VS LOCAL FEATURES
+--------------------------------------------------------------------------------
+
+SEGMENT-WIDE FEATURES:
+
+Computed once for the entire segment.
+
+   Example: OLS slope fitted to all bars in segment.
+
+   Pros: Captures overall segment character
+   Cons: Misses variation within segment
+
+LOCAL FEATURES:
+
+Computed for each bar using a rolling window.
+
+   Example: 10-bar rolling mean return.
+
+   Pros: Captures local variation
+   Cons: May be noisy; which window size?
+
+OUR APPROACH:
+
+We compute BOTH:
+   - Slope and R²: Segment-wide (stable trend direction)
+   - Mean return and std: Local rolling window (captures variation)
+
+Then assign segment-wide values to all bars in segment (for clustering).
+
+
+6.5 OLS REGRESSION FOR TREND ESTIMATION
+--------------------------------------------------------------------------------
+
+SETUP:
+
+Given segment prices P_{t_1}, P_{t_2}, ..., P_{t_n}, fit:
+
+   P_t = α + β·(t - t_1) + ε
+
+where t - t_1 is bars since segment start.
+
+SOLUTION (via calculus):
+
+   β = Cov(t, P) / Var(t) = [Σ(t - t̄)(P - P̄)] / [Σ(t - t̄)²]
+   α = P̄ - β·t̄
+
+For equally spaced t = 0, 1, ..., n-1:
+   t̄ = (n-1)/2
+   Σ(t - t̄)² = n(n²-1)/12
+
+EXAMPLE 6.1
+
+   Prices: [100, 102, 101, 104, 106]
+   Time:   [0, 1, 2, 3, 4]
+
+   n = 5, t̄ = 2, P̄ = 102.6
+
+   β = [(0-2)(100-102.6) + (1-2)(102-102.6) + ... + (4-2)(106-102.6)]
+       / [(0-2)² + (1-2)² + ... + (4-2)²]
+
+     = [(-2)(-2.6) + (-1)(-0.6) + (0)(-1.6) + (1)(1.4) + (2)(3.4)]
+       / [4 + 1 + 0 + 1 + 4]
+
+     = [5.2 + 0.6 + 0 + 1.4 + 6.8] / 10
+     = 14 / 10 = 1.4
+
+   Normalized slope: β / P̄ = 1.4 / 102.6 = 0.0136 = 1.36% per bar
+
+
+R² CALCULATION:
+
+   P̂_t = α + β·t  (fitted values)
+
+   SS_tot = Σ(P_t - P̄)² = (-2.6)² + (-0.6)² + (-1.6)² + (1.4)² + (3.4)²
+          = 6.76 + 0.36 + 2.56 + 1.96 + 11.56 = 23.2
+
+   SS_res = Σ(P_t - P̂_t)²
+
+   First compute P̂:
+   P̂_0 = 102.6 - 1.4(2) = 99.8
+   P̂_1 = 102.6 - 1.4(1) = 101.2
+   P̂_2 = 102.6 - 1.4(0) = 102.6
+   P̂_3 = 102.6 + 1.4(1) = 104.0
+   P̂_4 = 102.6 + 1.4(2) = 105.4
+
+   Residuals: 100-99.8=0.2, 102-101.2=0.8, 101-102.6=-1.6, 104-104=0, 106-105.4=0.6
+   SS_res = 0.04 + 0.64 + 2.56 + 0 + 0.36 = 3.6
+
+   R² = 1 - 3.6/23.2 = 1 - 0.155 = 0.845
+
+   Interpretation: 84.5% of price variance explained by linear trend.
+   This is a reasonably strong trend.
+
+
+6.6 HANDLING EDGE CASES
+--------------------------------------------------------------------------------
+
+EDGE CASE 1: VERY SHORT SEGMENTS
+
+   Segment with 3 bars: OLS regression is unreliable.
+
+   Solution: Return slope = 0, R² = 0 for segments < 5 bars.
+   These segments lack statistical reliability.
+
+EDGE CASE 2: CONSTANT PRICES
+
+   All prices identical: Var(P) = 0, R² undefined (0/0).
+
+   Solution: Return slope = 0, R² = 1 (perfect "fit" to flat line).
+
+EDGE CASE 3: EXTREME VALUES
+
+   Single outlier can dominate slope and R².
+
+   Example: [100, 101, 100, 101, 500, 101, 100]
+
+   Solution: We don't explicitly handle this; rely on PELT to segment
+   around extreme events. Could use robust regression as enhancement.
+
+EDGE CASE 4: GAPS IN DATA
+
+   Missing bars due to holidays, data issues.
+
+   Solution: Our data is daily OHLCV without gaps (filled by data provider).
+   If gaps existed, would need to handle time index carefully.
+
+
+6.7 FEATURE NORMALIZATION
+--------------------------------------------------------------------------------
+
+Before GMM clustering, features should be normalized.
+
+WHY NORMALIZE?
+
+   Slope: Range roughly [-0.5, +0.5]
+   R²: Range [0, 1]
+   Mean return: Range roughly [-0.5%, +0.5%]
+   Std return: Range roughly [0.5%, 5%]
+
+Without normalization, GMM gives more weight to features with larger
+absolute values (std_return dominates due to scale).
+
+Z-SCORE NORMALIZATION:
+
+   For each feature f:
+       f_normalized = (f - mean(f)) / std(f)
+
+   After normalization, all features have mean 0 and std 1.
+
+   Important: We normalize across ALL bars, not per segment.
+   This ensures consistent scaling.
+
+CLIPPING EXTREME VALUES:
+
+   After normalization, clip to [-10, +10] to prevent numerical issues.
+
+   X_normalized = clip(X_normalized, -10, 10)
+
+   Values beyond ±10 standard deviations are extreme outliers;
+   capping them prevents GMM instability.
+
+
+6.8 FEATURE COMBINATIONS AND INTERACTIONS
+--------------------------------------------------------------------------------
+
+Our four features capture different aspects:
+
+   Slope:       Direction of trend
+   R²:          Strength/reliability of trend
+   Mean return: Average performance
+   Std return:  Volatility
+
+EXPECTED PATTERNS BY REGIME:
+
+   BULL:     slope > 0, R² high, mean_return > 0, std varies
+   BEAR:     slope < 0, R² high, mean_return < 0, std often high
+   SIDEWAYS: slope ≈ 0, R² low, mean_return ≈ 0, std varies
+
+INTERACTIONS:
+
+1. Slope × R²:
+   - High slope + high R² = strong confident trend
+   - High slope + low R² = unreliable trend (might be noise)
+
+2. Slope × Mean return:
+   - Usually same sign (both positive or both negative)
+   - If different: V-shape or complex pattern
+
+3. R² × Std:
+   - High R² + low std = clean trend
+   - High R² + high std = strong trend despite volatility
+   - Low R² + high std = chaos, no predictability
+
+
+6.9 ALTERNATIVE FEATURES (NOT USED)
+--------------------------------------------------------------------------------
+
+Other features we considered but didn't include:
+
+SHARPE RATIO:
+   Sharpe = mean_return / std_return
+
+   Pro: Single metric combining return and risk.
+   Con: Undefined when std = 0; can be misleading for short periods.
+
+MAX DRAWDOWN:
+   Maximum peak-to-trough decline within segment.
+
+   Pro: Captures downside risk.
+   Con: Requires more computation; path-dependent.
+
+HURST EXPONENT:
+   Measures long-range dependence / trending vs mean-reverting.
+
+   Pro: Captures market character.
+   Con: Requires long segments for reliable estimation.
+
+AUTOCORRELATION:
+   Correlation of returns with lagged returns.
+
+   Pro: Detects momentum vs mean-reversion.
+   Con: Noisy for short segments.
+
+WHY WE KEPT IT SIMPLE:
+
+Four features (slope, R², mean_return, std_return) provide sufficient
+discrimination for BULL/BEAR/SIDEWAYS while remaining interpretable.
+More features risk overfitting and reduce interpretability.
+
+
+6.10 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+KEY CONCEPTS:
+
+1. Good features are DISCRIMINATIVE, ROBUST, INTERPRETABLE, and COMPUTABLE.
+
+2. Our feature set:
+   - Slope: Trend direction (OLS regression)
+   - R²: Trend reliability
+   - Mean return: Average daily performance
+   - Std return: Volatility
+
+3. OLS regression provides slope and R²:
+   - β = Cov(t, P) / Var(t)
+   - R² = 1 - SS_res / SS_tot
+
+4. Segment-wide features (slope, R²) capture overall direction.
+   Local features (mean, std) capture variation.
+
+5. Normalization is essential before GMM clustering.
+   Z-score normalization puts all features on same scale.
+
+6. Edge cases (short segments, constant prices) require special handling.
+
+
+================================================================================
+                                  CHAPTER 7
+                    PATHOLOGICAL CASES AND EDGE CONDITIONS
+================================================================================
+
+7.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+No algorithm handles all market patterns perfectly. This chapter examines
+PATHOLOGICAL CASES where regime detection fails or gives misleading results.
+
+Understanding failure modes is crucial for proper use and interpretation.
+
+
+7.2 THE V-SHAPE PROBLEM
+--------------------------------------------------------------------------------
+
+PATTERN:
+   Price drops sharply, then recovers sharply.
+
+   Price:  100 → 80 → 100
+   Shape:   \/
+
+EXPECTED: Two regimes (BEAR during drop, BULL during recovery)
+ACTUAL (our implementation): Often one segment labeled BULL or SIDEWAYS
+
+WHY IT FAILS:
+
+1. PELT with [returns, volatility] signal:
+   - Volatility is HIGH throughout (both drop and recovery are volatile)
+   - No changepoint detected at the bottom
+
+2. Features for combined segment:
+   - Slope ≈ 0 (starts and ends at same price)
+   - R² low (not a linear trend)
+   - Mean return ≈ 0 (losses and gains cancel)
+
+3. GMM classifies as SIDEWAYS or misclassifies based on noise.
+
+SOLUTIONS:
+
+a) Use directional signal for PELT:
+   - Cumulative returns change slope at bottom
+   - Rolling SMA slope changes sign at bottom
+
+b) Post-process: Check for internal V-shape in segments with low R².
+
+c) Accept limitation: Note that V-shapes may be misclassified.
+
+
+7.3 THE W-BOTTOM / M-TOP PROBLEM
+--------------------------------------------------------------------------------
+
+PATTERN:
+   Multiple reversals create W (bottom) or M (top) shape.
+
+   W-bottom:  100 → 80 → 90 → 80 → 100
+   M-top:     100 → 120 → 110 → 120 → 100
+
+EXPECTED: Multiple regimes capturing each leg
+ACTUAL: Often one segment, misclassified
+
+WHY IT FAILS:
+
+Similar to V-shape but worse:
+- Multiple direction changes within segment
+- Overall slope near zero
+- Low R² (not linear)
+
+The pattern is too complex for our linear trend features.
+
+SOLUTIONS:
+
+a) Lower PELT penalty to detect more changepoints.
+
+b) Use higher-frequency features that capture short-term reversals.
+
+c) Accept as SIDEWAYS (which is arguably correct - choppy, no clear trend).
+
+
+7.4 THE WHIPSAW PROBLEM
+--------------------------------------------------------------------------------
+
+PATTERN:
+   Rapid alternation between up and down moves.
+
+   Price: 100 → 105 → 98 → 103 → 95 → 102 → 97 → ...
+
+EXPECTED: SIDEWAYS (no sustained direction)
+ACTUAL: May be split into many tiny segments or mislabeled
+
+WHY IT FAILS:
+
+1. If min_segment_length is low:
+   - PELT may create many 5-10 bar segments
+   - Each segment too short for reliable features
+
+2. If min_segment_length is high:
+   - PELT creates one large segment
+   - Features may show slight directional bias from noise
+   - Could be mislabeled as weak BULL or BEAR
+
+SOLUTIONS:
+
+a) Set min_segment_length appropriately (we use 20 bars).
+
+b) Require minimum segment length for confident labeling.
+
+c) Label very short segments as UNKNOWN or low-confidence.
+
+
+7.5 LOW R² WITH DIRECTIONAL DRIFT
+--------------------------------------------------------------------------------
+
+PATTERN:
+   Price trends upward but with high noise / low linearity.
+
+   Example: Net +20% over segment but with wild swings.
+   Slope > 0, Mean return > 0, BUT R² = 0.2
+
+EXPECTED: BULL (it did go up)
+ACTUAL: May be labeled SIDEWAYS (due to low R²)
+
+THIS IS A DESIGN CHOICE:
+
+Arguments for BULL:
+- Net direction was up
+- A trader would have made money holding
+
+Arguments for SIDEWAYS:
+- Path was not a clean trend
+- Trend-following strategies would have been stopped out repeatedly
+- Low predictability (R²)
+
+OUR CHOICE:
+
+We lean toward calling this SIDEWAYS because:
+- For strategy analysis, path matters as much as outcome
+- Trend-following strategies perform poorly in low-R² environments
+- The label "BULL" implies a tradeable trend, not just net positive returns
+
+Users should interpret SIDEWAYS as "not a clean trend" rather than
+"didn't go anywhere."
+
+
+7.6 CONFLICTING SIGNALS
+--------------------------------------------------------------------------------
+
+PATTERN:
+   Different features disagree on regime.
+
+   Example: slope = +0.05 (bullish), mean_return = -0.02 (bearish)
+
+HOW THIS HAPPENS:
+
+   V-shape shifted in time:
+   - Segment starts mid-decline, ends mid-recovery
+   - OLS slope may be positive (recovery steeper than decline)
+   - Mean daily return negative (more down days than up days)
+
+OUR HANDLING:
+
+   In assign_segment_regimes(), we check for conflicting signals:
+
+   if (slope_bullish and mean_bearish) or (slope_bearish and mean_bullish):
+       regime = SIDEWAYS
+
+RATIONALE:
+
+When features disagree, we lack confidence in any directional label.
+SIDEWAYS is the conservative choice indicating uncertainty.
+
+
+7.7 SHORT SEGMENTS
+--------------------------------------------------------------------------------
+
+PATTERN:
+   PELT creates a segment with only 20-30 bars.
+
+PROBLEMS:
+
+1. Statistical reliability:
+   - OLS on 20 points has high uncertainty
+   - R² may be misleading (can be high or low by chance)
+
+2. Actionability:
+   - 20 trading days ≈ 1 month
+   - May be too short to be a meaningful "regime"
+
+3. Classification:
+   - GMM trained on all bars may not represent short segment well
+   - Majority vote among 20 bars may be dominated by noise
+
+OUR HANDLING:
+
+   - min_segment_length = 20 prevents very short segments
+   - We don't have special handling for borderline (20-40 bar) segments
+   - Users should interpret short segments with caution
+
+POSSIBLE ENHANCEMENT:
+
+   Add confidence score based on segment length:
+   - confidence = min(1, segment_length / 50)
+   - Display confidence alongside regime label
+
+
+7.8 REGIME CHANGES WITHIN WINDOWS
+--------------------------------------------------------------------------------
+
+PATTERN:
+   True regime change occurs, but PELT doesn't detect it.
+   The changepoint falls within a segment.
+
+   True regimes: BULL | BEAR
+   PELT output:  ───────────── (one segment)
+
+WHY IT HAPPENS:
+
+1. Penalty too high: Change wasn't "significant" enough.
+
+2. Signal insensitive: The signal used doesn't capture this type of change.
+
+3. Change too gradual: Not a sharp changepoint.
+
+DETECTION:
+
+Hard to detect automatically. Signs to look for:
+- Large segment with low R²
+- Large segment with features not strongly in any regime
+- Large segment spanning known market events
+
+SOLUTIONS:
+
+a) Lower PELT penalty.
+
+b) Use more sensitive signal.
+
+c) Add domain knowledge (split around known events like COVID crash).
+
+d) Post-process: If segment is very long, check for internal changepoints.
+
+
+7.9 BOUNDARY EFFECTS
+--------------------------------------------------------------------------------
+
+PATTERN:
+   Regime change at very start or very end of data.
+
+   Data: [■■■■|○○○○○○○○○○○○○○○○○○○○○○○○○○]
+   True:  BEAR |     BULL
+
+   If BEAR portion is only 30 bars, PELT may not detect the changepoint.
+
+WHY IT HAPPENS:
+
+   PELT needs enough data on both sides of changepoint to detect it.
+   Near boundaries, one side is very short.
+
+OUR HANDLING:
+
+   No special handling. Users should:
+   - Start data before any expected regime of interest
+   - Not rely heavily on regime labels near data boundaries
+
+
+7.10 ALL BARS SIMILAR
+--------------------------------------------------------------------------------
+
+PATTERN:
+   GMM clustering finds that all bars are similar.
+   All bars assigned to one cluster.
+
+WHEN THIS HAPPENS:
+
+- Single-regime data (entire period is BULL)
+- Very homogeneous market conditions
+- Features don't discriminate well for this data
+
+IMPLICATIONS:
+
+- Regime dependency analysis becomes meaningless
+- "INDEPENDENT" assessment is trivially true
+
+OUR HANDLING:
+
+   CV-based dependency check handles this:
+   - If only one regime has trades → CV = 0 → INDEPENDENT
+   - This is technically correct but uninformative
+
+RECOMMENDATION:
+
+   Use longer time periods that span multiple known regimes.
+   Single-regime analysis tells you little about regime dependency.
+
+
+7.11 NUMERICAL ISSUES
+--------------------------------------------------------------------------------
+
+ISSUE 1: DIVISION BY ZERO
+
+   - R² calculation when Var(P) = 0
+   - Slope normalization when mean(P) = 0
+
+   Solution: Check for zero denominators, return default values.
+
+ISSUE 2: OVERFLOW IN GMM
+
+   - Gaussian density for extreme values → 0 or infinity
+   - Covariance matrix becomes singular
+
+   Solution: Clip features to [-10, +10] after normalization.
+   Use regularized covariance (reg_covar=1e-5).
+
+ISSUE 3: LOG OF ZERO
+
+   - Log returns when P_{t-1} = 0 (shouldn't happen with prices)
+
+   Solution: Data validation should catch this.
+
+
+7.12 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+PATHOLOGICAL CASES:
+
+1. V-SHAPE: Volatility stays high, no changepoint at bottom.
+   → Consider directional signal for PELT.
+
+2. W/M PATTERNS: Multiple reversals, low R², misclassified.
+   → Accept as SIDEWAYS or lower penalty.
+
+3. WHIPSAW: Rapid alternation, unreliable short segments.
+   → Appropriate min_segment_length.
+
+4. LOW R² DRIFT: Net direction but noisy path.
+   → Design choice: we call it SIDEWAYS.
+
+5. CONFLICTING SIGNALS: Features disagree.
+   → Classify as SIDEWAYS.
+
+6. SHORT SEGMENTS: Statistically unreliable.
+   → Interpret with caution.
+
+7. MISSED CHANGEPOINTS: Regime change within segment.
+   → Lower penalty or better signal.
+
+8. BOUNDARY EFFECTS: Changes near data start/end.
+   → Extend data period.
+
+KEY LESSON:
+
+No regime detection method is perfect. Understanding failure modes
+enables appropriate use and interpretation of results.
+
+
+================================================================================
+                                  CHAPTER 8
+                  IMPLEMENTATION DETAILS AND DESIGN DECISIONS
+================================================================================
+
+8.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+This chapter documents our specific implementation: design decisions,
+known limitations, parameter choices, and guidance for users.
+
+
+8.2 ARCHITECTURE OVERVIEW
+--------------------------------------------------------------------------------
+
+Our implementation has these components:
+
+1. DATA INPUT: DataFrame with OHLCV columns and DatetimeIndex.
+
+2. PELT CHANGEPOINT DETECTION:
+   - Library: ruptures (Python)
+   - Signal: [log_returns, rolling_volatility]
+   - Kernel: RBF
+   - Penalty: np.log(n) by default
+
+3. FEATURE EXTRACTION:
+   - Per-segment: OLS slope, R²
+   - Per-bar: rolling mean return, rolling std return
+   - Features assigned to bars based on their segment
+
+4. GMM CLUSTERING:
+   - Library: sklearn.mixture.GaussianMixture
+   - Features: [slope, r_squared, mean_return, std_return]
+   - Clusters: K=3 (configurable)
+   - Covariance: full
+
+5. REGIME LABELING:
+   - Interpret cluster centers to assign BULL/BEAR/SIDEWAYS
+   - Majority vote per segment
+   - Override for conflicting signals
+
+6. TRADE ANALYSIS:
+   - Group trades by regime at entry time
+   - Calculate metrics per regime
+   - Assess dependency via CV
+
+
+8.3 KEY DESIGN DECISIONS
+--------------------------------------------------------------------------------
+
+DECISION 1: PELT vs HMM
+
+   Choice: PELT
+   Rationale:
+   - Explicit segment boundaries are more interpretable
+   - O(T) complexity vs O(K²T) per EM iteration
+   - Simpler implementation and debugging
+   - Minimum segment length is directly enforced
+
+DECISION 2: SIGNAL FOR PELT
+
+   Choice: [log_returns, rolling_volatility]
+   Rationale (at design time):
+   - Captures return behavior and volatility
+   - Both are important for regime characterization
+
+   Known limitation:
+   - Primarily detects volatility changes, not trend changes
+   - V-shape problem: see Chapter 7
+
+DECISION 3: CLUSTER BARS, NOT SEGMENTS
+
+   Choice: GMM on bars with majority vote per segment
+   Rationale:
+   - Ensures sufficient data points for GMM regardless of segment count
+   - Avoids overfitting when there are few segments
+
+DECISION 4: THREE REGIMES
+
+   Choice: K=3 (BULL, BEAR, SIDEWAYS)
+   Rationale:
+   - Natural interpretation for trend regimes
+   - Sufficient granularity for strategy analysis
+   - More regimes would reduce interpretability
+
+DECISION 5: DYNAMIC THRESHOLDS FOR WEAK TREND
+
+   Choice: CV + percentile based thresholds
+   Rationale:
+   - No hardcoded magic numbers
+   - Adapts to data distribution
+   - Only applies when there's meaningful variation (CV > 0.2)
+
+
+8.4 KNOWN LIMITATIONS
+--------------------------------------------------------------------------------
+
+LIMITATION 1: V-SHAPE DETECTION
+
+   The [log_returns, volatility] signal doesn't detect V-bottoms.
+   Both drop and recovery have high volatility, so no changepoint.
+
+   Impact: V-shaped corrections may be labeled as single segment.
+   Workaround: Use longer time periods; V-shapes average out.
+
+LIMITATION 2: LOOK-AHEAD BIAS
+
+   Both PELT and GMM use the full dataset.
+   Regime labels at time t depend on data after t.
+
+   Impact: Cannot use labels for live trading decisions.
+   Appropriate use: Post-hoc analysis only.
+
+LIMITATION 3: MINIMUM SEGMENT LENGTH
+
+   Fixed at 20 bars. Shorter regimes cannot be detected.
+
+   Impact: Rapid regime changes may be missed.
+   Workaround: Reduce min_segment_length (may increase noise).
+
+LIMITATION 4: REGIME TRANSITIONS
+
+   We assign hard labels to each bar.
+   No representation of "transitioning" states.
+
+   Impact: Bars at regime boundaries have uncertain labels.
+   Workaround: Interpret boundaries as fuzzy, not sharp.
+
+
+8.5 PARAMETER TUNING GUIDANCE
+--------------------------------------------------------------------------------
+
+PARAMETER: penalty (PELT)
+
+   Default: np.log(n)
+   Lower (e.g., 5): More segments, more sensitive
+   Higher (e.g., 15): Fewer segments, only major changes
+
+   Tuning: Start with default. If missing obvious regime changes, lower.
+   If getting too many noisy segments, raise.
+
+PARAMETER: min_segment_length
+
+   Default: 20 bars
+   Lower (e.g., 10): Allows shorter regimes
+   Higher (e.g., 50): Only long regimes
+
+   Tuning: Based on your trading timeframe. Day traders might want 10.
+   Position traders might want 50.
+
+PARAMETER: vol_window
+
+   Default: 20 bars
+   Purpose: Rolling window for volatility calculation in PELT signal.
+
+   Tuning: Usually leave at 20 (one trading month).
+
+PARAMETER: local_window
+
+   Default: 10 bars
+   Purpose: Rolling window for local mean/std features.
+
+   Tuning: Smaller (5) for more reactive features.
+   Larger (20) for smoother features.
+
+PARAMETER: n_clusters (GMM)
+
+   Default: 3
+   Usually don't change: 3 regimes is standard for trend analysis.
+
+PARAMETER: cv_threshold
+
+   Default: 0.2
+   Purpose: Minimum CV to apply dynamic weak-trend thresholds.
+
+   Tuning: Lower (0.15) makes weak-trend detection more aggressive.
+   Higher (0.3) makes it more conservative.
+
+PARAMETER: weak_percentile
+
+   Default: 25
+   Purpose: Percentile for identifying weak values.
+
+   Tuning: Higher (30) labels more segments as weak.
+   Lower (20) labels fewer.
+
+
+8.6 INTERPRETATION OF OUTPUTS
+--------------------------------------------------------------------------------
+
+OUTPUT: Segments
+
+   List of Segment objects with:
+   - start_date, end_date: Segment boundaries
+   - regime: BULL, BEAR, or SIDEWAYS
+   - bar_count: Number of bars
+   - features: slope, r_squared, mean_return, std_return
+
+   Interpretation:
+   - Large segments are more reliable
+   - Check features match the regime label
+   - Low R² segments have less confident labels
+
+OUTPUT: Regime Labels (per bar)
+
+   Series indexed by date with regime at each bar.
+
+   Interpretation:
+   - Use for grouping trades by entry regime
+   - Boundaries between regimes are fuzzy
+   - Don't over-interpret single-bar regime at regime changes
+
+OUTPUT: Regime Metrics (per regime)
+
+   Dictionary with metrics for each regime:
+   - total_trades: Number of trades entered in this regime
+   - total_return_pct: Sum of trade returns
+   - win_rate: Percentage of winning trades
+   - avg_pnl_pct: Average trade P&L
+   - sharpe_ratio: Simplified Sharpe
+
+   Interpretation:
+   - Compare across regimes
+   - Small trade counts have unreliable metrics
+   - Large differences suggest regime dependency
+
+OUTPUT: Dependency Assessment
+
+   - dependency_level: INDEPENDENT, MODERATE, or DEPENDENT
+   - dependency_score: CV of returns across regimes
+
+   Interpretation:
+   - INDEPENDENT (CV < 0.3): Strategy works similarly across regimes
+   - MODERATE (0.3-0.6): Some regime preference
+   - DEPENDENT (CV > 0.6): Strong regime dependency - caution!
+
+
+8.7 EXTENDING FOR NEW REGIME TYPES
+--------------------------------------------------------------------------------
+
+The architecture supports extension to other regime types.
+
+SESSION REGIMES (future):
+
+   For crypto markets that trade 24/7:
+   - ASIA_SESSION, EU_SESSION, US_SESSION, OVERLAP
+
+   Implementation:
+   - No changepoint detection needed
+   - Classify by time of day
+   - Analyze trades by session
+
+EVENT REGIMES (future):
+
+   User-labeled periods:
+   - COVID, WAR, EARNINGS, etc.
+
+   Implementation:
+   - Accept user-provided date ranges
+   - Override detected regimes with user labels
+   - Analyze trades by event type
+
+VOLATILITY REGIMES (enhancement):
+
+   Add separate volatility classification:
+   - LOW_VOL, NORMAL_VOL, HIGH_VOL
+
+   Implementation:
+   - Use percentile of rolling volatility
+   - Label each bar with both trend AND volatility regime
+   - Enable 2D regime analysis (e.g., BULL + HIGH_VOL)
+
+
+8.8 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+KEY POINTS:
+
+1. Our implementation uses PELT + GMM for interpretability and simplicity.
+
+2. Known limitations:
+   - V-shape detection (signal issue)
+   - Look-ahead bias (use for post-hoc only)
+   - Fixed minimum segment length
+
+3. Parameter tuning:
+   - penalty controls sensitivity
+   - min_segment_length controls minimum regime duration
+   - Most parameters can stay at defaults
+
+4. Outputs should be interpreted with understanding of limitations:
+   - Large segments more reliable than small
+   - Regime boundaries are fuzzy
+   - Dependency assessment requires sufficient trades per regime
+
+
+================================================================================
+                                  CHAPTER 9
+                      ALTERNATIVE APPROACHES COMPARISON
+================================================================================
+
+9.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+Our PELT+GMM approach is one of many possible regime detection methods.
+This chapter compares alternatives to help users understand trade-offs.
+
+
+9.2 RULE-BASED APPROACHES
+--------------------------------------------------------------------------------
+
+APPROACH: SMA CROSSOVER
+
+   Definition:
+   - BULL: SMA(50) > SMA(200) ("golden cross")
+   - BEAR: SMA(50) < SMA(200) ("death cross")
+   - (Optionally) SIDEWAYS: SMAs close together
+
+   Implementation:
+   ```
+   def detect_regime(price, sma50, sma200):
+       if sma50 > sma200:
+           return "BULL"
+       else:
+           return "BEAR"
+   ```
+
+   Pros:
+   - Simple, fast, interpretable
+   - No look-ahead bias (only uses past data)
+   - Well-understood by traders
+
+   Cons:
+   - Lagging (SMAs smooth heavily)
+   - Arbitrary threshold (why 50/200?)
+   - No SIDEWAYS detection without additional rules
+   - Many false signals in choppy markets
+
+
+APPROACH: ADX-BASED
+
+   Definition:
+   - TRENDING: ADX > 25
+   - SIDEWAYS: ADX < 20
+   - Use +DI/-DI for direction when trending
+
+   Implementation:
+   ```
+   def detect_regime(adx, plus_di, minus_di):
+       if adx < 20:
+           return "SIDEWAYS"
+       elif plus_di > minus_di:
+           return "BULL"
+       else:
+           return "BEAR"
+   ```
+
+   Pros:
+   - Explicitly detects trending vs non-trending
+   - Standard indicator available everywhere
+
+   Cons:
+   - Thresholds (20, 25) are arbitrary
+   - ADX lags significantly
+   - ADX can be high in both bull and bear (doesn't show direction alone)
+
+
+APPROACH: PRICE VS MOVING AVERAGE
+
+   Definition:
+   - BULL: Price > SMA(200) AND price has been above for N days
+   - BEAR: Price < SMA(200) AND price has been below for N days
+   - SIDEWAYS: Crossing frequently
+
+   Pros:
+   - Intuitive (price above/below trend)
+   - Easy to implement
+
+   Cons:
+   - Defining "crossing frequently" is subjective
+   - Threshold N is arbitrary
+
+
+9.3 THRESHOLD-BASED CLASSIFICATION
+--------------------------------------------------------------------------------
+
+APPROACH: ROLLING RETURN THRESHOLDS
+
+   Definition based on 60-day rolling returns:
+   - BULL: rolling_return > +5%
+   - BEAR: rolling_return < -5%
+   - SIDEWAYS: between -5% and +5%
+
+   Pros:
+   - Directly measures what we care about (returns)
+   - Easy to backtest
+
+   Cons:
+   - Thresholds are arbitrary
+   - Different assets need different thresholds
+   - Rapid regime changes in volatile markets
+
+APPROACH: VOLATILITY PERCENTILE
+
+   Definition:
+   - LOW_VOL: volatility < 25th percentile
+   - HIGH_VOL: volatility > 75th percentile
+   - NORMAL_VOL: in between
+
+   Pros:
+   - Adapts to asset's typical volatility
+   - No fixed threshold
+
+   Cons:
+   - Requires historical data for percentiles
+   - Doesn't detect trend direction
+
+
+9.4 MARKOV-SWITCHING MODELS
+--------------------------------------------------------------------------------
+
+APPROACH: MARKOV-SWITCHING REGRESSION
+
+   Model:
+   - Returns depend on hidden regime: r_t = μ_{s_t} + ε_{s_t}
+   - Regime follows Markov chain: P(s_t | s_{t-1})
+
+   Estimation:
+   - Maximum likelihood via EM (similar to HMM)
+   - Hamilton filter for online inference
+
+   Pros:
+   - Principled probabilistic framework
+   - Estimates transition probabilities
+   - Regime persistence modeled explicitly
+
+   Cons:
+   - Computationally intensive
+   - Requires specifying number of regimes
+   - Sensitive to initialization
+
+
+APPROACH: THRESHOLD AUTOREGRESSION (TAR)
+
+   Model:
+   - Different AR model depending on threshold variable
+   - r_t = φ_1 · r_{t-1} + ε_t  if z_t < c
+   - r_t = φ_2 · r_{t-1} + ε_t  if z_t ≥ c
+
+   Pros:
+   - Regime depends on observable variable z_t
+   - No hidden states
+
+   Cons:
+   - Must choose threshold variable
+   - Only two regimes (without extension)
+
+
+9.5 DEEP LEARNING APPROACHES
+--------------------------------------------------------------------------------
+
+APPROACH: LSTM CLASSIFIER
+
+   Model:
+   - Feed sequence of returns to LSTM
+   - Output: regime probabilities
+
+   Training:
+   - Requires labeled data (problematic - where do labels come from?)
+   - Or use pseudo-labels from another method
+
+   Pros:
+   - Can learn complex patterns
+   - Handles long-range dependencies
+
+   Cons:
+   - Needs lots of training data
+   - Black box (not interpretable)
+   - Prone to overfitting
+   - Label generation is circular
+
+
+APPROACH: TRANSFORMER-BASED
+
+   Similar to LSTM but with attention mechanism.
+
+   Pros:
+   - State-of-the-art for sequence modeling
+   - Can attend to relevant past information
+
+   Cons:
+   - Same as LSTM plus higher computational cost
+   - Overkill for this problem
+
+
+9.6 COMPARISON MATRIX
+--------------------------------------------------------------------------------
+
+Method              | Complexity | Interpretable | Look-ahead | Adapts to Data
+────────────────────┼────────────┼───────────────┼────────────┼───────────────
+SMA Crossover       | Low        | High          | No         | No
+ADX-Based           | Low        | Medium        | No         | No
+Return Threshold    | Low        | High          | No         | No
+PELT + GMM          | Medium     | Medium        | Yes        | Yes
+HMM                 | Medium     | Medium        | Yes*       | Yes
+Markov-Switching    | High       | Low           | No         | Yes
+LSTM/Transformer    | High       | Low           | No         | Yes
+
+* HMM can be used with filtering (no look-ahead) or smoothing (look-ahead)
+
+
+Method              | Handles V-shape | Handles Volatility | # Regimes
+────────────────────┼─────────────────┼────────────────────┼──────────
+SMA Crossover       | Yes (lagged)    | No                 | 2
+ADX-Based           | Somewhat        | Implicit           | 2-3
+Return Threshold    | Yes             | No                 | 3
+PELT + GMM          | No (our signal) | Yes (in signal)    | K
+HMM                 | Yes             | Yes                | K
+Markov-Switching    | Yes             | Yes                | K
+LSTM/Transformer    | Yes             | Yes                | K
+
+
+9.7 RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+FOR QUICK ANALYSIS:
+   Use SMA crossover or ADX. Fast, no training, good enough for overview.
+
+FOR BACKTESTING ANALYSIS:
+   Use PELT+GMM (our method) or HMM. Adapts to data, provides segments.
+
+FOR LIVE TRADING SIGNALS:
+   Use rule-based (SMA, ADX) to avoid look-ahead bias.
+   Or use HMM with filtering (not smoothing).
+
+FOR RESEARCH:
+   Compare multiple methods. Use robust method (Markov-switching) as benchmark.
+
+AVOID:
+   Deep learning for regime detection. Overkill, needs labels, not interpretable.
+
+
+9.8 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+KEY POINTS:
+
+1. Rule-based methods (SMA, ADX) are simple and lag-free but arbitrary.
+
+2. PELT+GMM and HMM adapt to data but have look-ahead bias.
+
+3. Markov-switching models are principled but complex.
+
+4. Deep learning is overkill and has label circularity problem.
+
+5. No method is universally best. Choose based on:
+   - Use case (analysis vs live trading)
+   - Interpretability needs
+   - Computational resources
+   - Tolerance for look-ahead bias
+
+
+================================================================================
+                                  CHAPTER 10
+               USING REGIME DETECTION FOR STRATEGY ANALYSIS
+================================================================================
+
+10.1 INTRODUCTION
+--------------------------------------------------------------------------------
+
+This final chapter connects regime detection to its primary use case:
+understanding how trading strategies perform across market conditions.
+
+
+10.2 WHY ANALYZE STRATEGIES BY REGIME?
+--------------------------------------------------------------------------------
+
+SCENARIO:
+
+   You backtest a strategy. It shows +50% return over 5 years.
+   Should you trade it live?
+
+WITHOUT REGIME ANALYSIS:
+
+   "Great, +50% return, let's do it!"
+
+WITH REGIME ANALYSIS:
+
+   BULL:     +80% (3 years of bull market)
+   BEAR:     -40% (1 year of bear market)
+   SIDEWAYS: +10% (1 year of choppy market)
+
+   Now you see: The strategy LOST money in bear markets.
+   The +50% total came entirely from bull markets.
+
+CRITICAL QUESTION:
+
+   "Will the future have bear markets?"
+
+   If yes, this strategy will likely underperform expectations.
+
+
+10.3 REGIME DEPENDENCY ASSESSMENT
+--------------------------------------------------------------------------------
+
+COEFFICIENT OF VARIATION (CV) APPROACH:
+
+We measure regime dependency using CV of returns across regimes:
+
+   CV = std(regime_returns) / |mean(regime_returns)|
+
+INTERPRETATION:
+
+   CV < 0.3:  INDEPENDENT
+              Returns similar across regimes.
+              Strategy works in all conditions.
+
+   CV 0.3-0.6: MODERATE
+               Some preference for certain regimes.
+               Investigate underperforming regimes.
+
+   CV > 0.6:  DEPENDENT
+              Highly regime-dependent.
+              May fail spectacularly in wrong regime.
+
+EXAMPLE 10.1
+
+   BULL return:     +25%
+   BEAR return:     +20%
+   SIDEWAYS return: +22%
+
+   Mean: 22.3%, Std: 2.5%
+   CV = 2.5 / 22.3 = 0.11 → INDEPENDENT
+
+EXAMPLE 10.2
+
+   BULL return:     +40%
+   BEAR return:     -15%
+   SIDEWAYS return: +5%
+
+   Mean: 10%, Std: 27.8%
+   CV = 27.8 / 10 = 2.78 → DEPENDENT (capped at 1.0 in practice)
+
+
+10.4 INTERPRETING REGIME METRICS
+--------------------------------------------------------------------------------
+
+KEY METRICS PER REGIME:
+
+1. TOTAL TRADES: How often the strategy trades in this regime.
+
+   - Low trades in BEAR: Strategy avoids bear markets (possibly good)
+   - Low trades in BULL: Strategy misses bull markets (possibly bad)
+
+2. TOTAL RETURN: Cumulative P&L from trades in this regime.
+
+   - Positive in all regimes: Strategy is robust
+   - Negative in any regime: Strategy fails in that condition
+
+3. WIN RATE: Percentage of winning trades.
+
+   - Compare across regimes
+   - Large drop in one regime indicates vulnerability
+
+4. SHARPE RATIO: Risk-adjusted return.
+
+   - Negative Sharpe in any regime is a red flag
+   - Compare to see where strategy is most efficient
+
+
+10.5 RISK FLAGS
+--------------------------------------------------------------------------------
+
+Our implementation generates automatic risk flags:
+
+FLAG: "Strategy loses money in BEAR markets (-X%)"
+
+   Triggered when: BEAR return < -10%
+
+   Implication: Strategy will suffer in next bear market.
+   Consider: Stop trading during bear regimes (but how to detect in real-time?)
+
+FLAG: "Win rate varies significantly: X% (BULL) vs Y% (BEAR)"
+
+   Triggered when: Win rate difference > 20 percentage points
+
+   Implication: Strategy's edge is regime-dependent.
+   Consider: Different position sizing by regime.
+
+FLAG: "High variance in performance across regimes"
+
+   Triggered when: CV > 0.6 (DEPENDENT level)
+
+   Implication: Strategy has strong regime preference.
+   Consider: Develop separate strategies for each regime.
+
+
+10.6 ACTIONABLE RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+RECOMMENDATION FOR INDEPENDENT STRATEGIES:
+
+   "Strategy performs consistently across market regimes.
+    Results suggest the strategy is not dependent on specific
+    market conditions."
+
+   Action: Can trade with confidence across regimes.
+
+RECOMMENDATION FOR MODERATE STRATEGIES:
+
+   "Strategy shows some variation across market regimes.
+    Consider investigating performance in underperforming regimes.
+    May benefit from regime-specific position sizing."
+
+   Actions:
+   - Analyze WHY it underperforms in certain regimes
+   - Consider reducing position size in weak regimes
+   - May not need major changes
+
+RECOMMENDATION FOR DEPENDENT STRATEGIES:
+
+   "Strategy is highly dependent on market regime.
+    Performs best in BULL markets.
+    Consider adding regime filters or developing separate
+    strategies for each regime."
+
+   Actions:
+   - DO NOT trade without regime awareness
+   - Either: Add regime filter (only trade in favorable regime)
+   - Or: Develop regime-specific variants
+   - Or: Combine with regime-opposite strategy
+
+
+10.7 REGIME-FILTERED BACKTESTING
+--------------------------------------------------------------------------------
+
+CONCEPT:
+
+   Run backtest, but only take trades in certain regimes.
+
+IMPLEMENTATION:
+
+   1. Detect regimes for entire period
+   2. Run backtest normally
+   3. Filter out trades that entered during unfavorable regimes
+   4. Recalculate metrics on filtered trades
+
+EXAMPLE 10.3
+
+   Original strategy: +50% return, 100 trades
+
+   After filtering (BULL only):
+   - Trades in BULL: 60 (60% of trades)
+   - Return from BULL trades: +70%
+   - Return if only trading BULL: +70%
+
+   The filtered strategy is more profitable!
+   But: You need a way to detect BULL in real-time.
+
+CAUTION:
+
+   Regime filtering in backtests uses future information.
+   In live trading, you won't know the regime with certainty.
+   Build in buffer/delay for regime detection.
+
+
+10.8 POSITION SIZING BY REGIME
+--------------------------------------------------------------------------------
+
+CONCEPT:
+
+   Adjust position size based on current regime.
+
+APPROACH:
+
+   1. Calculate strategy's Sharpe ratio per regime
+   2. Scale position size proportionally
+
+   position_size = base_size × (regime_sharpe / overall_sharpe)
+
+EXAMPLE 10.4
+
+   Overall Sharpe: 1.0
+   BULL Sharpe: 1.5
+   BEAR Sharpe: 0.3
+   SIDEWAYS Sharpe: 0.8
+
+   Position sizes:
+   - BULL: 100% × (1.5 / 1.0) = 150% (increase)
+   - BEAR: 100% × (0.3 / 1.0) = 30% (reduce)
+   - SIDEWAYS: 100% × (0.8 / 1.0) = 80%
+
+BENEFIT:
+
+   Reduces exposure during unfavorable regimes.
+   Increases exposure during favorable regimes.
+   Improves overall risk-adjusted returns.
+
+CAUTION:
+
+   Still requires real-time regime detection.
+   Consider using lagging indicator (SMA crossover) for live sizing.
+
+
+10.9 COMBINING WITH OTHER ROBUSTNESS ANALYSES
+--------------------------------------------------------------------------------
+
+REGIME DETECTION + PARAMETER SENSITIVITY:
+
+   Run parameter sensitivity analysis per regime.
+
+   You might find:
+   - Strategy is robust in BULL (parameters don't matter)
+   - Strategy is fragile in BEAR (small parameter change kills it)
+
+   This reveals WHERE the strategy is overfit.
+
+REGIME DETECTION + WALK-FORWARD:
+
+   Check if walk-forward consistency varies by regime.
+
+   You might find:
+   - BULL windows: Consistent performance
+   - BEAR windows: Inconsistent performance
+
+   This reveals WHEN the strategy breaks down.
+
+PROPOSED: ROBUSTNESS CONFIDENCE SCORE
+
+   Combine multiple analyses:
+
+   Score = w1 × parameter_stability +
+           w2 × walk_forward_consistency +
+           w3 × (1 - regime_dependency)
+
+   Score 80-100: LOW risk (robust)
+   Score 60-79:  MODERATE risk
+   Score 0-59:   HIGH risk (fragile)
+
+
+10.10 CHAPTER SUMMARY
+--------------------------------------------------------------------------------
+
+KEY POINTS:
+
+1. Regime analysis reveals hidden strategy vulnerabilities.
+
+2. CV-based dependency assessment:
+   - INDEPENDENT: Works across regimes
+   - MODERATE: Some regime preference
+   - DEPENDENT: High risk in wrong regime
+
+3. Risk flags identify specific problems:
+   - Losses in certain regimes
+   - Win rate variation
+   - High performance variance
+
+4. Actions for dependent strategies:
+   - Regime filtering (trade only favorable regimes)
+   - Regime-based position sizing
+   - Develop regime-specific strategies
+
+5. Combine with parameter sensitivity and walk-forward for complete picture.
+
+
+================================================================================
+                               CONCLUSION
+================================================================================
+
+This textbook covered regime detection from foundations to application:
+
+1. FOUNDATIONS: Time series, stationarity, regime definitions
+
+2. CHANGEPOINT DETECTION: PELT algorithm, penalty selection, cost functions
+
+3. SIGNAL DESIGN: What to feed PELT, the V-shape problem
+
+4. CLUSTERING: GMM, EM algorithm, cluster interpretation
+
+5. HMM: Alternative approach, forward-backward, Viterbi, comparison
+
+6. FEATURE ENGINEERING: Slope, R², mean return, std return
+
+7. PATHOLOGICAL CASES: V-shapes, whipsaws, edge conditions
+
+8. IMPLEMENTATION: Our design decisions, limitations, parameters
+
+9. ALTERNATIVES: Rule-based, threshold-based, Markov-switching, deep learning
+
+10. APPLICATION: Dependency assessment, risk flags, position sizing
+
+KEY TAKEAWAYS:
+
+- Regime detection is fundamentally about identifying periods of
+  consistent market behavior.
+
+- No method is perfect. Understand the limitations.
+
+- Signal design is as important as algorithm choice.
+
+- Use regime analysis to understand strategy vulnerabilities,
+  not just to calculate aggregate returns.
+
+- Combine with other robustness analyses for complete picture.
+
+================================================================================
+                              END OF TEXTBOOK
+================================================================================
