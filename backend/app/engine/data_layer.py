@@ -262,6 +262,9 @@ async def _load_db_ohlcv(
     df = df.set_index("date")
     df.index = pd.to_datetime(df.index)
     df.index.name = "date"
+    # Convert Decimal columns to float (DB uses Numeric which returns Decimal)
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = df[col].astype(float)
     return df
 
 

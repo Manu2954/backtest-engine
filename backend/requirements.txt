@@ -17,3 +17,5 @@ httpx
 pytest
 pytest-asyncio
 pydantic-settings
+ruptures
+scikit-learn

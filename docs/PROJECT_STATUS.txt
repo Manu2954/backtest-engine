@@ -6,7 +6,7 @@ Full-stack indicator-based trading strategy backtesting engine with attribution 
 
 **Stack**: FastAPI + Python 3.12, React 18 + TypeScript, PostgreSQL 16, Redis 7, Celery
 
-**Maturity**: Production-ready core features, Phase 1 attribution complete, Phase 2 robustness in progress
+**Maturity**: Production-ready core features, Phase 1 attribution complete, Phase 2 robustness in progress (2/4 components complete)
 
 ---
 
@@ -200,17 +200,82 @@ Full-stack indicator-based trading strategy backtesting engine with attribution 
 
 ---
 
+### ✅ Phase 2B: Walk-Forward Validation (100% Complete)
+
+**Purpose**: Test strategy consistency across different time periods to detect period-dependency
+
+**How It Works**:
+1. Divide historical data into N equal windows (default 5) by bar count
+2. Compute indicators ONCE for full period, then slice into windows (avoids warmup loss)
+3. Run backtest independently on each window
+4. Calculate consistency score using Coefficient of Variation
+5. Assess overall robustness: ROBUST / MODERATE / FRAGILE
+
+**Key Design Decisions**:
+- Windows divided by bar count (not calendar) for equal sample sizes
+- Indicators computed once, then sliced (key optimization)
+- No "confidence" field - just raw total_trades for transparency
+- Uses min_trades threshold (default 10) for statistical filtering
+
+**Example Output**:
+```json
+{
+  "windows": [
+    {
+      "period": "2020-01-01 to 2021-06-30",
+      "metrics": {
+        "total_return_pct": 18.5,
+        "sharpe_ratio": 1.4,
+        "win_rate": 62.0,
+        "total_trades": 28
+      }
+    }
+    // ... more windows
+  ],
+  "summary": {
+    "total_windows": 5,
+    "sufficient_sample_windows": 5,
+    "profitable_windows": 4,
+    "consistency_score": 0.72,
+    "best_window": "2020-01-01 to 2021-06-30",
+    "worst_window": "2022-07-01 to 2023-12-31"
+  },
+  "assessment": {
+    "level": "MODERATE",
+    "risk_flags": ["High variance in performance across time periods"],
+    "recommendation": "Strategy shows moderate consistency..."
+  }
+}
+```
+
+**API Endpoints**:
+- `POST /robustness/walk-forward` - Submit analysis
+- `GET /robustness/{analysis_id}` - Get status and results
+- `DELETE /robustness/{analysis_id}` - Delete analysis
+
+**Tests**:
+- 17 unit tests (test_walk_forward.py)
+- 3 e2e integration tests (test_walk_forward_e2e.py)
+- Smoke test: `python scripts/walk_forward_smoke.py`
+
+**Documentation**: docs/WALK_FORWARD.txt
+
+**Status**: Fully operational, all tests passing
+
+---
+
 ## Test Status
 
-**Total**: 179+ tests
-**Passing**: 179+ (100%)
+**Total**: 200+ tests
+**Passing**: 200+ (100%)
 **Failing**: 0
 **Skipped**: 1
 
 **Coverage**:
 - Attribution: 26 tests (21 unit + 5 integration)
 - Binning: 20 tests (17 unit + 3 integration)
-- Robustness: 24 tests (21 unit + 3 e2e integration)
+- Parameter Sensitivity: 24 tests (21 unit + 3 e2e integration)
+- Walk-Forward: 20 tests (17 unit + 3 e2e integration)
 - State Machine: 17 tests
 - Condition Engine: 25 tests
 - Indicator Layer: 9 tests
@@ -312,14 +377,18 @@ src/
 - Tier 2 (QuantConnect): Good execution modeling ($50-200/mo)
 - **Tier 3 (This Engine)**: Truth validation (Tier 3 features, Tier 2 pricing: $100-500/mo)
 
-**Strategic Priorities** (as of April 14, 2026):
+**Strategic Priorities** (as of April 19, 2026):
 1. ✅ Phase 1A: Trade Attribution (COMPLETE)
 2. ✅ Phase 1B: Empirical Binning (COMPLETE)
-3. 🎯 Phase 2: Robustness Scoring (IN PROGRESS)
+3. 🎯 Phase 2: Robustness Analysis (IN PROGRESS - 2/4 components complete)
    - ✅ Component 1: Parameter Sensitivity Analyzer (COMPLETE)
-   - ⏭️ Component 2: Monte Carlo Simulation (NEXT)
-4. ⏸️  Authentication/Multi-tenancy (DEPRIORITIZED - focus on core value)
-5. ⏸️  API Documentation (DEPRIORITIZED - build features first)
+   - ✅ Component 2: Walk-Forward Validation (COMPLETE)
+   - ⏭️ Component 3: Robustness Confidence Score (NEXT)
+   - ⏭️ Component 4: Regime Detection
+   - ⏸️ Monte Carlo Simulation (BACKLOG - compute intensive)
+   - ⏸️ Walk-Forward Optimization (BACKLOG - quant-level feature)
+4. ⏸️ Authentication/Multi-tenancy (DEPRIORITIZED - focus on core value)
+5. ⏸️ API Documentation (DEPRIORITIZED - build features first)
 
 **Phase 2 Roadmap** (Robustness Analysis - 6-8 weeks):
 1. **✅ Parameter Sensitivity Analyzer** (COMPLETE - Week 1-2)
@@ -328,31 +397,28 @@ src/
    - Measure performance stability with coefficient of variation
    - Identify fragile vs robust strategies (ROBUST/MODERATE/FRAGILE)
    - API: POST /robustness/parameter-sensitivity
-   - API: GET /robustness/{analysis_id}
-   - API: DELETE /robustness/{analysis_id}
-   - 21 unit tests passing, 3 e2e tests passing
-   - Database migration 0008 applied
-   - Smoke test: scripts/robustness_smoke.py
 
-2. **Monte Carlo Simulation** (Week 3-4) - NEXT
-   - 1000+ runs with randomized entry timing
-   - Statistical confidence intervals
-   - Luck vs skill separation
+2. **✅ Walk-Forward Validation** (COMPLETE - Week 3)
+   - Test strategy with fixed params across rolling time windows
+   - Compute indicators once, slice into windows (no warmup loss)
+   - Consistency score using coefficient of variation
+   - Detect period-dependency and regime sensitivity
+   - API: POST /robustness/walk-forward
+   - Documentation: docs/WALK_FORWARD.txt
 
-3. **Walk-Forward Optimization** (Week 5-6)
-   - Rolling windows on unseen data
-   - Out-of-sample validation
-   - Overfitting detection
-
-4. **Robustness Confidence Scoring** (Week 7)
+3. **Robustness Confidence Score** (Week 4-5) - NEXT
+   - Combine parameter sensitivity + walk-forward results
    - 0-100 scale based on multiple tests
    - LOW/MEDIUM/HIGH risk assessment
-   - Visual robustness dashboard
 
-5. **Regime Detection** (Week 8)
+4. **Regime Detection** (Week 6)
    - Bull/bear/sideways classification
    - Regime-aware performance analysis
    - Strategy adaptation recommendations
+
+**BACKLOG** (Deferred):
+- **Monte Carlo Simulation** - compute intensive, needs optimization research
+- **Walk-Forward Optimization** - quant-level feature, requires parameter optimizer
 
 ---
 
@@ -412,6 +478,10 @@ OHLCV_CACHE_TTL_SECONDS=86400
 - **PHASE1B_CRITICAL_FEEDBACK.txt** - Senior engineer feedback
 - **PHASE1B_PLAN.txt** - Original Phase 1B plan (deprecated, kept for reference)
 
+### Phase 2 Documentation (docs/)
+- **PHASE2_PLAN.txt** - Robustness analysis implementation plan
+- **WALK_FORWARD.txt** - Walk-forward validation usage guide
+
 ### Implementation Details (backend/docs/)
 - **EMPIRICAL_BINNING.txt** - Phase 1B implementation guide
 
@@ -437,14 +507,15 @@ OHLCV_CACHE_TTL_SECONDS=86400
 1. ✅ Phase 1A complete (trade attribution)
 2. ✅ Phase 1B complete (empirical binning)
 3. ✅ Phase 2A complete (parameter sensitivity)
-4. ⏭️ Phase 2B: Monte Carlo simulation
+4. ✅ Phase 2B complete (walk-forward validation)
+5. ⏭️ Phase 2C: Robustness confidence score (NEXT)
 
 ### Phase 2 (Truth Engine) - Remaining
 1. ✅ Parameter sensitivity analyzer (COMPLETE)
-2. ⏭️ Monte Carlo simulation framework (NEXT)
-3. Walk-forward optimization engine
-4. Robustness confidence scoring (0-100)
-5. Overfitting risk assessment (LOW/MEDIUM/HIGH)
+2. ✅ Walk-forward validation (COMPLETE)
+3. ⏭️ Robustness confidence scoring (0-100) - NEXT
+4. Regime detection
+5. BACKLOG: Monte Carlo simulation, Walk-forward optimization
 
 ### Future
 - Portfolio-level backtesting
@@ -462,6 +533,6 @@ OHLCV_CACHE_TTL_SECONDS=86400
 
 ---
 
-**Last Updated**: April 14, 2026
-**Version**: Phase 2A Complete (Parameter Sensitivity)
-**Test Status**: 179+/179+ passing (100%)
+**Last Updated**: April 19, 2026
+**Version**: Phase 2B Complete (Walk-Forward Validation)
+**Test Status**: 200+/200+ passing (100%)
