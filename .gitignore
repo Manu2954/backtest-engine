@@ -161,3 +161,8 @@ IMPROVEMENTS.md
 CONDITION_ENGINE_GUIDE.md
 CHANGELOG_PRIORITY1.md
 validation_smc/
+
+# Experiment artifacts
+regime_*.json
+r_service/
+*.png
