@@ -62,6 +62,8 @@ async def create_strategy(
         description=payload.description,
         entry_expression=payload.entry_expression,
         exit_expression=payload.exit_expression,
+        short_entry_expression=payload.short_entry_expression,
+        short_exit_expression=payload.short_exit_expression,
     )
 
     for idx, indicator in enumerate(payload.indicators):
@@ -90,6 +92,21 @@ async def create_strategy(
         for group_name, group_def in payload.exit_groups.items():
             group = _build_group("EXIT", group_def, group_name=group_name)
             strategy.condition_groups.append(group)
+
+    # Handle short selling groups
+    if payload.short_entry:
+        strategy.condition_groups.append(_build_group("SHORT_ENTRY", payload.short_entry, group_name=None))
+
+    if payload.short_exit:
+        strategy.condition_groups.append(_build_group("SHORT_EXIT", payload.short_exit, group_name=None))
+
+    if payload.short_entry_groups:
+        for group_name, group_def in payload.short_entry_groups.items():
+            strategy.condition_groups.append(_build_group("SHORT_ENTRY", group_def, group_name=group_name))
+
+    if payload.short_exit_groups:
+        for group_name, group_def in payload.short_exit_groups.items():
+            strategy.condition_groups.append(_build_group("SHORT_EXIT", group_def, group_name=group_name))
 
     session.add(strategy)
     await session.commit()
@@ -127,6 +144,8 @@ async def update_strategy(
     strategy.description = payload.description
     strategy.entry_expression = payload.entry_expression
     strategy.exit_expression = payload.exit_expression
+    strategy.short_entry_expression = payload.short_entry_expression
+    strategy.short_exit_expression = payload.short_exit_expression
 
     # Replace indicators and condition groups
     strategy.indicators.clear()
@@ -158,6 +177,21 @@ async def update_strategy(
         for group_name, group_def in payload.exit_groups.items():
             group = _build_group("EXIT", group_def, group_name=group_name)
             strategy.condition_groups.append(group)
+
+    # Handle short selling groups
+    if payload.short_entry:
+        strategy.condition_groups.append(_build_group("SHORT_ENTRY", payload.short_entry, group_name=None))
+
+    if payload.short_exit:
+        strategy.condition_groups.append(_build_group("SHORT_EXIT", payload.short_exit, group_name=None))
+
+    if payload.short_entry_groups:
+        for group_name, group_def in payload.short_entry_groups.items():
+            strategy.condition_groups.append(_build_group("SHORT_ENTRY", group_def, group_name=group_name))
+
+    if payload.short_exit_groups:
+        for group_name, group_def in payload.short_exit_groups.items():
+            strategy.condition_groups.append(_build_group("SHORT_EXIT", group_def, group_name=group_name))
 
     await session.commit()
     return await _fetch_strategy(session, strategy.id)

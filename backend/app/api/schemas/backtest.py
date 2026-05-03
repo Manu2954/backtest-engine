@@ -88,6 +88,7 @@ class TradeLogOut(BaseModel):
     pnl_pct: float = Field(..., description="Profit/loss as percentage")
     trade_duration_days: int = Field(..., description="Days position was held")
     exit_reason: str | None = Field(None, description="signal, stop_loss, take_profit, or force_close")
+    direction: str = Field("LONG", description="LONG or SHORT")
 
     # Attribution fields
     entry_conditions_met: list[str] | None = Field(None, description="Condition IDs that triggered entry")

@@ -31,6 +31,8 @@ class Strategy(Base):
     # Boolean expression support
     entry_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
     exit_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
+    short_entry_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
+    short_exit_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[str] = mapped_column(

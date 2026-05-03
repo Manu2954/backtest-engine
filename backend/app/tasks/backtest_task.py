@@ -99,32 +99,60 @@ async def _run_backtest_async(run_id: str) -> None:
 
             # Check if strategy uses expressions
             if strategy.entry_expression:
-                # Use expression-based evaluation
                 entry_groups_dict = _build_groups_dict(strategy, "ENTRY")
                 entry_signal = evaluate_expression(df, entry_groups_dict, strategy.entry_expression)
             else:
-                # Legacy: single entry group
                 entry_group = _group_to_payload(strategy, "ENTRY")
                 entry_signal = evaluate_conditions(df, entry_group)
 
             if strategy.exit_expression:
-                # Use expression-based evaluation
                 exit_groups_dict = _build_groups_dict(strategy, "EXIT")
                 exit_signal = evaluate_expression(df, exit_groups_dict, strategy.exit_expression)
             else:
-                # Legacy: single exit group
                 exit_group = _group_to_payload(strategy, "EXIT")
                 exit_signal = evaluate_conditions(df, exit_group)
+
+            # Evaluate SHORT entry/exit signals (if strategy defines them)
+            short_entry_signal = None
+            short_exit_signal = None
+
+            has_short_entry = strategy.short_entry_expression or any(
+                g.group_type == "SHORT_ENTRY" for g in strategy.condition_groups
+            )
+            has_short_exit = strategy.short_exit_expression or any(
+                g.group_type == "SHORT_EXIT" for g in strategy.condition_groups
+            )
+
+            if has_short_entry:
+                if strategy.short_entry_expression:
+                    short_entry_groups_dict = _build_groups_dict(strategy, "SHORT_ENTRY")
+                    short_entry_signal = evaluate_expression(df, short_entry_groups_dict, strategy.short_entry_expression)
+                else:
+                    short_entry_group = _group_to_payload(strategy, "SHORT_ENTRY")
+                    short_entry_signal = evaluate_conditions(df, short_entry_group)
+
+            if has_short_exit:
+                if strategy.short_exit_expression:
+                    short_exit_groups_dict = _build_groups_dict(strategy, "SHORT_EXIT")
+                    short_exit_signal = evaluate_expression(df, short_exit_groups_dict, strategy.short_exit_expression)
+                else:
+                    short_exit_group = _group_to_payload(strategy, "SHORT_EXIT")
+                    short_exit_signal = evaluate_conditions(df, short_exit_group)
 
             logger.info("Running backtest")
 
             # Prepare condition groups for attribution (if enabled)
             entry_conditions_for_attribution = None
             exit_conditions_for_attribution = None
+            short_entry_conditions_for_attribution = None
+            short_exit_conditions_for_attribution = None
             if run.enable_attribution:
-                # Build condition groups payload for attribution
                 entry_conditions_for_attribution = _group_to_payload(strategy, "ENTRY") if not strategy.entry_expression else _build_groups_dict(strategy, "ENTRY")
                 exit_conditions_for_attribution = _group_to_payload(strategy, "EXIT") if not strategy.exit_expression else _build_groups_dict(strategy, "EXIT")
+                if has_short_entry:
+                    short_entry_conditions_for_attribution = _group_to_payload(strategy, "SHORT_ENTRY") if not strategy.short_entry_expression else _build_groups_dict(strategy, "SHORT_ENTRY")
+                if has_short_exit:
+                    short_exit_conditions_for_attribution = _group_to_payload(strategy, "SHORT_EXIT") if not strategy.short_exit_expression else _build_groups_dict(strategy, "SHORT_EXIT")
 
             trades, equity_curve = run_backtest(
                 df,
@@ -133,20 +161,20 @@ async def _run_backtest_async(run_id: str) -> None:
                 float(run.initial_capital),
                 asset_class=run.asset_class,
                 periodic_contribution=run.periodic_contribution,
-                # Position sizing parameters
                 position_size_type=run.position_size_type or "full_capital",
                 position_size_value=float(run.position_size_value or 100.0),
-                # Risk management parameters
                 stop_loss_pct=float(run.stop_loss_pct) if run.stop_loss_pct is not None else None,
                 take_profit_pct=float(run.take_profit_pct) if run.take_profit_pct is not None else None,
-                # Transaction cost parameters
                 commission_per_trade=float(run.commission_per_trade or 0.0),
                 commission_pct=float(run.commission_pct or 0.0),
                 slippage_pct=float(run.slippage_pct or 0.0),
-                # Attribution parameters
                 enable_attribution=run.enable_attribution,
                 entry_conditions=entry_conditions_for_attribution,
                 exit_conditions=exit_conditions_for_attribution,
+                short_entry_signal=short_entry_signal,
+                short_exit_signal=short_exit_signal,
+                short_entry_conditions=short_entry_conditions_for_attribution,
+                short_exit_conditions=short_exit_conditions_for_attribution,
             )
 
             logger.info("Generating report and persisting trades")
@@ -229,6 +257,8 @@ async def _load_strategy(session: AsyncSession, strategy_id) -> Strategy | None:
 def _group_to_payload(strategy: Strategy, group_type: str) -> dict[str, Any]:
     group = next((g for g in strategy.condition_groups if g.group_type == group_type), None)
     if group is None:
+        if group_type in ("SHORT_ENTRY", "SHORT_EXIT"):
+            return {"logic": "AND", "conditions": []}
         raise ValueError(f"Missing {group_type} condition group")
 
     return {
@@ -306,6 +336,7 @@ def _persist_trades(
                 pnl_pct=trade["pnl_pct"],
                 trade_duration_days=trade["trade_duration_days"],
                 exit_reason=trade.get("exit_reason", "signal"),
+                direction=trade.get("direction", "LONG"),
                 # Attribution fields (optional)
                 entry_conditions_met=trade.get("entry_conditions_met"),
                 exit_conditions_met=trade.get("exit_conditions_met"),
