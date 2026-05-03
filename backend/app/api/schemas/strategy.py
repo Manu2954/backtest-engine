@@ -43,6 +43,14 @@ class StrategyCreate(BaseModel):
     entry_expression: str | None = None
     exit_expression: str | None = None
 
+    # Short selling (optional)
+    short_entry: ConditionGroupCreate | None = None
+    short_exit: ConditionGroupCreate | None = None
+    short_entry_groups: dict[str, ConditionGroupCreate] | None = None
+    short_exit_groups: dict[str, ConditionGroupCreate] | None = None
+    short_entry_expression: str | None = None
+    short_exit_expression: str | None = None
+
 
 class StrategyUpdate(StrategyCreate):
     pass
@@ -86,7 +94,9 @@ class StrategyOut(BaseModel):
     id: UUID
     name: str
     description: str | None
-    entry_expression: str | None  # NEW
-    exit_expression: str | None   # NEW
+    entry_expression: str | None
+    exit_expression: str | None
+    short_entry_expression: str | None = None
+    short_exit_expression: str | None = None
     indicators: list[IndicatorOut]
     condition_groups: list[ConditionGroupOut]

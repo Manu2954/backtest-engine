@@ -63,6 +63,7 @@ class TradeLog(Base):
     pnl_pct: Mapped[float] = mapped_column(Numeric(8, 4), nullable=False)
     trade_duration_days: Mapped[int] = mapped_column(nullable=False)
     exit_reason: Mapped[str | None] = mapped_column(String(32), nullable=True, default="signal")
+    direction: Mapped[str] = mapped_column(String(8), nullable=False, server_default="LONG")
 
     # Attribution fields
     entry_conditions_met: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # List of condition UUIDs

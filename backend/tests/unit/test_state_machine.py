@@ -794,3 +794,356 @@ def test_dynamic_stop_first_bar() -> None:
     assert trade["entry_price"] == 95.0
     assert trade["exit_price"] == 95.0
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SHORT SELLING TESTS
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_short_basic_pnl() -> None:
+    """Short at 100, cover at 90 → +10/share PnL."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {"open": [100, 100, 95, 90, 85], "close": [100, 100, 95, 90, 85]},
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([False, True, False, False, False], index=index)
+    short_exit = pd.Series([False, False, False, True, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+        asset_class="STOCK",
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["direction"] == "SHORT"
+    assert t["entry_date"] == index[2]
+    assert t["entry_price"] == 95.0
+    assert t["exit_date"] == index[4]
+    assert t["exit_price"] == 85.0
+    # PnL = (entry - exit) * shares = (95 - 85) * 10 = 100
+    assert t["shares"] == 10.0
+    assert t["pnl"] == 100.0
+    assert t["pnl_pct"] > 0
+
+
+def test_short_loss() -> None:
+    """Short at 100, cover at 110 → -10/share PnL."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {"open": [100, 100, 105, 110, 115], "close": [100, 100, 105, 110, 115]},
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([False, True, False, False, False], index=index)
+    short_exit = pd.Series([False, False, False, True, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+        asset_class="STOCK",
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["direction"] == "SHORT"
+    # Signal bar 1 → fill at bar 2 open = 105
+    assert t["entry_price"] == 105.0
+    # Exit signal bar 3 → fill at bar 4 open = 115
+    assert t["exit_price"] == 115.0
+    # PnL = (105 - 115) * 9 = -90 (floor(1000/105)=9 shares)
+    assert t["shares"] == 9.0
+    assert t["pnl"] == -90.0
+    assert t["pnl_pct"] < 0
+
+
+def test_short_stop_loss_on_price_rise() -> None:
+    """Short stop loss triggers when price RISES by stop_loss_pct."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {"open": [100, 100, 106, 110, 115], "close": [100, 100, 106, 110, 115]},
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([True, False, False, False, False], index=index)
+    short_exit = pd.Series([False, False, False, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+        asset_class="STOCK",
+        stop_loss_pct=5.0,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["direction"] == "SHORT"
+    assert t["exit_reason"] == "stop_loss"
+    # Entry at bar 1 open = 100. Bar 2 open = 106, that's +6% rise → triggers 5% stop
+    assert t["entry_price"] == 100.0
+    assert t["exit_date"] == index[2]
+
+
+def test_short_take_profit_on_price_fall() -> None:
+    """Short take profit triggers when price FALLS by take_profit_pct."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {"open": [100, 100, 89, 85, 80], "close": [100, 100, 89, 85, 80]},
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([True, False, False, False, False], index=index)
+    short_exit = pd.Series([False, False, False, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+        asset_class="STOCK",
+        take_profit_pct=10.0,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["direction"] == "SHORT"
+    assert t["exit_reason"] == "take_profit"
+    # Entry at bar 1 open = 100. Bar 2 open = 89, that's -11% fall → triggers 10% TP
+    assert t["entry_price"] == 100.0
+    assert t["exit_date"] == index[2]
+    assert t["pnl"] > 0
+
+
+def test_short_dynamic_stop_above_entry() -> None:
+    """Short dynamic stop triggers when price crosses ABOVE stop value."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 95, 103, 110],
+            "close": [100, 100, 95, 103, 110],
+            "trailing_stop": [105, 105, 102, 102, 102],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([True, False, False, False, False], index=index)
+    short_exit = pd.Series([False, False, False, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+        asset_class="STOCK",
+        dynamic_stop_column="trailing_stop",
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["direction"] == "SHORT"
+    # Entry at bar 1 open=100. Bar 2: 95 < 102 (below stop, good for short).
+    # Bar 3: open=103 > stop=102, AND prev_close=95 <= prev_stop=102 → cross ABOVE → exit
+    assert t["exit_date"] == index[3]
+    assert t["exit_reason"] in ["stop_loss", "trailing_stop"]
+
+
+def test_simultaneous_long_and_short() -> None:
+    """Both long and short positions open at the same time, independent exits."""
+    index = pd.date_range("2020-01-01", periods=7, freq="D")
+    df = pd.DataFrame(
+        {"open": [100, 100, 100, 95, 105, 100, 100], "close": [100, 100, 100, 95, 105, 100, 100]},
+        index=index,
+    )
+    # Long: enter bar 0, exit bar 4
+    entry_signal = pd.Series([True, False, False, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, True, False, False], index=index)
+    # Short: enter bar 1, exit bar 3
+    short_entry = pd.Series([False, True, False, False, False, False, False], index=index)
+    short_exit = pd.Series([False, False, False, True, False, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=2000.0,
+        asset_class="STOCK",
+        position_size_type="fixed_amount",
+        position_size_value=1000.0,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    # Should have 2 trades: one LONG and one SHORT
+    assert len(trades) == 2
+    directions = {t["direction"] for t in trades}
+    assert directions == {"LONG", "SHORT"}
+
+    long_trade = next(t for t in trades if t["direction"] == "LONG")
+    short_trade = next(t for t in trades if t["direction"] == "SHORT")
+
+    # Long: entry at bar 1 open=100, exit at bar 5 open=100 → PnL=0 (price flat)
+    assert long_trade["entry_price"] == 100.0
+    assert long_trade["exit_price"] == 100.0
+
+    # Short: entry at bar 2 open=100, exit at bar 4 open=105 → loss
+    assert short_trade["entry_price"] == 100.0
+    assert short_trade["exit_price"] == 105.0
+    assert short_trade["pnl"] < 0
+
+
+def test_short_equity_curve_mtm() -> None:
+    """Mark-to-market equity reflects short unrealized PnL."""
+    index = pd.date_range("2020-01-01", periods=4, freq="D")
+    df = pd.DataFrame(
+        {"open": [100, 100, 90, 90], "close": [100, 100, 90, 90]},
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 4, index=index)
+    exit_signal = pd.Series([False] * 4, index=index)
+    short_entry = pd.Series([True, False, False, False], index=index)
+    short_exit = pd.Series([False, False, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+        asset_class="CRYPTO",
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    # Entry at bar 1 open=100: 10 shares (1000/100). Cash goes to 0.
+    # Bar 1 close=100: MTM = cash(0) + shares*(2*entry - close) = 0 + 10*(200-100) = 1000
+    assert abs(equity.iloc[1] - 1000.0) < 0.01
+
+    # Bar 2 close=90: MTM = 0 + 10*(200-90) = 1100 (profit since price fell)
+    assert abs(equity.iloc[2] - 1100.0) < 0.01
+
+
+def test_short_slippage() -> None:
+    """Short entry slippage: sell lower. Short exit slippage: buy higher."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {"open": [100, 100, 100, 90, 90], "close": [100, 100, 100, 90, 90]},
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([True, False, False, False, False], index=index)
+    short_exit = pd.Series([False, False, True, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+        asset_class="CRYPTO",
+        slippage_pct=1.0,  # 1% slippage
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    # Entry: sell at open=100 with slippage → 100 * (1 - 0.01) = 99
+    assert abs(t["entry_price"] - 99.0) < 0.01
+    # Exit: buy at open=90 with slippage → 90 * (1 + 0.01) = 90.9
+    assert abs(t["exit_price"] - 90.9) < 0.01
+    # PnL = (99 - 90.9) * shares > 0 (still profitable)
+    assert t["pnl"] > 0
+
+
+def test_short_commission() -> None:
+    """Commission deducted on both short entry and exit."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {"open": [100, 100, 100, 100, 100], "close": [100, 100, 100, 100, 100]},
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([True, False, False, False, False], index=index)
+    short_exit = pd.Series([False, False, True, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+        asset_class="STOCK",
+        commission_per_trade=10.0,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["direction"] == "SHORT"
+    # No price movement, PnL = -(entry_commission + exit_commission)
+    assert t["pnl"] == -(t["entry_commission"] + t["exit_commission"])
+    assert t["entry_commission"] == 10.0
+    assert t["exit_commission"] == 10.0
+
+
+def test_short_force_close() -> None:
+    """Open short position is force-closed at last bar."""
+    index = pd.date_range("2020-01-01", periods=4, freq="D")
+    df = pd.DataFrame(
+        {"open": [100, 100, 95, 90], "close": [100, 100, 95, 90]},
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 4, index=index)
+    exit_signal = pd.Series([False] * 4, index=index)
+    short_entry = pd.Series([True, False, False, False], index=index)
+    short_exit = pd.Series([False, False, False, False], index=index)  # No exit signal
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+        asset_class="STOCK",
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["direction"] == "SHORT"
+    assert t["exit_reason"] == "force_close"
+    assert t["exit_date"] == index[-1]
+    # Entry at 100, exit at 90 (last close) → profit
+    assert t["pnl"] > 0
+
+
+def test_backward_compat_no_short_signals() -> None:
+    """When no short signals provided, behaves identically to before."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {"open": [10, 11, 12, 13, 14], "close": [10, 11, 12, 13, 14]},
+        index=index,
+    )
+    entry_signal = pd.Series([False, True, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, True, False], index=index)
+
+    trades, equity = run_backtest(df, entry_signal, exit_signal, initial_capital=100.0)
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["direction"] == "LONG"
+    assert t["entry_price"] == 12.0
+    assert t["exit_price"] == 14.0
+    assert t["pnl"] == 16.0
+
+
+def test_long_trades_have_direction_field() -> None:
+    """All trade dicts include direction field, even LONG-only."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {"open": [10, 10, 10, 10, 10], "close": [10, 10, 10, 10, 10]},
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, True, False, False], index=index)
+
+    trades, equity = run_backtest(df, entry_signal, exit_signal, initial_capital=100.0)
+
+    assert len(trades) == 1
+    assert "direction" in trades[0]
+    assert trades[0]["direction"] == "LONG"
+

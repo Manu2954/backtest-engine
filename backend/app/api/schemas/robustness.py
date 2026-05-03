@@ -76,3 +76,69 @@ class WalkForwardCreate(BaseModel):
     commission_per_trade: float = Field(0.0, description="Fixed commission per trade")
     commission_pct: float = Field(0.0, description="Commission as percentage")
     slippage_pct: float = Field(0.0, description="Slippage as percentage")
+
+
+class RegimeDetectionCreate(BaseModel):
+    """Request payload for regime detection analysis."""
+
+    strategy_id: UUID = Field(..., description="ID of the strategy to analyze")
+    ticker: str = Field(..., description="Ticker symbol (e.g., AAPL, BTCUSDT)")
+    asset_class: Literal["STOCK", "CRYPTO"] = Field("STOCK", description="STOCK or CRYPTO")
+    start_date: str = Field(..., description="Start date (YYYY-MM-DD)")
+    end_date: str = Field(..., description="End date (YYYY-MM-DD)")
+    bar_resolution: str = Field("1d", description="Bar interval: 1m, 5m, 15m, 1h, 1d")
+    initial_capital: float = Field(10000.0, description="Starting capital in dollars")
+
+    # Regime detection parameters
+    segmentation_strategy: Literal["l1_trend", "pelt_directional", "pelt_volatility"] = Field(
+        "pelt_volatility",
+        description=(
+            "Segmentation strategy: "
+            "'l1_trend' = L1 Trend Filter (2 regimes: BULL/BEAR, stable), "
+            "'pelt_directional' = PELT rolling_mean (4 regimes, responsive), "
+            "'pelt_volatility' = PELT returns_vol (4 regimes, volatility-focused)"
+        ),
+    )
+    k: float = Field(
+        0.015,
+        ge=0.01,
+        le=0.03,
+        description="L1 smoothing parameter (only for l1_trend strategy). Lower = more segments.",
+    )
+    penalty: float | None = Field(None, description="PELT penalty (only for PELT strategies, None = auto np.log(n))")
+    min_segment_length: int = Field(20, ge=5, le=100, description="Minimum bars per segment (PELT only)")
+    vol_window: int = Field(20, ge=5, le=50, description="Window for rolling calculations (PELT only)")
+
+    # Optional backtest parameters
+    position_size_type: str = Field("full_capital", description="Position sizing method")
+    position_size_value: float = Field(100.0, description="Position size value")
+    stop_loss_pct: float | None = Field(None, description="Stop loss percentage")
+    take_profit_pct: float | None = Field(None, description="Take profit percentage")
+    commission_per_trade: float = Field(0.0, description="Fixed commission per trade")
+    commission_pct: float = Field(0.0, description="Commission as percentage")
+    slippage_pct: float = Field(0.0, description="Slippage as percentage")
+
+
+class FeatureConditioningCreate(BaseModel):
+    """Request payload for feature-based conditional analysis."""
+
+    strategy_id: UUID = Field(..., description="ID of the strategy to analyze")
+    ticker: str = Field(..., description="Ticker symbol (e.g., AAPL, BTCUSDT)")
+    asset_class: Literal["STOCK", "CRYPTO"] = Field("STOCK", description="STOCK or CRYPTO")
+    start_date: str = Field(..., description="Start date (YYYY-MM-DD)")
+    end_date: str = Field(..., description="End date (YYYY-MM-DD)")
+    bar_resolution: str = Field("1d", description="Bar interval: 1m, 5m, 15m, 1h, 1d")
+    initial_capital: float = Field(10000.0, description="Starting capital in dollars")
+
+    # Feature extraction parameters
+    lookback_window: int = Field(50, ge=20, le=100, description="Bars for rolling feature calculations")
+    min_trades_per_bin: int = Field(10, ge=5, le=30, description="Minimum trades to consider a condition reliable")
+
+    # Optional backtest parameters
+    position_size_type: str = Field("full_capital", description="Position sizing method")
+    position_size_value: float = Field(100.0, description="Position size value")
+    stop_loss_pct: float | None = Field(None, description="Stop loss percentage")
+    take_profit_pct: float | None = Field(None, description="Take profit percentage")
+    commission_per_trade: float = Field(0.0, description="Fixed commission per trade")
+    commission_pct: float = Field(0.0, description="Commission as percentage")
+    slippage_pct: float = Field(0.0, description="Slippage as percentage")

@@ -1,0 +1,430 @@
+================================================================================
+WALK-FORWARD VALIDATION
+================================================================================
+
+Created: 2026-04-19
+Status: COMPLETE
+Location: app/engine/robustness/walk_forward.py
+
+================================================================================
+OVERVIEW
+================================================================================
+
+Walk-Forward Validation tests whether a strategy performs consistently across
+different time periods. It divides historical data into N equal windows and
+runs the backtest on each window independently.
+
+KEY INSIGHT:
+A strategy that works great in 2020-2021 but fails in 2022-2023 may be
+overfit to specific market conditions. Walk-forward validation exposes this.
+
+IMPORTANT DISTINCTION:
+- Walk-Forward VALIDATION (implemented): Tests FIXED parameters across windows
+- Walk-Forward OPTIMIZATION (not implemented): Re-optimizes parameters per window
+
+We implemented validation because it answers: "Does my strategy work consistently?"
+Optimization is a quant-level feature that requires a parameter optimizer.
+
+
+================================================================================
+HOW IT WORKS
+================================================================================
+
+1. FETCH DATA
+   - Load full OHLCV data for the specified date range
+
+2. COMPUTE INDICATORS ONCE
+   - Calculate all indicators on the full dataset
+   - This avoids warmup loss per window (key optimization)
+
+3. TRIM WARMUP
+   - Remove leading NaN bars from indicator calculation
+   - Ensures all windows have valid indicator values
+
+4. DIVIDE INTO WINDOWS
+   - Split data into N equal windows by BAR COUNT (not calendar)
+   - Equal bar count ensures equal sample sizes per window
+
+5. RUN BACKTEST PER WINDOW
+   - Execute strategy on each window independently
+   - Collect metrics: return, Sharpe, drawdown, win rate, trade count
+
+6. CALCULATE CONSISTENCY SCORE
+   - Use Coefficient of Variation (CV) across windows
+   - Lower CV = more consistent = higher score
+
+7. GENERATE ASSESSMENT
+   - ROBUST / MODERATE / FRAGILE based on score and profitability
+
+
+================================================================================
+API USAGE
+================================================================================
+
+SUBMIT ANALYSIS:
+---------------
+POST /robustness/walk-forward
+
+Request:
+{
+    "strategy_id": "uuid-of-strategy",
+    "ticker": "AAPL",
+    "asset_class": "STOCK",
+    "start_date": "2020-01-01",
+    "end_date": "2024-01-01",
+    "bar_resolution": "1d",
+    "initial_capital": 10000.0,
+    "window_count": 5,              // optional, default 5
+    "commission_per_trade": 1.0,    // optional
+    "slippage_pct": 0.05           // optional
+}
+
+Response:
+{
+    "id": "analysis-uuid",
+    "strategy_id": "uuid-of-strategy",
+    "analysis_type": "WALK_FORWARD",
+    "status": "PENDING",
+    "params": { ... },
+    "created_at": "2026-04-19T10:30:00Z"
+}
+
+
+CHECK STATUS / GET RESULTS:
+--------------------------
+GET /robustness/{analysis_id}
+
+Response (when COMPLETE):
+{
+    "id": "analysis-uuid",
+    "status": "COMPLETE",
+    "analysis_type": "WALK_FORWARD",
+    "report": {
+        "windows": [ ... ],
+        "summary": { ... },
+        "assessment": { ... },
+        "metadata": { ... }
+    },
+    "completed_at": "2026-04-19T10:35:00Z"
+}
+
+
+DELETE ANALYSIS:
+---------------
+DELETE /robustness/{analysis_id}
+
+
+================================================================================
+REPORT STRUCTURE
+================================================================================
+
+{
+    "windows": [
+        {
+            "period": "2020-01-01 to 2020-12-31",
+            "start_date": "2020-01-01",
+            "end_date": "2020-12-31",
+            "metrics": {
+                "total_return_pct": 18.5,
+                "sharpe_ratio": 1.4,
+                "max_drawdown_pct": -8.2,
+                "win_rate": 62.0,
+                "total_trades": 28
+            }
+        },
+        {
+            "period": "2021-01-01 to 2021-12-31",
+            "start_date": "2021-01-01",
+            "end_date": "2021-12-31",
+            "metrics": {
+                "total_return_pct": 12.3,
+                "sharpe_ratio": 1.1,
+                "max_drawdown_pct": -12.5,
+                "win_rate": 55.0,
+                "total_trades": 32
+            }
+        },
+        // ... more windows
+    ],
+
+    "summary": {
+        "total_windows": 5,
+        "sufficient_sample_windows": 5,    // windows with >= 10 trades
+        "profitable_windows": 4,
+        "profitable_ratio": 0.8,
+        "consistency_score": 0.72,
+        "per_metric_cv": {
+            "total_return_pct": 0.35,
+            "sharpe_ratio": 0.28,
+            "win_rate": 0.12
+        },
+        "return_range": {
+            "min": -5.2,
+            "max": 22.1
+        },
+        "sharpe_range": {
+            "min": 0.4,
+            "max": 1.6
+        },
+        "best_window": "2020-01-01 to 2020-12-31",
+        "worst_window": "2022-07-01 to 2023-06-30"
+    },
+
+    "assessment": {
+        "level": "MODERATE",
+        "risk_flags": [
+            "Strategy was unprofitable in 1/5 windows",
+            "High variance in performance across time periods"
+        ],
+        "recommendation": "Strategy shows moderate consistency across time periods. Consider investigating underperforming windows to understand regime dependency. May benefit from adding market regime filters."
+    },
+
+    "metadata": {
+        "strategy_id": "uuid",
+        "ticker": "AAPL",
+        "full_period": "2020-01-01 to 2024-01-01",
+        "warmup_bars_trimmed": 30,
+        "total_bars_analyzed": 1000
+    }
+}
+
+
+================================================================================
+INTERPRETING RESULTS
+================================================================================
+
+CONSISTENCY SCORE (0.0 - 1.0):
+-----------------------------
+The consistency score measures how stable performance is across windows.
+
+Formula: Score = 1.0 - mean(Coefficient of Variation across metrics)
+
+- 0.8 - 1.0:  Highly consistent (metrics vary < 20% across windows)
+- 0.6 - 0.8:  Moderately consistent
+- 0.0 - 0.6:  Inconsistent (metrics vary wildly)
+
+
+ASSESSMENT LEVELS:
+-----------------
+ROBUST:
+  - Consistency score >= 0.8
+  - At least 80% of windows profitable
+  - Interpretation: Strategy works reliably across different time periods
+  - Action: Safe to consider for live trading
+
+MODERATE:
+  - Consistency score >= 0.6
+  - At least 60% of windows profitable
+  - Interpretation: Strategy shows some period dependency
+  - Action: Investigate underperforming periods, consider regime filters
+
+FRAGILE:
+  - Below MODERATE thresholds
+  - Interpretation: Strategy is highly period-dependent, may be overfit
+  - Action: Do NOT trade live without significant improvements
+
+
+RISK FLAGS:
+----------
+Common risk flags and their meaning:
+
+"Strategy was unprofitable in X/Y windows"
+  - Some time periods had negative returns
+  - Consider what market conditions caused the losses
+
+"X/Y windows had insufficient trades for reliable metrics"
+  - Windows with < 10 trades have low statistical significance
+  - Metrics from these windows may be misleading
+
+"High variance in performance across time periods"
+  - Consistency score < 0.5
+  - Strategy may be regime-dependent or overfit
+
+"Significant loss (X%) in period: [dates]"
+  - One window had > 10% loss
+  - Investigate what happened during this period
+
+
+SUFFICIENT SAMPLE WINDOWS:
+-------------------------
+Windows with total_trades >= 10 are considered to have sufficient sample size.
+Windows with fewer trades are:
+- Still included in the report
+- Excluded from consistency score calculation
+- Flagged if too many windows lack sufficient trades
+
+
+================================================================================
+EXAMPLES
+================================================================================
+
+EXAMPLE 1: ROBUST STRATEGY
+--------------------------
+A trend-following strategy on SPY from 2015-2024:
+
+Summary:
+  Windows: 5
+  Profitable: 5/5 (100%)
+  Consistency Score: 0.85
+  Assessment: ROBUST
+
+Per-Window Returns:
+  Window 1 (2015-2016): +18%
+  Window 2 (2017-2018): +22%
+  Window 3 (2019-2020): +15%
+  Window 4 (2021-2022): +12%
+  Window 5 (2023-2024): +20%
+
+Interpretation:
+  Strategy performs consistently across all market periods.
+  Low variance (CV = 0.15) indicates robust performance.
+  Safe to consider for live trading.
+
+
+EXAMPLE 2: FRAGILE STRATEGY
+---------------------------
+A mean-reversion strategy on AAPL from 2018-2024:
+
+Summary:
+  Windows: 5
+  Profitable: 2/5 (40%)
+  Consistency Score: 0.35
+  Assessment: FRAGILE
+
+Per-Window Returns:
+  Window 1 (2018-2019): +45%  <- COVID volatility
+  Window 2 (2019-2020): +30%
+  Window 3 (2020-2021): -15%  <- Low volatility period
+  Window 4 (2021-2022): -8%
+  Window 5 (2023-2024): +5%
+
+Risk Flags:
+  - "Strategy was unprofitable in 3/5 windows"
+  - "High variance in performance across time periods"
+
+Interpretation:
+  Strategy only works in high-volatility environments.
+  Fails during normal market conditions.
+  NOT recommended for live trading without adding volatility filters.
+
+
+================================================================================
+BEST PRACTICES
+================================================================================
+
+1. USE SUFFICIENT DATA
+   - Aim for at least 3 years of data
+   - Each window should have 50+ trading days minimum
+   - More windows = better validation but smaller sample per window
+
+2. CHOOSE APPROPRIATE WINDOW COUNT
+   - Default: 5 windows (good balance)
+   - 3 windows: Coarse validation, larger samples
+   - 10 windows: Fine-grained but smaller samples per window
+
+3. INTERPRET total_trades
+   - Windows with < 10 trades: Low confidence in metrics
+   - Windows with 10-19 trades: Moderate confidence
+   - Windows with 20+ trades: High confidence
+
+4. INVESTIGATE UNDERPERFORMING WINDOWS
+   - What market conditions existed?
+   - Was it a trending or range-bound market?
+   - High or low volatility?
+
+5. COMBINE WITH PARAMETER SENSITIVITY
+   - A strategy can be consistent across time but fragile to parameters
+   - Run both analyses for complete picture
+
+
+================================================================================
+TECHNICAL DETAILS
+================================================================================
+
+WINDOW GENERATION:
+-----------------
+Windows are divided by bar count, not calendar dates.
+
+Example: 1000 bars, 5 windows = 200 bars each
+  Window 1: bars 0-199
+  Window 2: bars 200-399
+  Window 3: bars 400-599
+  Window 4: bars 600-799
+  Window 5: bars 800-999
+
+Remainder bars are distributed to first N windows:
+  1003 bars, 5 windows = 201, 201, 201, 200, 200 bars
+
+
+INDICATOR OPTIMIZATION:
+----------------------
+Indicators are computed ONCE on the full dataset, then sliced.
+
+Why this matters:
+- A 50-period SMA needs 50 bars of warmup
+- With 5 windows, naive approach loses 50 bars × 5 = 250 bars
+- Our approach loses only 50 bars total
+
+This is achieved by:
+1. compute_indicators(full_df)
+2. trim_warmup_period(full_df)
+3. generate_windows(trimmed_df)
+4. For each window: slice the pre-computed df
+
+
+CONSISTENCY SCORE FORMULA:
+-------------------------
+For each metric (return, Sharpe, win_rate):
+  1. Collect values from all valid windows
+  2. Calculate mean and standard deviation
+  3. CV = std_dev / |mean|  (capped at 1.0)
+
+Overall score = 1.0 - mean(all CVs)
+
+
+================================================================================
+LIMITATIONS
+================================================================================
+
+1. FIXED PARAMETERS ONLY
+   Does not re-optimize parameters per window. For that, you need
+   Walk-Forward Optimization (not implemented - quant-level feature).
+
+2. NO REGIME AWARENESS
+   Treats all time periods equally. Future enhancement: weight windows
+   by market regime similarity to current conditions.
+
+3. EQUAL WINDOW SIZES
+   All windows have same bar count. Future enhancement: allow custom
+   window boundaries or regime-based splits.
+
+4. NO ROLLING WINDOWS
+   Windows are non-overlapping. Future enhancement: add option for
+   rolling/overlapping windows.
+
+
+================================================================================
+FILES
+================================================================================
+
+Core Logic:
+  backend/app/engine/robustness/walk_forward.py
+
+Celery Task:
+  backend/app/tasks/robustness_task.py (run_walk_forward_validation)
+
+API Routes:
+  backend/app/api/routes/robustness.py
+
+Schemas:
+  backend/app/api/schemas/robustness.py (WalkForwardCreate)
+
+Tests:
+  backend/tests/unit/test_walk_forward.py (17 tests)
+  backend/tests/integration/test_walk_forward_e2e.py (3 tests)
+
+Smoke Test:
+  backend/scripts/walk_forward_smoke.py
+
+
+================================================================================

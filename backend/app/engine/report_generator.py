@@ -92,6 +92,22 @@ def _max_drawdown(equity: pd.Series) -> float:
     return float(drawdown.min()) * 100
 
 
+def _direction_metrics(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    """Calculate summary metrics for a subset of trades (one direction)."""
+    total = len(trades)
+    if total == 0:
+        return {"total_trades": 0, "win_rate": 0.0, "total_pnl": 0.0, "avg_pnl": 0.0}
+
+    pnl_values = [float(t.get("pnl", 0.0)) for t in trades]
+    wins = [p for p in pnl_values if p > 0]
+    return {
+        "total_trades": total,
+        "win_rate": (len(wins) / total) * 100,
+        "total_pnl": sum(pnl_values),
+        "avg_pnl": sum(pnl_values) / total,
+    }
+
+
 def _longest_drawdown_days(equity: pd.Series) -> int:
     if equity.empty:
         return 0
@@ -279,6 +295,13 @@ def generate_report(
         "longest_drawdown_days": _longest_drawdown_days(equity),
         "final_capital": final_capital,
     }
+
+    # Per-direction breakdown (only when short trades exist)
+    if any(t.get("direction") == "SHORT" for t in trade_log):
+        long_trades = [t for t in trade_log if t.get("direction", "LONG") == "LONG"]
+        short_trades = [t for t in trade_log if t.get("direction") == "SHORT"]
+        report["long_trades_summary"] = _direction_metrics(long_trades)
+        report["short_trades_summary"] = _direction_metrics(short_trades)
 
     # Add benchmark comparison if provided
     if benchmark_equity is not None and not benchmark_equity.empty:
