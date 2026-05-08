@@ -80,6 +80,13 @@ class PositionState:
     exit_bar_idx: int | None = None
     entry_attribution_data: dict[str, Any] | None = None
     exit_attribution_data: dict[str, Any] | None = None
+    dynamic_tp_pct: float | None = None
+    dynamic_exit_ref: float | None = None
+    leverage: float = 1.0
+    margin: float = 0.0
+    liquidation_price: float | None = None
+    exit_rule_states: list[dict] | None = None
+    pending_exit_reason: str | None = None
 
     @property
     def in_position(self) -> bool:
@@ -96,6 +103,13 @@ class PositionState:
         self.exit_bar_idx = None
         self.entry_attribution_data = None
         self.exit_attribution_data = None
+        self.dynamic_tp_pct = None
+        self.dynamic_exit_ref = None
+        self.leverage = 1.0
+        self.margin = 0.0
+        self.liquidation_price = None
+        self.exit_rule_states = None
+        self.pending_exit_reason = None
 
 
 def _capture_entry_attribution(
@@ -394,11 +408,37 @@ def _execute_exit(
         pos.shares, execution_price, commission_per_trade, commission_pct
     )
 
-    proceeds, actual_exit_commission = _calculate_exit_proceeds(
-        pos.shares, execution_price, exit_commission, cash
-    )
-
     entry_price = pos.entry_price or exit_price_raw
+
+    if pos.leverage > 1.0:
+        # Leveraged exit: proceeds = margin + PnL - commission, clamped to 0
+        if direction == "LONG":
+            unrealized_pnl = (execution_price - entry_price) * pos.shares
+        else:
+            unrealized_pnl = (entry_price - execution_price) * pos.shares
+        position_value = pos.margin + unrealized_pnl
+        if position_value < 0:
+            position_value = 0.0
+        proceeds = position_value - exit_commission
+        actual_exit_commission = exit_commission
+        if proceeds < 0:
+            proceeds = 0.0
+            actual_exit_commission = position_value
+    elif direction == "LONG":
+        proceeds, actual_exit_commission = _calculate_exit_proceeds(
+            pos.shares, execution_price, exit_commission, cash
+        )
+    else:
+        # SHORT exit (no leverage): return collateral adjusted for PnL
+        entry_price_for_proceeds = entry_price
+        short_position_value = pos.shares * (2 * entry_price_for_proceeds - execution_price)
+        if short_position_value < 0:
+            short_position_value = 0.0
+        proceeds = short_position_value - exit_commission
+        actual_exit_commission = exit_commission
+        if proceeds < 0 and cash + proceeds < 0:
+            actual_exit_commission = max(0.0, short_position_value + cash)
+            proceeds = short_position_value - actual_exit_commission
 
     # Direction-aware PnL
     if direction == "LONG":
@@ -406,7 +446,10 @@ def _execute_exit(
     else:
         pnl = (entry_price - execution_price) * pos.shares - pos.entry_commission - actual_exit_commission
 
-    trade_cost = entry_price * pos.shares + pos.entry_commission
+    if pos.leverage > 1.0:
+        trade_cost = pos.margin + pos.entry_commission
+    else:
+        trade_cost = entry_price * pos.shares + pos.entry_commission
     pnl_pct = (pnl / trade_cost) if trade_cost > 0 else 0.0
     trade_duration_days = (
         (exit_date - pos.entry_date).days if pos.entry_date is not None else 0
@@ -457,6 +500,7 @@ def _fill_entry(
     stop_loss_pct: float | None,
     dynamic_stop_column: str | None,
     ts: pd.Timestamp,
+    leverage: float = 1.0,
 ) -> float:
     """
     Fill a pending entry for a position. Modifies pos in place, returns new cash.
@@ -494,6 +538,10 @@ def _fill_entry(
         direction=direction,
     )
 
+    # With leverage, multiply shares (you get more exposure for same margin)
+    if leverage > 1.0:
+        shares = shares * leverage
+
     if shares <= 0:
         pos.pending_entry = False
         return cash
@@ -502,7 +550,13 @@ def _fill_entry(
         shares, execution_price, commission_per_trade, commission_pct
     )
 
-    total_cost = (shares * execution_price) + entry_commission
+    # With leverage, cash deducted = margin (notional / leverage) + commission
+    if leverage > 1.0:
+        margin = (shares * execution_price) / leverage
+        total_cost = margin + entry_commission
+    else:
+        margin = shares * execution_price
+        total_cost = margin + entry_commission
 
     if total_cost > cash:
         affordable_amount = cash - commission_per_trade
@@ -510,8 +564,15 @@ def _fill_entry(
             pos.pending_entry = False
             return cash
 
-        price_with_pct_commission = execution_price * (1.0 + commission_pct / 100.0)
-        max_shares = affordable_amount / price_with_pct_commission
+        # Recalculate shares that fit in budget with leverage
+        if leverage > 1.0:
+            max_margin = affordable_amount
+            max_notional = max_margin * leverage
+            price_with_pct_commission = execution_price * (1.0 + commission_pct / 100.0 / leverage)
+            max_shares = max_notional / price_with_pct_commission
+        else:
+            price_with_pct_commission = execution_price * (1.0 + commission_pct / 100.0)
+            max_shares = affordable_amount / price_with_pct_commission
         shares = max_shares if allow_fractional else float(int(max_shares))
 
         if shares <= 0:
@@ -521,7 +582,12 @@ def _fill_entry(
         entry_commission = _calculate_commission(
             shares, execution_price, commission_per_trade, commission_pct
         )
-        total_cost = (shares * execution_price) + entry_commission
+        if leverage > 1.0:
+            margin = (shares * execution_price) / leverage
+            total_cost = margin + entry_commission
+        else:
+            margin = shares * execution_price
+            total_cost = margin + entry_commission
 
     cash = cash - total_cost
     if abs(cash) < 1e-8:
@@ -532,6 +598,15 @@ def _fill_entry(
     pos.entry_date = ts
     pos.entry_commission = entry_commission
     pos.pending_entry = False
+    pos.leverage = leverage
+    pos.margin = margin
+
+    # Calculate liquidation price for leveraged positions
+    if leverage > 1.0:
+        if direction == "LONG":
+            pos.liquidation_price = execution_price * (1.0 - 1.0 / leverage)
+        else:
+            pos.liquidation_price = execution_price * (1.0 + 1.0 / leverage)
 
     return cash
 
@@ -551,6 +626,7 @@ def _check_stops(
     stop_loss_pct: float | None,
     take_profit_pct: float | None,
     dynamic_stop_column: str | None,
+    dynamic_tp_pct: float | None = None,
 ) -> float:
     """
     Check dynamic stop, stop loss, and take profit for a position.
@@ -560,6 +636,46 @@ def _check_stops(
         return cash
 
     direction = pos.direction
+
+    # Check liquidation first (leveraged positions only)
+    if pos.leverage > 1.0 and pos.liquidation_price is not None:
+        bar_high = float(df.iloc[i]["high"]) if "high" in df.columns else current_price
+        bar_low = float(df.iloc[i]["low"]) if "low" in df.columns else current_price
+
+        liquidated = False
+        if direction == "LONG" and bar_low <= pos.liquidation_price:
+            liquidated = True
+        elif direction == "SHORT" and bar_high >= pos.liquidation_price:
+            liquidated = True
+
+        if liquidated:
+            # Liquidation: entire margin is lost, proceeds = 0
+            entry_price = pos.entry_price
+            pnl = -(pos.margin + pos.entry_commission)
+            trade_cost = pos.margin + pos.entry_commission
+            pnl_pct = (pnl / trade_cost) if trade_cost > 0 else -1.0
+            trade_duration_days = (
+                (ts - pos.entry_date).days if pos.entry_date is not None else 0
+            )
+
+            trade = TradeRecord(
+                entry_date=pos.entry_date or ts,
+                entry_price=entry_price,
+                exit_date=ts,
+                exit_price=pos.liquidation_price,
+                shares=pos.shares,
+                pnl=pnl,
+                pnl_pct=pnl_pct,
+                trade_duration_days=trade_duration_days,
+                exit_reason="liquidation",
+                entry_commission=pos.entry_commission,
+                exit_commission=0.0,
+                total_commission=pos.entry_commission,
+                direction=direction,
+            )
+            trade_log.append(trade)
+            pos.reset()
+            return cash
 
     # Check dynamic stop first
     if dynamic_stop_column is not None:
@@ -611,19 +727,46 @@ def _check_stops(
             pos.reset()
             return cash
 
-    # Check percentage-based stops
+    # Check percentage-based stops using intra-bar high/low
     if pos.in_position and pos.entry_price is not None:
-        if direction == "LONG":
-            price_change_pct = ((current_price - pos.entry_price) / pos.entry_price) * 100.0
-        else:
-            # SHORT: profit when price goes down
-            price_change_pct = ((pos.entry_price - current_price) / pos.entry_price) * 100.0
+        entry_price = pos.entry_price
+        bar_high = float(df.iloc[i]["high"]) if "high" in df.columns else current_price
+        bar_low = float(df.iloc[i]["low"]) if "low" in df.columns else current_price
 
-        # Stop loss: position losing money
-        if stop_loss_pct is not None and price_change_pct <= -stop_loss_pct:
+        # Calculate stop and TP price levels
+        sl_price = None
+        if stop_loss_pct is not None:
+            if direction == "LONG":
+                sl_price = entry_price * (1.0 - stop_loss_pct / 100.0)
+            else:
+                sl_price = entry_price * (1.0 + stop_loss_pct / 100.0)
+
+        effective_tp = dynamic_tp_pct if dynamic_tp_pct is not None else take_profit_pct
+        tp_price = None
+        if effective_tp is not None:
+            if direction == "LONG":
+                tp_price = entry_price * (1.0 + effective_tp / 100.0)
+            else:
+                tp_price = entry_price * (1.0 - effective_tp / 100.0)
+
+        # Check if both SL and TP hit in the same bar — SL takes priority
+        sl_hit = False
+        tp_hit = False
+        if direction == "LONG":
+            if sl_price is not None and bar_low <= sl_price:
+                sl_hit = True
+            if tp_price is not None and bar_high >= tp_price:
+                tp_hit = True
+        else:
+            if sl_price is not None and bar_high >= sl_price:
+                sl_hit = True
+            if tp_price is not None and bar_low <= tp_price:
+                tp_hit = True
+
+        if sl_hit:
             trade, cash = _execute_exit(
                 pos=pos,
-                exit_price_raw=current_price,
+                exit_price_raw=sl_price,
                 exit_date=ts,
                 exit_reason="stop_loss",
                 cash=cash,
@@ -638,11 +781,10 @@ def _check_stops(
             pos.reset()
             return cash
 
-        # Take profit: position making money
-        if take_profit_pct is not None and price_change_pct >= take_profit_pct:
+        if tp_hit:
             trade, cash = _execute_exit(
                 pos=pos,
-                exit_price_raw=current_price,
+                exit_price_raw=tp_price,
                 exit_date=ts,
                 exit_reason="take_profit",
                 cash=cash,
@@ -674,11 +816,83 @@ def _mark_to_market(pos: PositionState, current_price: float) -> float:
     """Calculate mark-to-market value of a position."""
     if not pos.in_position or pos.entry_price is None:
         return 0.0
+
+    if pos.leverage > 1.0:
+        # Leveraged MTM: margin + unrealized PnL, clamped to 0
+        if pos.direction == "LONG":
+            unrealized_pnl = (current_price - pos.entry_price) * pos.shares
+        else:
+            unrealized_pnl = (pos.entry_price - current_price) * pos.shares
+        mtm = pos.margin + unrealized_pnl
+        return max(0.0, mtm)
+
     if pos.direction == "LONG":
         return pos.shares * current_price
     else:
         # SHORT MTM: notional committed + unrealized PnL
         return pos.shares * (2 * pos.entry_price - current_price)
+
+
+def _capture_exit_rule_states(exit_rules: list, df: pd.DataFrame, entry_bar_idx: int | None) -> list[dict]:
+    states = []
+    for rule in exit_rules:
+        if rule.fixed_threshold is not None:
+            states.append({"ref_value": rule.fixed_threshold, "active": True})
+            continue
+        if rule.ref_col not in df.columns or entry_bar_idx is None:
+            states.append({"ref_value": None, "active": False})
+            continue
+        val = float(df.iloc[entry_bar_idx][rule.ref_col])
+        if pd.isna(val):
+            states.append({"ref_value": None, "active": False})
+            continue
+        active = True
+        if rule.activation_threshold is not None:
+            if rule.activation_operator == "LT":
+                active = val < rule.activation_threshold
+            else:
+                active = val > rule.activation_threshold
+        states.append({"ref_value": val, "active": active})
+    return states
+
+
+def _check_exit_rules(
+    exit_rules: list,
+    pos: PositionState,
+    df: pd.DataFrame,
+    i: int,
+    close_price: float,
+    direction: str,
+) -> None:
+    for idx, rule in enumerate(exit_rules):
+        state = pos.exit_rule_states[idx]
+        if not state["active"] or state["ref_value"] is None:
+            continue
+        if rule.monitor_col not in df.columns:
+            continue
+        if rule.skip_col and rule.skip_col in df.columns:
+            if bool(df.iloc[i][rule.skip_col]):
+                continue
+        monitor_val = float(df.iloc[i][rule.monitor_col])
+        if pd.isna(monitor_val):
+            continue
+        if rule.operator == "LT":
+            triggered = monitor_val < state["ref_value"]
+        else:
+            triggered = monitor_val > state["ref_value"]
+        if not triggered:
+            continue
+        if rule.min_loss_pct is not None and pos.entry_price is not None:
+            if direction == "LONG":
+                pnl_pct = (close_price - pos.entry_price) / pos.entry_price * 100
+            else:
+                pnl_pct = (pos.entry_price - close_price) / pos.entry_price * 100
+            if pnl_pct > -abs(rule.min_loss_pct):
+                continue
+        pos.pending_exit = True
+        pos.exit_bar_idx = i
+        pos.pending_exit_reason = rule.name
+        break
 
 
 def run_backtest(
@@ -694,6 +908,11 @@ def run_backtest(
     stop_loss_pct: float | None = None,
     take_profit_pct: float | None = None,
     dynamic_stop_column: str | None = None,
+    dynamic_tp_pct_column: str | None = None,
+    dynamic_exit_monitor_column: str | None = None,
+    dynamic_exit_ref_column: str | None = None,
+    dynamic_exit_skip_column: str | None = None,
+    dynamic_exit_min_loss_pct: float | None = None,
     commission_per_trade: float = 0.0,
     commission_pct: float = 0.0,
     slippage_pct: float = 0.0,
@@ -705,6 +924,8 @@ def run_backtest(
     short_exit_signal: pd.Series | None = None,
     short_entry_conditions: dict[str, Any] | None = None,
     short_exit_conditions: dict[str, Any] | None = None,
+    leverage: float = 1.0,
+    exit_rules: list | None = None,
 ) -> tuple[list[dict[str, Any]], pd.Series]:
     if df.empty:
         return [], pd.Series([], dtype=float, name="equity")
@@ -850,7 +1071,20 @@ def run_backtest(
                 stop_loss_pct=stop_loss_pct,
                 dynamic_stop_column=dynamic_stop_column,
                 ts=ts,
+                leverage=leverage,
             )
+            if long_pos.in_position and dynamic_tp_pct_column:
+                if dynamic_tp_pct_column in df.columns and long_pos.entry_bar_idx is not None:
+                    val = float(df.iloc[long_pos.entry_bar_idx][dynamic_tp_pct_column])
+                    if not pd.isna(val):
+                        long_pos.dynamic_tp_pct = val
+            if long_pos.in_position and dynamic_exit_ref_column:
+                if dynamic_exit_ref_column in df.columns and long_pos.entry_bar_idx is not None:
+                    val = float(df.iloc[long_pos.entry_bar_idx][dynamic_exit_ref_column])
+                    if not pd.isna(val):
+                        long_pos.dynamic_exit_ref = val
+            if long_pos.in_position and exit_rules:
+                long_pos.exit_rule_states = _capture_exit_rule_states(exit_rules, df, long_pos.entry_bar_idx)
 
         # ─── Fill pending SHORT entry ───
         if has_short and short_pos.pending_entry and not short_pos.in_position:
@@ -869,7 +1103,20 @@ def run_backtest(
                 stop_loss_pct=stop_loss_pct,
                 dynamic_stop_column=dynamic_stop_column,
                 ts=ts,
+                leverage=leverage,
             )
+            if short_pos.in_position and dynamic_tp_pct_column:
+                if dynamic_tp_pct_column in df.columns and short_pos.entry_bar_idx is not None:
+                    val = float(df.iloc[short_pos.entry_bar_idx][dynamic_tp_pct_column])
+                    if not pd.isna(val):
+                        short_pos.dynamic_tp_pct = val
+            if short_pos.in_position and dynamic_exit_ref_column:
+                if dynamic_exit_ref_column in df.columns and short_pos.entry_bar_idx is not None:
+                    val = float(df.iloc[short_pos.entry_bar_idx][dynamic_exit_ref_column])
+                    if not pd.isna(val):
+                        short_pos.dynamic_exit_ref = val
+            if short_pos.in_position and exit_rules:
+                short_pos.exit_rule_states = _capture_exit_rule_states(exit_rules, df, short_pos.entry_bar_idx)
 
         # ─── Fill pending LONG exit ───
         if long_pos.pending_exit and long_pos.in_position:
@@ -877,7 +1124,7 @@ def run_backtest(
                 pos=long_pos,
                 exit_price_raw=open_price,
                 exit_date=ts,
-                exit_reason="signal",
+                exit_reason=long_pos.pending_exit_reason or "signal",
                 cash=cash,
                 slippage_pct=slippage_pct,
                 commission_per_trade=commission_per_trade,
@@ -896,7 +1143,7 @@ def run_backtest(
                 pos=short_pos,
                 exit_price_raw=open_price,
                 exit_date=ts,
-                exit_reason="signal",
+                exit_reason=short_pos.pending_exit_reason or "signal",
                 cash=cash,
                 slippage_pct=slippage_pct,
                 commission_per_trade=commission_per_trade,
@@ -926,6 +1173,7 @@ def run_backtest(
                 stop_loss_pct=stop_loss_pct,
                 take_profit_pct=take_profit_pct,
                 dynamic_stop_column=dynamic_stop_column,
+                dynamic_tp_pct=long_pos.dynamic_tp_pct,
             )
 
         # ─── Check stops for SHORT ───
@@ -945,7 +1193,52 @@ def run_backtest(
                 stop_loss_pct=stop_loss_pct,
                 take_profit_pct=take_profit_pct,
                 dynamic_stop_column=dynamic_stop_column,
+                dynamic_tp_pct=short_pos.dynamic_tp_pct,
             )
+
+        # ─── Check dynamic exit reference (indicator < captured threshold) ───
+        if dynamic_exit_monitor_column and dynamic_exit_monitor_column in df.columns:
+            skip_exit = False
+            if dynamic_exit_skip_column and dynamic_exit_skip_column in df.columns:
+                skip_exit = bool(df.iloc[i][dynamic_exit_skip_column])
+            if not skip_exit:
+                monitor_val = float(df.iloc[i][dynamic_exit_monitor_column])
+                if long_pos.in_position and not long_pos.pending_exit and long_pos.dynamic_exit_ref is not None:
+                    if monitor_val < long_pos.dynamic_exit_ref:
+                        # Skip exit if trade hasn't lost enough (min loss threshold)
+                        if dynamic_exit_min_loss_pct is not None and long_pos.entry_price is not None:
+                            pnl_pct = (close_price - long_pos.entry_price) / long_pos.entry_price * 100
+                            if pnl_pct > -abs(dynamic_exit_min_loss_pct):
+                                pass  # not losing enough, skip exit
+                            else:
+                                long_pos.pending_exit = True
+                                long_pos.exit_bar_idx = i
+                                long_pos.pending_exit_reason = "atr_exit"
+                        else:
+                            long_pos.pending_exit = True
+                            long_pos.exit_bar_idx = i
+                            long_pos.pending_exit_reason = "atr_exit"
+                if has_short and short_pos.in_position and not short_pos.pending_exit and short_pos.dynamic_exit_ref is not None:
+                    if monitor_val < short_pos.dynamic_exit_ref:
+                        if dynamic_exit_min_loss_pct is not None and short_pos.entry_price is not None:
+                            pnl_pct = (short_pos.entry_price - close_price) / short_pos.entry_price * 100
+                            if pnl_pct > -abs(dynamic_exit_min_loss_pct):
+                                pass
+                            else:
+                                short_pos.pending_exit = True
+                                short_pos.exit_bar_idx = i
+                                short_pos.pending_exit_reason = "atr_exit"
+                        else:
+                            short_pos.pending_exit = True
+                            short_pos.exit_bar_idx = i
+                            short_pos.pending_exit_reason = "atr_exit"
+
+        # ─── Check pluggable exit rules ───
+        if exit_rules:
+            if long_pos.in_position and not long_pos.pending_exit and long_pos.exit_rule_states:
+                _check_exit_rules(exit_rules, long_pos, df, i, close_price, "LONG")
+            if has_short and short_pos.in_position and not short_pos.pending_exit and short_pos.exit_rule_states:
+                _check_exit_rules(exit_rules, short_pos, df, i, close_price, "SHORT")
 
         # ─── Mark-to-market equity at bar close ───
         long_mtm = _mark_to_market(long_pos, close_price)
@@ -1009,6 +1302,7 @@ def run_backtest(
                 stop_loss_pct=stop_loss_pct,
                 dynamic_stop_column=dynamic_stop_column,
                 ts=last_ts,
+                leverage=leverage,
             )
 
             if pos.in_position:

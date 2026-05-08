@@ -2,7 +2,7 @@
                     BACKTEST ENGINE - COMPREHENSIVE GUIDE
 ================================================================================
 
-Last Updated: April 2026 (Includes Phase 1A/1B and Phase 2A features)
+Last Updated: May 2026 (Includes Phase 1A/1B, Phase 2A/2B/2C/2D, Leverage, Shorts, Exit Rules)
 
 For additional documentation see:
 - PROJECT_STATUS.txt - Current project status and strategic direction
@@ -40,7 +40,14 @@ PART IV:  ADVANCED FEATURES
           4.1  Trade Attribution System (Phase 1A)
           4.2  Empirical Binning Analysis (Phase 1B)
           4.3  Combining Attribution & Binning
-          4.4  Parameter Sensitivity Analysis (Phase 2A)  ← NEW
+          4.4  Parameter Sensitivity Analysis (Phase 2A)
+          4.5  Walk-Forward Validation (Phase 2B)
+          4.6  Regime Detection (Phase 2C)
+          4.7  Feature Conditioning (Phase 2D)
+          4.8  Leverage System
+          4.9  Short Selling
+          4.10 Pluggable Exit Rules
+          4.11 Dynamic Take Profit
 
 ================================================================================
                         PART I: USER PERSPECTIVE
@@ -396,7 +403,8 @@ Each trade records:
   - pnl_pct (profit/loss percentage)
   - trade_duration_days
   - exit_reason: "signal", "stop_loss", "take_profit", "trailing_stop",
-                 "force_close"
+                 "force_close", "liquidation", or custom ExitRule name
+                 (e.g., "rsi_20exit", "atr_signal_exit")
 
   Attribution fields (if enabled):
   - entry_conditions_met: List of condition UUIDs that triggered entry
@@ -520,6 +528,60 @@ K. ROBUSTNESS ANALYSIS (Phase 2A)
    - Risk flag generation: Specific warnings about fragility
    - Parallel execution: Variant backtests run concurrently via Celery
    - Actionable recommendations: Deploy / caution / do not deploy
+
+L. WALK-FORWARD VALIDATION (Phase 2B)
+   - Divide historical data into N equal time windows
+   - Run strategy independently on each window
+   - Calculate consistency score (CV of returns/Sharpe/win_rate across windows)
+   - Assess period-dependency (does the strategy only work in one era?)
+   - Confidence levels: HIGH (20+ trades), MEDIUM (10-19), LOW (<10)
+
+M. REGIME DETECTION (Phase 2C)
+   - Pluggable segmentation strategies:
+     * pelt_volatility: Returns + rolling vol → HIGH_VOL/LOW_VOL/TRANSITION
+     * pelt_directional: Rolling mean → BULL/BEAR/CHOPPY/RANGING
+     * l1_trend: L1 Trend Filter → BULL/BEAR
+   - Analyze trades by regime (per-regime win rate, Sharpe, return)
+   - Cross-regime trade analysis (trades spanning regime transitions)
+   - Dependency scoring: INDEPENDENT / MODERATE / DEPENDENT
+
+N. FEATURE CONDITIONING (Phase 2D)
+   - Extract observable features at trade entry (volatility, trend_strength,
+     price_vs_sma50, returns_autocorr, trend_slope, RSI, ATR%)
+   - Bin features into quartiles
+   - Identify winning conditions (feature ranges with >60% win rate)
+   - Identify losing conditions (feature ranges with <40% win rate)
+   - Feature importance ranking (variance of win rates across bins)
+
+O. LEVERAGE
+   - Binance-style isolated margin trading
+   - Configurable multiplier (leverage=N in run_backtest)
+   - Margin = position_value / leverage
+   - Liquidation price calculated at entry
+   - Liquidation fires as exit_reason="liquidation" with -100% PnL on margin
+   - Works with both LONG and SHORT positions
+
+P. SHORT SELLING
+   - Dual position state machine (independent LONG and SHORT positions)
+   - Direction-aware PnL: (entry - exit) * shares for shorts
+   - Direction-aware stops: SL fires on price going UP for shorts
+   - Direction-aware slippage: entry=sell (receive less), exit=buy (pay more)
+   - Short-specific TP: exits when price drops X% from entry
+
+Q. PLUGGABLE EXIT RULES
+   - ExitRule dataclass: configurable per-bar exit conditions
+   - Reference value captured at entry (frozen)
+   - Monitor column checked each bar against reference
+   - Activation gating: rule only active if ref meets threshold
+   - Minimum loss gate: only fire if trade is losing >= N%
+   - Skip column: per-bar boolean to suppress evaluation
+   - Fixed threshold: compare monitor against static value (no ref_col needed)
+   - Each trade stamps rule's name as exit_reason
+
+R. DYNAMIC TAKE PROFIT
+   - Per-bar TP percentage from a DataFrame column
+   - Column provides custom TP level per position
+   - Overrides static take_profit_pct when present
 
 
 ================================================================================
@@ -848,46 +910,111 @@ D. STATE MACHINE (app/engine/state_machine.py)
 Purpose: Simulate trade execution with realistic fills
 
 Main Function:
-  run_backtest(df, entry_signal, exit_signal, initial_capital, enable_attribution=True, ...)
+  run_backtest(df, entry_signal, exit_signal, initial_capital, ...)
     - Returns (trade_log, equity_curve)
-    - Now supports attribution tracking when enabled
+    - Supports long and short positions simultaneously
+    - Supports leverage with liquidation
+    - Supports pluggable exit rules
+
+Full Signature:
+  run_backtest(
+      df: pd.DataFrame,
+      entry_signal: pd.Series,
+      exit_signal: pd.Series,
+      initial_capital: float,
+      asset_class: str = "STOCK",
+      shares: float = 0.0,
+      periodic_contribution: dict | None = None,
+      position_size_type: str = "full_capital",
+      position_size_value: float = 100.0,
+      stop_loss_pct: float | None = None,
+      take_profit_pct: float | None = None,
+      dynamic_stop_column: str | None = None,
+      dynamic_tp_pct_column: str | None = None,
+      dynamic_exit_monitor_column: str | None = None,
+      dynamic_exit_ref_column: str | None = None,
+      dynamic_exit_skip_column: str | None = None,
+      dynamic_exit_min_loss_pct: float | None = None,
+      commission_per_trade: float = 0.0,
+      commission_pct: float = 0.0,
+      slippage_pct: float = 0.0,
+      enable_attribution: bool = True,
+      entry_conditions: dict | None = None,
+      exit_conditions: dict | None = None,
+      short_entry_signal: pd.Series | None = None,
+      short_exit_signal: pd.Series | None = None,
+      short_entry_conditions: dict | None = None,
+      short_exit_conditions: dict | None = None,
+      leverage: float = 1.0,
+      exit_rules: list | None = None,
+  ) → tuple[list[dict], pd.Series]
 
 Key Parameters:
   - asset_class: "STOCK" (whole shares) or "CRYPTO" (fractional)
   - position_size_type/value: How to size positions
   - stop_loss_pct, take_profit_pct: Risk management
   - dynamic_stop_column: Indicator-based trailing stop
+  - dynamic_tp_pct_column: Per-bar dynamic TP from DataFrame column
+  - dynamic_exit_*: Legacy dynamic exit (monitor vs ref comparison)
   - commission_per_trade, commission_pct: Transaction costs
   - slippage_pct: Price slippage simulation
   - periodic_contribution: Regular cash additions
   - enable_attribution: Enable trade attribution tracking (default: True)
+  - short_entry_signal/short_exit_signal: Independent short signals
+  - leverage: Position multiplier (1.0 = no leverage)
+  - exit_rules: List of ExitRule objects for pluggable exits
 
 State Machine Logic:
-  1. NO_POSITION: Check for entry signal
-     → If True, set pending_entry = True
+  1. NO_POSITION: Check for entry signal (long or short)
+     → If True, set pending_entry = True on appropriate PositionState
      → If attribution enabled: capture entry conditions met
 
   2. PENDING_ENTRY: At next bar open
-     → Calculate position size
-     → Apply slippage to price
-     → Deduct cost + commission from cash
+     → Calculate position size (with leverage multiplier if set)
+     → Apply slippage to price (direction-aware)
+     → Deduct cost + commission from cash (margin for leveraged)
+     → Calculate liquidation price (if leverage > 1.0)
+     → Capture exit_rule_states (freeze ref values from ExitRule objects)
      → Record entry_date, entry_price, shares
      → If attribution enabled: capture entry attribution data
 
-  3. IN_POSITION: Check for exit conditions
-     a. Strategy exit signal
-     b. Stop loss triggered (price dropped X%)
-     c. Take profit triggered (price gained X%)
-     d. Dynamic stop triggered (price < indicator value)
-     → Set pending_exit = True
+  3. IN_POSITION: Check for exit conditions (priority order)
+     a. Liquidation check (leveraged positions, bar low/high vs liquidation_price)
+     b. Pluggable exit rules (per-bar evaluation, each rule checked in order)
+     c. Dynamic stop (indicator-based trailing stop)
+     d. Stop loss triggered (price dropped X% from entry)
+     e. Take profit triggered (price gained X%, or dynamic TP)
+     f. Strategy exit signal
+     → Set pending_exit = True, stamp exit_reason
      → If attribution enabled: capture exit conditions met
 
   4. PENDING_EXIT: At next bar open
-     → Apply slippage to exit price
+     → Apply slippage to exit price (direction-aware)
      → Deduct commission
+     → Calculate proceeds (leveraged: margin + PnL, clamped to 0)
      → Add proceeds to cash
-     → Record trade in trade_log
+     → Record trade in trade_log with exit_reason
      → If attribution enabled: calculate market return, alpha
+
+  DUAL POSITION STATE:
+  The engine maintains two independent PositionState objects:
+    long_pos = PositionState(direction="LONG")
+    short_pos = PositionState(direction="SHORT")
+  They are evaluated independently each bar, allowing simultaneous
+  long and short positions.
+
+Leverage Mechanics:
+  - Entry: shares = base_shares × leverage
+  - Margin deducted = (shares × price) / leverage + commission
+  - Liquidation price (LONG):  entry_price × (1 - 1/leverage)
+  - Liquidation price (SHORT): entry_price × (1 + 1/leverage)
+  - Exit proceeds = max(0, margin + unrealized_PnL) - commission
+  - Liquidation: entire margin is lost, PnL = -(margin + entry_commission)
+
+Mark-to-Market:
+  - Unleveraged LONG: shares × current_price
+  - Unleveraged SHORT: shares × (2 × entry_price - current_price)
+  - Leveraged: max(0, margin + unrealized_PnL)
 
 Position Sizing Logic:
   - full_capital: shares = cash / price
@@ -901,9 +1028,11 @@ Commission Handling:
   - Total: fixed + percentage
   - Applied on both entry and exit
 
-Slippage Handling:
-  - Entry: execution_price = open * (1 + slippage_pct / 100)
-  - Exit: execution_price = open * (1 - slippage_pct / 100)
+Slippage Handling (direction-aware):
+  - LONG entry (buy):  price × (1 + slippage_pct / 100)  → pay more
+  - LONG exit (sell):  price × (1 - slippage_pct / 100)  → receive less
+  - SHORT entry (sell): price × (1 - slippage_pct / 100) → receive less
+  - SHORT exit (buy):   price × (1 + slippage_pct / 100) → pay more
 
 TradeRecord Structure:
   @dataclass
@@ -916,8 +1045,12 @@ TradeRecord Structure:
       pnl: float
       pnl_pct: float
       trade_duration_days: int
-      exit_reason: str
+      exit_reason: str          # signal, stop_loss, take_profit, trailing_stop,
+                                # force_close, liquidation, or ExitRule name
+      entry_commission: float
+      exit_commission: float
       total_commission: float
+      direction: str = "LONG"   # "LONG" or "SHORT"
 
       # Attribution fields (Phase 1A - optional)
       entry_conditions_met: list[str] | None
@@ -927,13 +1060,26 @@ TradeRecord Structure:
       alpha: float | None
       indicator_snapshot_entry: dict | None
       indicator_snapshot_exit: dict | None
-      pnl: float              # (exit - entry) * shares - commissions
-      pnl_pct: float          # pnl / cost * 100
-      trade_duration_days: int
-      exit_reason: str        # signal, stop_loss, take_profit, etc.
-      entry_commission: float
-      exit_commission: float
-      total_commission: float
+
+PositionState Structure:
+  @dataclass
+  class PositionState:
+      direction: str = "LONG"
+      shares: float = 0.0
+      entry_price: float | None = None
+      entry_date: pd.Timestamp | None = None
+      entry_commission: float = 0.0
+      pending_entry: bool = False
+      pending_exit: bool = False
+      entry_bar_idx: int | None = None
+      exit_bar_idx: int | None = None
+      dynamic_tp_pct: float | None = None
+      dynamic_exit_ref: float | None = None
+      leverage: float = 1.0
+      margin: float = 0.0
+      liquidation_price: float | None = None
+      exit_rule_states: list[dict] | None = None
+      pending_exit_reason: str | None = None
 
 
 E. REPORT GENERATOR (app/engine/report_generator.py)
@@ -1560,7 +1706,7 @@ F. EXTENDING ATTRIBUTION SYSTEM (Phase 1A/1B)
 
 
 ================================================================================
-                      PART IV: ADVANCED FEATURES (PHASE 1)
+                      PART IV: ADVANCED FEATURES
 ================================================================================
 
 
@@ -2026,6 +2172,786 @@ LIMITATIONS:
   - Small integers may not produce variants (e.g., period=2 ± 20% rounds to 2)
   - Crossover indicators with no numeric params generate no variants
   - Requires Celery worker running for backtest execution
+
+
+4.5 WALK-FORWARD VALIDATION (Phase 2B)
+---------------------------------------
+
+PURPOSE:
+Detect period-dependency by testing if a strategy works consistently across
+different time windows. Unlike walk-forward optimization (which re-fits params),
+this uses FIXED parameters and simply validates consistency.
+
+THE PROBLEM IT SOLVES:
+A strategy may show 80% return over 3 years, but if 75% of that came from a
+single 6-month bull run, it's useless in other market conditions. Walk-forward
+validation splits the data into windows and checks if performance is stable
+across all of them.
+
+HOW IT WORKS:
+1. Fetch full date range OHLCV data
+2. Compute indicators ONCE on the full dataset (avoids warmup loss per window)
+3. Divide into N equal windows by bar count (default: 5)
+4. Run the same strategy on each window independently
+5. Calculate consistency score from per-window metrics
+6. Assess period-dependency
+
+WINDOW GENERATION (generate_windows):
+  Divides DataFrame into N equal windows by bar count.
+  Remainder bars are distributed across the first N windows (one extra each).
+
+  Example: 1000 bars, 5 windows
+    Window 1: bars 0-199   (200 bars)
+    Window 2: bars 200-399 (200 bars)
+    Window 3: bars 400-599 (200 bars)
+    Window 4: bars 600-799 (200 bars)
+    Window 5: bars 800-999 (200 bars)
+
+  Each Window dataclass contains:
+    - index: Window number (1-based)
+    - start_idx, end_idx: Bar index range
+    - start_date, end_date: Calendar dates
+
+CONSISTENCY SCORE CALCULATION (calculate_consistency_score):
+  Uses Coefficient of Variation across windows, same methodology as
+  parameter sensitivity (Section 4.4).
+
+  Evaluated metrics: total_return_pct, sharpe_ratio, win_rate
+
+  For each metric:
+    1. Collect values from all windows with >= min_trades (default 10)
+    2. Calculate CV = std_dev / |mean|
+    3. Cap CV at 1.0
+
+  Overall score = 1.0 - mean(CVs)
+
+  Returns: (score, per_metric_cv_dict)
+
+CONFIDENCE LEVELS:
+  Per-window confidence based on trade count:
+  - HIGH: 20+ trades → reliable metrics
+  - MEDIUM: 10-19 trades → interpret with caution
+  - LOW: <10 trades → excluded from consistency score calculation
+
+ASSESSMENT (assess_walk_forward_results):
+  Classification:
+  - ROBUST: score >= 0.8 AND >= 80% windows profitable
+  - MODERATE: score >= 0.6 AND >= 60% windows profitable
+  - FRAGILE: otherwise
+
+  Risk flags generated when:
+  - Strategy unprofitable in > 50% of windows
+  - > 40% of windows had insufficient trades
+  - Consistency score < 0.5 (high variance)
+  - Worst window lost > 10%
+
+REPORT STRUCTURE (build_walk_forward_report):
+  {
+    "windows": [
+      {
+        "window": 1,
+        "period": "2022-01-01 to 2022-07-15",
+        "metrics": {"total_return_pct": 12.5, "sharpe_ratio": 1.2, ...},
+        "trade_count": 25,
+        "confidence": "HIGH"
+      },
+      ...
+    ],
+    "summary": {
+      "total_windows": 5,
+      "sufficient_sample_windows": 4,
+      "profitable_windows": 4,
+      "profitable_ratio": 0.80,
+      "consistency_score": 0.75,
+      "per_metric_cv": {"total_return_pct": 0.18, "sharpe_ratio": 0.22, ...},
+      "return_range": {"min": -5.2, "max": 25.1},
+      "sharpe_range": {"min": -0.3, "max": 1.8},
+      "best_window": "2023-01-01 to 2023-07-15",
+      "worst_window": "2024-01-01 to 2024-07-15"
+    },
+    "assessment": {
+      "level": "MODERATE",
+      "risk_flags": [...],
+      "recommendation": "Strategy shows moderate consistency..."
+    }
+  }
+
+API ENDPOINT:
+
+POST /robustness/walk-forward
+  Submit walk-forward validation.
+
+  Request Body:
+  {
+    "strategy_id": "uuid",
+    "ticker": "BTCUSDT",
+    "asset_class": "CRYPTO",
+    "start_date": "2022-01-01",
+    "end_date": "2024-01-01",
+    "bar_resolution": "1h",
+    "initial_capital": 10000.0,
+    "window_count": 5,
+    "commission_per_trade": 1.0,
+    "slippage_pct": 0.05
+  }
+
+  Response: Same as /robustness/{analysis_id} (analysis_type="WALK_FORWARD")
+
+KEY INSIGHT:
+A strategy that performs well in only 2 of 5 windows is likely capturing a
+temporary market anomaly, not a persistent edge. Walk-forward validation
+surfaces this before you deploy.
+
+IMPLEMENTATION FILES:
+  - Core: app/engine/robustness/walk_forward.py
+  - Task: app/tasks/robustness_task.py (run_walk_forward_validation)
+  - API: app/api/routes/robustness.py (POST /robustness/walk-forward)
+  - Schema: app/api/schemas/robustness.py (WalkForwardCreate)
+
+
+4.6 REGIME DETECTION (Phase 2C)
+-------------------------------
+
+PURPOSE:
+Detect market regimes (trend, volatility, ranging) and analyze whether strategy
+performance depends on the current regime. If a strategy only profits in bull
+markets, you need to know that before deploying.
+
+THE PROBLEM IT SOLVES:
+Most strategies are implicitly coupled to market conditions. A mean-reversion
+strategy may work in ranging markets but get destroyed in trends. Regime detection
+quantifies this dependency so you can either:
+  - Add regime filters (only trade when regime is favorable)
+  - Develop regime-specific strategies
+  - Adjust position sizing based on current regime
+
+ARCHITECTURE:
+  Strategy Pattern (Pluggable Segmentation):
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │                  SegmentationStrategy (ABC)                   │
+    │  detect_changepoints(df, penalty, min_segment_length)        │
+    │  compute_segment_features(df, start_idx, end_idx)            │
+    │  label_segments(df, changepoints) → list[LabeledSegment]     │
+    │  get_strategy_name() → str                                   │
+    │  get_regime_types() → list[str]                              │
+    └─────────────────────────────────────────────────────────────┘
+                              ▲
+         ┌────────────────────┼────────────────────┐
+         │                    │                    │
+    ┌────┴────┐        ┌─────┴─────┐       ┌─────┴─────┐
+    │Volatility│        │Directional│       │ L1 Trend  │
+    │ Strategy │        │ Strategy  │       │ Strategy  │
+    └─────────┘        └───────────┘       └───────────┘
+
+  SegmentationFactory:
+    SegmentationFactory.create_strategy(name, **kwargs)
+    Supported: "l1_trend", "pelt_directional", "pelt_volatility"
+
+SEGMENTATION STRATEGIES:
+
+  1. PELT Volatility ("pelt_volatility")
+     Signal: [log_returns, rolling_vol] (bivariate)
+     Detection: PELT changepoint detection on volatility regime shifts
+     Regimes: HIGH_VOL, LOW_VOL, TRANSITION
+     Use case: Identify when volatility environment shifts
+
+  2. PELT Directional ("pelt_directional")
+     Signal: rolling_mean(log_returns)
+     Detection: PELT on rolling price momentum
+     Labeling: OLS regression per segment → SNR-based classification
+     Regimes: BULL, BEAR, CHOPPY, RANGING
+     Parameters:
+       - r2_mode: "percentile" or "fixed"
+       - r2_percentile: Threshold for directional vs sideways (default 75)
+       - r2_fixed: Fixed R² threshold (default 0.3)
+     Use case: Identify trending vs sideways markets
+
+  3. L1 Trend Filter ("l1_trend")
+     Signal: L1-regularized trend (piecewise linear approximation)
+     Detection: NOT PELT-based; uses L1 optimization to find trend
+     Labeling: Slope of fitted trend → positive = BULL, negative = BEAR
+     Regimes: BULL, BEAR (2 only, binary)
+     Parameters:
+       - k: Smoothing parameter (default 0.015), range 0.01-0.03
+         Higher k = smoother trend (fewer regime changes)
+     Use case: Clean directional regime without noise
+
+CORE DATA STRUCTURES:
+
+  @dataclass
+  class LabeledSegment:
+      start_idx: int
+      end_idx: int        # Exclusive
+      regime: str
+      features: dict[str, float]
+      strength: float | None = None
+
+  @dataclass
+  class Segment:
+      start_idx: int
+      end_idx: int        # Inclusive
+      start_date: pd.Timestamp
+      end_date: pd.Timestamp
+      regime: str
+      bar_count: int
+      features: dict[str, float]
+      strength: float | None = None
+
+MAIN ENTRY POINT:
+
+  detect_regimes(
+      df: pd.DataFrame,
+      strategy: "l1_trend" | "pelt_directional" | "pelt_volatility",
+      penalty: float | None = None,      # PELT penalty (None = log(n))
+      min_segment_length: int = 20,      # Minimum bars per segment
+      vol_window: int = 20,              # Rolling window for PELT strategies
+      k: float = 0.015,                  # L1 smoothing (l1_trend only)
+  ) → tuple[list[Segment], pd.Series]
+
+  Returns:
+    - List of Segment objects with regime labels, dates, features
+    - pd.Series of per-bar regime labels (indexed by date)
+
+ANALYSIS FUNCTIONS:
+
+  analyze_trades_by_regime(trades, regime_labels) → dict
+    Groups trades by entry-date regime, calculates per-regime:
+    total_trades, total_return_pct, win_rate, avg_pnl_pct, sharpe_ratio
+
+  analyze_cross_regime_trades(trades, regime_labels) → dict
+    Identifies trades that span regime transitions:
+    cross_regime_trades count, percentage, avg PnL comparison,
+    transition counts (e.g., {"BULL->BEAR": 5})
+
+  calculate_regime_distribution(regime_labels) → dict
+    Percentage of time in each regime (e.g., {"BULL": 45.2, "BEAR": 30.1})
+
+  assess_regime_dependency(regime_metrics) → tuple[str, float]
+    Uses CV of returns across regimes:
+    - INDEPENDENT: CV < 0.3
+    - MODERATE: CV 0.3-0.6
+    - DEPENDENT: CV > 0.6
+
+REPORT STRUCTURE (build_regime_report):
+  {
+    "segments": [
+      {"start_date": "2022-01-15", "end_date": "2022-06-20", "regime": "BULL",
+       "bar_count": 156, "features": {"slope": 0.0023, "r_squared": 0.78}, ...},
+      ...
+    ],
+    "regimes": {
+      "BULL": {"percent_of_time": 35.2, "total_trades": 15, "total_return_pct": 22.5,
+               "win_rate": 73.3, "avg_pnl_pct": 1.5, "sharpe_ratio": 2.1},
+      "BEAR": {"percent_of_time": 25.8, "total_trades": 10, "total_return_pct": -8.3, ...},
+      ...
+    },
+    "summary": {
+      "total_bars": 1000, "total_segments": 8,
+      "regime_distribution": {"BULL": 35.2, "BEAR": 25.8, ...},
+      "dependency_score": 0.55, "dependency_level": "MODERATE",
+      "best_regime": "BULL", "worst_regime": "CHOPPY"
+    },
+    "cross_regime_analysis": {
+      "total_trades": 45, "cross_regime_trades": 12, "cross_regime_pct": 26.7,
+      "cross_regime_avg_pnl": -0.8, "same_regime_avg_pnl": 1.2,
+      "transitions": {"BULL->BEAR": 3, "BEAR->CHOPPY": 2, ...}
+    },
+    "assessment": {
+      "level": "MODERATE",
+      "risk_flags": [...],
+      "recommendation": "Strategy shows some variation across market regimes..."
+    }
+  }
+
+API ENDPOINT:
+
+POST /robustness/regime-detection
+  Request Body:
+  {
+    "strategy_id": "uuid",
+    "ticker": "BTCUSDT",
+    "asset_class": "CRYPTO",
+    "start_date": "2022-01-01",
+    "end_date": "2024-01-01",
+    "bar_resolution": "1h",
+    "initial_capital": 10000.0,
+    "segmentation_strategy": "pelt_directional",
+    "k": 0.015,
+    "penalty": null,
+    "min_segment_length": 20,
+    "vol_window": 20,
+    "commission_per_trade": 1.0,
+    "slippage_pct": 0.05
+  }
+
+  Response: Same as /robustness/{analysis_id} (analysis_type="REGIME_DETECTION")
+
+IMPLEMENTATION FILES:
+  - Core: app/engine/robustness/regime_detection.py
+  - Segmentation: app/engine/robustness/segmentation/
+    * base.py (SegmentationStrategy ABC, LabeledSegment, SegmentInfo)
+    * factory.py (SegmentationFactory)
+    * volatility_strategy.py (VolatilityStrategy)
+    * directional_strategy.py (DirectionalStrategy)
+    * l1_trend_strategy.py (L1TrendStrategy)
+  - Task: app/tasks/robustness_task.py (run_regime_detection)
+  - API: app/api/routes/robustness.py (POST /robustness/regime-detection)
+
+
+4.7 FEATURE CONDITIONING (Phase 2D)
+------------------------------------
+
+PURPOSE:
+Extract observable market features at trade entry time and discover which
+feature ranges predict trade success. Produces actionable conditions like:
+"Trade when volatility ∈ [0.015, 0.025] AND trend_strength > 0.7"
+
+KEY DIFFERENCE FROM REGIME DETECTION:
+  - Regime detection: Labels entire periods as BULL/BEAR (backward-looking,
+    descriptive, only known after the fact)
+  - Feature conditioning: Measures raw features at entry time (forward-looking,
+    predictive, computable in real-time for trade filtering)
+
+THE PROBLEM IT SOLVES:
+Your strategy has 55% win rate overall, but the 55% is an average across
+very different market states. Feature conditioning reveals that:
+  - When volatility is in [0.015, 0.025]: win rate = 72%
+  - When volatility > 0.04: win rate = 31%
+This gives you a real-time filter: only take trades when volatility is in
+the sweet spot.
+
+FEATURES EXTRACTED (all computable in real-time):
+
+  volatility: Rolling std of log returns over lookback window
+    → Measures current market noise level
+
+  trend_strength: R² from OLS regression of log(close) over lookback
+    → 0.0 = no trend (random walk), 1.0 = perfect linear trend
+
+  trend_slope: OLS slope of log(close)
+    → Positive = uptrend, negative = downtrend, magnitude = rate
+
+  price_vs_sma50: (close - SMA50) / SMA50
+    → Relative position vs 50-bar moving average
+    → Positive = above MA, negative = below
+
+  returns_autocorr: Lag-1 autocorrelation of returns
+    → Negative = mean-reverting, positive = trending, near 0 = random
+
+  rsi_level: RSI at entry (if strategy uses RSI indicator)
+    → Optional, auto-detected from DataFrame columns
+
+  atr_pct: ATR / price (if strategy uses ATR indicator)
+    → Normalized volatility measure, optional
+
+FEATURE EXTRACTION (extract_features_at_index):
+  Takes DataFrame and bar index, uses lookback_window (default 50 bars).
+  Returns FeatureVector dataclass with all computed features.
+  Handles edge cases: insufficient data returns neutral values (0.0).
+
+QUARTILE BINNING (bin_feature):
+  Divides feature values into N quantile bins (default 4 = quartiles).
+  Returns bin_indices and bin_ranges.
+  Handles degenerate cases (all same value, too few data points).
+
+CONDITION ANALYSIS (analyze_feature_conditions):
+  For each feature:
+    1. Collect feature values and trade outcomes (win/loss, PnL)
+    2. Bin into quartiles
+    3. Calculate per-bin metrics: win_rate, avg_pnl_pct, Sharpe
+    4. Identify winning conditions (win_rate >= 60%)
+    5. Identify losing conditions (win_rate <= 40%)
+
+  Feature importance = normalized std(win_rates across bins)
+    Higher std = feature has more predictive power
+    0.0 = no differentiation between bins
+    1.0 = maximum differentiation (best bin vs worst bin)
+
+  Minimum trades per bin: default 10 (configurable via min_trades_per_bin)
+  Confidence levels: HIGH (20+ trades per bin), MEDIUM (10-19)
+
+REPORT STRUCTURE (build_feature_conditioning_report):
+  {
+    "total_trades_analyzed": 85,
+    "winning_conditions": [
+      {
+        "feature": "volatility",
+        "range": [0.015, 0.025],
+        "win_rate": 72.0,
+        "avg_pnl_pct": 2.5,
+        "sharpe": 1.8,
+        "total_trades": 22,
+        "confidence": "HIGH"
+      },
+      ...
+    ],
+    "losing_conditions": [
+      {
+        "feature": "trend_strength",
+        "range": [0.0, 0.15],
+        "win_rate": 35.0,
+        "avg_pnl_pct": -1.2,
+        "sharpe": -0.8,
+        "total_trades": 18,
+        "confidence": "MEDIUM"
+      },
+      ...
+    ],
+    "feature_importance": {
+      "volatility": 1.000,
+      "trend_strength": 0.782,
+      "price_vs_sma50": 0.451,
+      "returns_autocorr": 0.223,
+      "trend_slope": 0.156
+    },
+    "feature_statistics": {
+      "volatility": {"mean": 0.022, "std": 0.012},
+      "trend_strength": {"mean": 0.45, "std": 0.28},
+      ...
+    },
+    "overall_backtest_metrics": {...},
+    "assessment": {
+      "recommendation": "Strategy performs best when volatility ∈ [0.015, 0.025] (win rate: 72%)...",
+      "risk_flags": [...],
+      "most_important_feature": "volatility"
+    }
+  }
+
+API ENDPOINT:
+
+POST /robustness/feature-conditioning
+  Request Body:
+  {
+    "strategy_id": "uuid",
+    "ticker": "BTCUSDT",
+    "asset_class": "CRYPTO",
+    "start_date": "2022-01-01",
+    "end_date": "2024-01-01",
+    "bar_resolution": "1h",
+    "initial_capital": 10000.0,
+    "lookback_window": 50,
+    "min_trades_per_bin": 10,
+    "commission_per_trade": 1.0,
+    "slippage_pct": 0.05
+  }
+
+  Response: Same as /robustness/{analysis_id} (analysis_type="FEATURE_CONDITIONING")
+
+EXAMPLE WORKFLOW:
+  1. Run backtest: 85 trades, 55% overall win rate, +18% return
+  2. Submit feature conditioning analysis
+  3. Results show:
+     - volatility ∈ [0.015, 0.025] → 72% win rate (22 trades)
+     - volatility > 0.04 → 31% win rate (15 trades)
+     - trend_strength < 0.15 → 35% win rate (18 trades)
+  4. Action: Add filters to strategy:
+     - Only trade when volatility is between 0.015-0.025
+     - Avoid trading when trend_strength < 0.15
+  5. Expected improvement: win rate rises from 55% to ~68%
+
+IMPLEMENTATION FILES:
+  - Core: app/engine/robustness/feature_conditioning.py
+  - Task: app/tasks/robustness_task.py (run_feature_conditioning)
+  - API: app/api/routes/robustness.py (POST /robustness/feature-conditioning)
+  - Schema: app/api/schemas/robustness.py (FeatureConditioningCreate)
+  - Smoke: scripts/smoke_feature_conditioning.py
+
+
+4.8 LEVERAGE SYSTEM
+-------------------
+
+PURPOSE:
+Simulate leveraged trading with Binance-style isolated margin mechanics.
+Allows testing strategies with amplified exposure while accounting for
+liquidation risk.
+
+HOW IT WORKS:
+
+  Entry:
+    1. Calculate base position size (from position_size_type/value)
+    2. Multiply shares by leverage factor: shares = base_shares × leverage
+    3. Margin deducted from cash = (shares × price) / leverage + commission
+       (NOT the full notional value)
+    4. Calculate liquidation price:
+       - LONG: entry_price × (1 - 1/leverage)
+       - SHORT: entry_price × (1 + 1/leverage)
+
+  Example: $10,000 capital, 50% position size, 10x leverage
+    Base amount: $5,000 (50% of capital)
+    Shares (without leverage): 5000 / price
+    Shares (with 10x): 50,000 / price ← controls 10x notional
+    Margin deducted: $5,000 (the actual cash used)
+    Liquidation price (LONG): price × 0.90 (10% below entry)
+
+  In-Position:
+    Each bar, check if bar_low (LONG) or bar_high (SHORT) breaches
+    liquidation price. If breached:
+    - Trade exits immediately at liquidation_price
+    - PnL = -(margin + entry_commission) → -100% of invested capital
+    - exit_reason = "liquidation"
+    - No exit commission charged (exchange seized the margin)
+
+  Exit (non-liquidation):
+    proceeds = max(0, margin + unrealized_PnL) - exit_commission
+    PnL = proceeds - margin - entry_commission
+    pnl_pct = PnL / (margin + entry_commission)
+
+  Mark-to-Market:
+    Equity = cash + max(0, margin + unrealized_PnL)
+    Clamped to 0 because you can't owe more than your margin (isolated margin)
+
+INTERACTION WITH OTHER FEATURES:
+  - Stop loss: Still fires based on percentage from entry. With 10x leverage,
+    a 5% stop = 50% loss on margin. If stop is set larger than 1/leverage,
+    liquidation fires first.
+  - Exit rules: Evaluated before liquidation check in priority order.
+    If an exit rule has min_loss_pct < 100/leverage, it fires before liquidation.
+  - Position sizing: With percent_capital=50 and leverage=10, you put 50% of
+    capital as margin and control 5x of total capital in notional value.
+
+PARAMETER:
+  leverage: float = 1.0 (default: no leverage)
+  Pass to run_backtest() or as part of smoke script configuration.
+
+IMPORTANT NOTES:
+  - Isolated margin only (no cross-margin)
+  - No funding rates simulated
+  - Liquidation is instantaneous (no partial liquidation ladder)
+  - Works with both LONG and SHORT positions
+
+
+4.9 SHORT SELLING
+-----------------
+
+PURPOSE:
+Enable short positions (profit from price drops) with a fully independent
+state machine. Supports simultaneous long and short positions.
+
+HOW IT WORKS:
+
+  Activation:
+    Pass short_entry_signal and short_exit_signal to run_backtest().
+    If short_entry_signal is provided (not None), short selling is active.
+    When not provided, the engine operates in long-only mode (backward compatible).
+
+  Dual State Machine:
+    long_pos = PositionState(direction="LONG")
+    short_pos = PositionState(direction="SHORT")
+
+    Both are evaluated independently each bar. You can be long AND short
+    simultaneously (useful for hedging or independent signal systems).
+
+  SHORT Entry Flow:
+    1. short_entry_signal fires on bar N
+    2. Engine sets short_pos.pending_entry = True
+    3. Bar N+1: fill at open price
+       - Slippage: price × (1 - slippage_pct/100) → sell at lower price
+       - Cash deducted = shares × entry_price + commission (collateral)
+       - If leverage > 1.0: margin = notional / leverage
+
+  SHORT Exit Flow:
+    1. short_exit_signal, stop_loss, take_profit, exit_rule, or force_close
+    2. Engine sets short_pos.pending_exit = True
+    3. Next bar: fill at open price
+       - Slippage: price × (1 + slippage_pct/100) → buy back at higher price
+       - PnL = (entry_price - exit_price) × shares - commissions
+       - Proceeds = shares × (2 × entry_price - exit_price) - commission
+
+  Direction-Aware Stop/TP:
+    - Stop loss (SHORT): fires when price goes UP by stop_loss_pct%
+      sl_price = entry_price × (1 + stop_loss_pct/100)
+      Triggers when bar_high >= sl_price
+    - Take profit (SHORT): fires when price goes DOWN by take_profit_pct%
+      tp_price = entry_price × (1 - take_profit_pct/100)
+      Triggers when bar_low <= tp_price
+    - Dynamic stop (SHORT): fires when price crosses ABOVE stop indicator
+
+  Direction-Aware Mark-to-Market:
+    MTM = shares × (2 × entry_price - current_price)
+    When price drops: MTM increases (profit)
+    When price rises: MTM decreases (loss)
+
+PARAMETERS:
+  short_entry_signal: pd.Series | None = None
+  short_exit_signal: pd.Series | None = None
+  short_entry_conditions: dict | None = None  (for attribution)
+  short_exit_conditions: dict | None = None   (for attribution)
+
+EXAMPLE USAGE:
+  trades, equity = run_backtest(
+      df=df,
+      entry_signal=long_entry_signal,
+      exit_signal=long_exit_signal,
+      short_entry_signal=short_entry_signal,
+      short_exit_signal=short_exit_signal,
+      initial_capital=10000,
+      take_profit_pct=5.0,    # 5% for longs, 5% drop for shorts
+      leverage=5.0,           # Works with both directions
+  )
+
+
+4.10 PLUGGABLE EXIT RULES
+--------------------------
+
+PURPOSE:
+Allow per-bar evaluation of custom exit conditions beyond simple stop/TP.
+Exit rules capture a reference value at entry time and compare a monitor
+column against it each bar, with optional gating by activation threshold
+and minimum loss requirement.
+
+THE PROBLEM IT SOLVES:
+Fixed stops and TPs are one-size-fits-all. Real strategies need nuanced exits:
+  - "Exit if RSI crosses below the ATR mean it was at when we entered"
+  - "Exit if volatility doubles from entry level, but only if we're losing 1%+"
+  - "Exit if RSI drops below 30 (fixed threshold), but only when ATR confirms"
+
+ExitRule DATACLASS (app/engine/exit_rules.py):
+
+  @dataclass
+  class ExitRule:
+      name: str = "exit_rule"
+        # Stamps exit_reason on the trade record
+
+      ref_col: str = ""
+        # Column to capture at entry (frozen reference value)
+        # Ignored when fixed_threshold is set
+
+      monitor_col: str = ""
+        # Column checked every bar against reference
+
+      operator: str = "LT"
+        # "LT" or "GT" comparison of monitor vs reference
+        # "LT": fires when monitor < ref (e.g., RSI drops below entry level)
+        # "GT": fires when monitor > ref (e.g., vol spikes above entry level)
+
+      activation_threshold: float | None = None
+        # Gate: rule only active if ref_col value at entry meets this threshold
+        # Combined with activation_operator
+
+      activation_operator: str = "LT"
+        # "LT": active if ref_value < activation_threshold
+        # "GT": active if ref_value > activation_threshold
+
+      min_loss_pct: float | None = None
+        # Only fire if trade is losing >= this percentage
+        # Prevents premature exits on winning trades
+
+      skip_col: str | None = None
+        # Per-bar boolean column to suppress evaluation
+        # When True at current bar, rule is skipped
+
+      fixed_threshold: float | None = None
+        # Compare monitor_col against this static value instead of ref_col
+        # When set, no ref_col capture needed (ref stored as fixed_threshold)
+
+LIFECYCLE:
+
+  1. CAPTURE (_capture_exit_rule_states, called after entry fill):
+     For each ExitRule:
+       - If fixed_threshold set: store {ref_value: fixed_threshold, active: True}
+       - Else: capture df[ref_col] at entry_bar_idx
+         - If activation_threshold set: check if captured value meets gate
+         - Store {ref_value: captured_val, active: bool}
+     Result stored in pos.exit_rule_states (list of dicts)
+
+  2. CHECK (_check_exit_rules, called each bar while in position):
+     For each ExitRule and its state:
+       - Skip if not active or ref_value is None
+       - Skip if monitor_col not in DataFrame
+       - Skip if skip_col evaluates to True at current bar
+       - Read monitor_val = df[monitor_col] at current bar
+       - Compare: "LT" → monitor < ref, "GT" → monitor > ref
+       - If not triggered: continue to next rule
+       - If triggered AND min_loss_pct set:
+         - Calculate current PnL% (direction-aware)
+         - Only fire if PnL% <= -|min_loss_pct|
+       - If all checks pass: set pending_exit, stamp rule.name as exit_reason
+       - First matching rule wins (rules checked in order)
+
+EXAMPLE CONFIGURATIONS:
+
+  # Exit if RSI drops below 30 and we're losing 1%+
+  ExitRule(
+      name="rsi_30_exit",
+      monitor_col="rsi_14",
+      fixed_threshold=30.0,
+      operator="LT",
+      min_loss_pct=1.0,
+  )
+
+  # Exit if current ATR exceeds the ATR mean at entry
+  # Only active if ATR mean at entry was below 500
+  ExitRule(
+      name="atr_signal_exit",
+      ref_col="atr_mean_24",
+      monitor_col="atr_14",
+      operator="GT",
+      activation_threshold=500.0,
+      activation_operator="LT",
+      min_loss_pct=1.0,
+      skip_col="skip_atr_exit",
+  )
+
+  # Simple fixed: exit if RSI goes above 80
+  ExitRule(
+      name="overbought_exit",
+      monitor_col="rsi_14",
+      fixed_threshold=80.0,
+      operator="GT",
+  )
+
+PARAMETER:
+  exit_rules: list[ExitRule] | None = None
+  Pass list to run_backtest(). Each rule evaluated per bar in order.
+
+INTERACTION WITH OTHER EXITS:
+  Priority order in engine:
+  1. Liquidation (leveraged positions only)
+  2. Exit rules (evaluated in list order, first match wins)
+  3. Dynamic stop (indicator trailing stop)
+  4. Percentage stop loss
+  5. Percentage take profit / dynamic TP
+  6. Signal exit
+
+  Once any exit triggers, the position goes to PENDING_EXIT and no
+  further exit checks run.
+
+
+4.11 DYNAMIC TAKE PROFIT
+-------------------------
+
+PURPOSE:
+Allow per-bar dynamic take-profit percentage from a DataFrame column,
+enabling position-specific or market-adaptive TP levels.
+
+HOW IT WORKS:
+  - Pass dynamic_tp_pct_column (column name in df) to run_backtest()
+  - Each bar, if column has a valid value at current bar, use it as TP%
+  - Overrides static take_profit_pct when the column value is available
+  - Falls back to static take_profit_pct if column value is NaN
+
+PARAMETER:
+  dynamic_tp_pct_column: str | None = None
+
+EXAMPLE:
+  # Column "dynamic_tp" varies per bar based on ATR
+  df["dynamic_tp"] = df["atr_14"] / df["close"] * 100 * 2  # 2x ATR as %
+
+  trades, equity = run_backtest(
+      df=df,
+      entry_signal=signal,
+      exit_signal=exit_signal,
+      initial_capital=10000,
+      take_profit_pct=5.0,              # Fallback static TP
+      dynamic_tp_pct_column="dynamic_tp", # Per-bar override
+  )
+
+IMPLEMENTATION:
+  In _check_stops(), at the TP evaluation:
+  - Read dynamic_tp_pct from pos.dynamic_tp_pct (captured at entry from column)
+  - If present, use it; otherwise fall back to take_profit_pct parameter
+  - TP price calculated same way: entry × (1 ± dynamic_tp/100)
 
 
 ================================================================================

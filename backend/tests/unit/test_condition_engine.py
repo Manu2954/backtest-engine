@@ -779,3 +779,218 @@ def test_lookback_with_and_logic() -> None:
 
     # Bars 3+: Both conditions true (both rising)
     assert result.iloc[3:].all()
+
+
+# ============================================================================
+# EXPRESSION TESTS (Arithmetic Operand Type)
+# ============================================================================
+
+
+def test_expression_simple_multiply() -> None:
+    """EXPRESSION: close < close:-4 * 0.98 (price dropped >2% in 4 bars)."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 99, 98, 97, 96],
+            "close": [100, 99, 98, 97, 96],
+        },
+        index=index,
+    )
+
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "LT",
+                "right_operand_type": "EXPRESSION",
+                "right_operand_value": "close:-4 * 0.98",
+            }
+        ],
+    }
+
+    result = evaluate_conditions(df, group)
+    # Bar 4: close=96, close:-4=100, 100*0.98=98. 96 < 98 → True
+    assert result.iloc[4] == True
+    # Bar 3: close=97, close:-3 would be used but we're referencing close:-4 which is NaN
+    assert result.iloc[:4].sum() == 0  # First 4 bars have no lookback
+
+
+def test_expression_addition_with_precedence() -> None:
+    """EXPRESSION: sma + atr * 2 respects operator precedence."""
+    index = pd.date_range("2020-01-01", periods=3, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10, 10, 10],
+            "close": [110, 110, 110],
+            "sma": [100.0, 100.0, 100.0],
+            "atr": [5.0, 5.0, 5.0],
+        },
+        index=index,
+    )
+
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "GT",
+                "right_operand_type": "EXPRESSION",
+                "right_operand_value": "sma + atr * 2",
+            }
+        ],
+    }
+
+    result = evaluate_conditions(df, group)
+    # sma + atr * 2 = 100 + 5*2 = 110. close=110 > 110 → False (not strictly GT)
+    assert result.iloc[0] == False
+
+
+def test_expression_subtraction() -> None:
+    """EXPRESSION: sma - atr * 1.5 (lower band)."""
+    index = pd.date_range("2020-01-01", periods=3, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10, 10, 10],
+            "close": [90, 95, 100],
+            "sma": [100.0, 100.0, 100.0],
+            "atr": [5.0, 5.0, 5.0],
+        },
+        index=index,
+    )
+
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "LT",
+                "right_operand_type": "EXPRESSION",
+                "right_operand_value": "sma - atr * 1.5",
+            }
+        ],
+    }
+
+    result = evaluate_conditions(df, group)
+    # sma - atr*1.5 = 100 - 7.5 = 92.5
+    # close[0]=90 < 92.5 → True
+    # close[1]=95 < 92.5 → False
+    assert result.iloc[0] == True
+    assert result.iloc[1] == False
+
+
+def test_expression_division() -> None:
+    """EXPRESSION: close / close:-1 (bar-to-bar return ratio)."""
+    index = pd.date_range("2020-01-01", periods=4, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10, 10, 10, 10],
+            "close": [100, 105, 103, 110],
+        },
+        index=index,
+    )
+
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "EXPRESSION",
+                "left_operand_value": "close / close:-1",
+                "operator": "GT",
+                "right_operand_type": "SCALAR",
+                "right_operand_value": "1.03",
+            }
+        ],
+    }
+
+    result = evaluate_conditions(df, group)
+    # Bar 1: 105/100=1.05 > 1.03 → True
+    # Bar 2: 103/105=0.98 > 1.03 → False
+    # Bar 3: 110/103=1.068 > 1.03 → True
+    assert result.iloc[1] == True
+    assert result.iloc[2] == False
+    assert result.iloc[3] == True
+
+
+def test_expression_volume_spike() -> None:
+    """EXPRESSION: volume > vol_avg * 3.0 (volume spike detection)."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [10] * 5,
+            "close": [10] * 5,
+            "volume": [100, 100, 100, 500, 100],
+            "vol_avg": [100.0] * 5,
+        },
+        index=index,
+    )
+
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "volume",
+                "operator": "GT",
+                "right_operand_type": "EXPRESSION",
+                "right_operand_value": "vol_avg * 3.0",
+            }
+        ],
+    }
+
+    result = evaluate_conditions(df, group)
+    # vol_avg * 3 = 300. Only bar 3 (volume=500) exceeds it
+    assert result.iloc[3] == True
+    assert result.iloc[0] == False
+    assert result.iloc[4] == False
+
+
+def test_expression_invalid_column() -> None:
+    """EXPRESSION with non-existent column raises ValueError."""
+    df = make_df()
+
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "GT",
+                "right_operand_type": "EXPRESSION",
+                "right_operand_value": "nonexistent_col * 2",
+            }
+        ],
+    }
+
+    try:
+        evaluate_conditions(df, group)
+        assert False, "Should have raised ValueError"
+    except ValueError:
+        pass
+
+
+def test_expression_invalid_syntax() -> None:
+    """EXPRESSION with invalid syntax raises ValueError."""
+    df = make_df()
+
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "GT",
+                "right_operand_type": "EXPRESSION",
+                "right_operand_value": "* * *",
+            }
+        ],
+    }
+
+    try:
+        evaluate_conditions(df, group)
+        assert False, "Should have raised ValueError"
+    except ValueError:
+        pass
