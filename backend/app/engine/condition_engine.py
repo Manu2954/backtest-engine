@@ -17,7 +17,7 @@ OPERATORS = {
     "IS_FALLING",
 }
 
-OPERAND_TYPES = {"INDICATOR", "OHLCV", "SCALAR", "LOOKBACK"}
+OPERAND_TYPES = {"INDICATOR", "OHLCV", "SCALAR", "LOOKBACK", "EXPRESSION"}
 
 
 def _parse_lookback(value: str) -> tuple[str, int]:
@@ -195,7 +195,109 @@ def _get_operand(
     if kind == "LOOKBACK":
         return _get_lookback_series(df, value)
 
+    if kind == "EXPRESSION":
+        return _evaluate_expression(df, value)
+
     return _get_operand_series(df, kind, value)
+
+
+def _tokenize_expression(expression: str) -> list[str]:
+    """Tokenize an arithmetic expression into operands and operators."""
+    tokens = []
+    # Match: lookback refs (word:number), numbers (with decimals), column names, operators
+    pattern = r'(\w+:-?\d+|\d*\.\d+|\d+|\w+|[+\-*/()])'
+    raw_tokens = re.findall(pattern, expression)
+    if not raw_tokens:
+        raise ValueError(f"Invalid expression: '{expression}'")
+
+    # Handle unary minus: if '-' appears at start or after an operator/open-paren,
+    # merge it with the next token as a negative number
+    i = 0
+    while i < len(raw_tokens):
+        token = raw_tokens[i]
+        if token == '-' and (i == 0 or raw_tokens[i - 1] in ('+', '-', '*', '/', '(')):
+            if i + 1 < len(raw_tokens) and re.match(r'^\d+\.?\d*$', raw_tokens[i + 1]):
+                tokens.append(f"-{raw_tokens[i + 1]}")
+                i += 2
+                continue
+        tokens.append(token)
+        i += 1
+
+    return tokens
+
+
+def _resolve_expr_token(df: pd.DataFrame, token: str) -> pd.Series | float:
+    """Resolve a single expression token to a Series or float."""
+    # Numeric literal (integers, decimals, negative numbers)
+    if re.match(r'^-?(\d+\.?\d*|\d*\.\d+)$', token):
+        return float(token)
+    # Lookback reference (contains colon with integer offset)
+    if re.match(r'^\w+:-?\d+$', token):
+        return _get_lookback_series(df, token)
+    # Column name (indicator or OHLCV)
+    return _get_operand_series(df, "INDICATOR", token)
+
+
+def _evaluate_expression(df: pd.DataFrame, expression: str) -> pd.Series | float:
+    """
+    Evaluate arithmetic expression with standard operator precedence.
+
+    Supports +, -, *, / on column references, lookback refs, and numeric literals.
+    Examples: "close:-12 * 0.98", "sma_200 + atr_14 * 2", "vol_sma_20 * 2.0"
+    """
+    tokens = _tokenize_expression(expression)
+
+    # Shunting-yard for operator precedence
+    precedence = {'+': 1, '-': 1, '*': 2, '/': 2}
+    output_queue: list = []
+    operator_stack: list[str] = []
+
+    for token in tokens:
+        if token in precedence:
+            while (operator_stack and operator_stack[-1] in precedence
+                   and precedence[operator_stack[-1]] >= precedence[token]):
+                output_queue.append(operator_stack.pop())
+            operator_stack.append(token)
+        elif token == '(':
+            operator_stack.append(token)
+        elif token == ')':
+            while operator_stack and operator_stack[-1] != '(':
+                output_queue.append(operator_stack.pop())
+            if not operator_stack:
+                raise ValueError(f"Mismatched parentheses in expression: '{expression}'")
+            operator_stack.pop()  # Remove '('
+        else:
+            output_queue.append(_resolve_expr_token(df, token))
+
+    while operator_stack:
+        op = operator_stack.pop()
+        if op in ('(', ')'):
+            raise ValueError(f"Mismatched parentheses in expression: '{expression}'")
+        output_queue.append(op)
+
+    # Evaluate RPN
+    eval_stack: list = []
+    for item in output_queue:
+        if isinstance(item, str) and item in precedence:
+            if len(eval_stack) < 2:
+                raise ValueError(f"Invalid expression: '{expression}'")
+            right_val = eval_stack.pop()
+            left_val = eval_stack.pop()
+            if item == '+':
+                eval_stack.append(left_val + right_val)
+            elif item == '-':
+                eval_stack.append(left_val - right_val)
+            elif item == '*':
+                eval_stack.append(left_val * right_val)
+            elif item == '/':
+                eval_stack.append(left_val / right_val)
+        else:
+            eval_stack.append(item)
+
+    if len(eval_stack) != 1:
+        raise ValueError(f"Invalid expression: '{expression}'")
+
+    return eval_stack[0]
 
 
 def _apply_operator(

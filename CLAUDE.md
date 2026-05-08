@@ -214,16 +214,31 @@ React Frontend (Port 5173)
 ### Core Backend Modules
 
 **Data Pipeline:**
-1. `app/engine/data_layer.py` - Fetches OHLCV data from Yahoo Finance, caches in Redis
+1. `app/engine/data_layer.py` - Multi-provider OHLCV orchestration (Yahoo Finance for stocks, Binance for crypto), Redis + PostgreSQL caching
 2. `app/engine/indicator_layer.py` - Computes technical indicators using pandas-ta
-3. `app/engine/condition_engine.py` - Evaluates entry/exit conditions
-4. `app/engine/state_machine.py` - Executes backtest simulation (position management, fills, P&L)
+3. `app/engine/condition_engine.py` - Evaluates entry/exit conditions (stateless, bar-level)
+4. `app/engine/state_machine.py` - Executes backtest simulation (position management, fills, P&L, leverage, shorts, exit rules)
 5. `app/engine/report_generator.py` - Calculates performance metrics (returns, Sharpe, drawdown)
+6. `app/engine/exit_rules.py` - Pluggable ExitRule dataclass for runtime-configurable exit conditions
+
+**Robustness Module:**
+- `app/engine/robustness/regime_detection.py` - Market regime detection (PELT directional/volatility, L1 trend)
+- `app/engine/robustness/walk_forward.py` - Walk-forward validation with consistency scoring
+- `app/engine/robustness/parameter_sensitivity.py` - Parameter sensitivity analysis (±20% variation)
+- `app/engine/robustness/feature_conditioning.py` - Statistical feature conditioning (quartile binning)
+- `app/engine/robustness/segmentation/` - Pluggable segmentation strategies (factory pattern)
+
+**Data Providers:**
+- `app/providers/factory.py` - Provider factory (creates yfinance or binance provider)
+- `app/providers/base.py` - Abstract provider interface
+- `app/providers/yfinance_provider.py` - Yahoo Finance (stocks + crypto fallback)
+- `app/providers/binance_provider.py` - Binance REST API (crypto, 1000-bar chunked pagination)
 
 **API Layer:**
 - `app/api/routes/strategies.py` - Strategy CRUD endpoints
 - `app/api/routes/backtests.py` - Backtest execution and results
 - `app/api/routes/tickers.py` - Ticker search
+- `app/api/routes/robustness.py` - Robustness analysis endpoints (param sensitivity, walk-forward, regime, feature conditioning)
 
 **Database Models:**
 - `app/models/strategy.py` - Strategy, Indicator, ConditionGroup, Condition
@@ -232,6 +247,7 @@ React Frontend (Port 5173)
 
 **Background Tasks:**
 - `app/tasks/backtest_task.py` - Celery task for async backtest execution
+- `app/tasks/robustness_task.py` - Celery tasks for robustness analyses (param sensitivity, walk-forward, regime detection, feature conditioning)
 
 ### Key Concepts
 
@@ -252,12 +268,60 @@ React Frontend (Port 5173)
 - Tracks position, cash, equity over time
 - Generates equity curve and trade log
 
+**Data Layer Architecture:**
+- Multi-provider: Yahoo Finance (stocks) and Binance (crypto) via factory pattern
+- Provider auto-selection: STOCK → yfinance, CRYPTO → binance (overridable)
+- Three-layer caching: Redis (24h TTL, msgpack) → PostgreSQL (permanent, batch 500) → Provider API
+- Gap detection: validates cached DB data covers request range before returning
+- Binance pagination: fetches 1000-bar chunks, auto-advances until end date
+- Timezone: defaults to Asia/Kolkata (IST), full ZoneInfo conversion for all providers
+- Supported crypto resolutions: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1mo
+- Supported stock resolutions: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
+- Stock intraday limitation: Yahoo Finance caps at 60 days history
+- Symbol normalization: handles BTC-USD, BTC/USDT → BTCUSDT for Binance
+- Split/dividend adjustment: yfinance auto_adjust=True
+
 **Position Management:**
 - Supports fractional shares (crypto) and integer shares (stocks)
-- Position sizing: full_capital, percent_capital, fixed_amount
+- Position sizing: full_capital, percent_capital, fixed_amount, risk_based
 - Dynamic stop loss: trailing stop based on indicator (e.g., ATR)
 - Risk management: max position size limits
-- Transaction costs: commission per trade
+- Transaction costs: commission per trade (fixed or percentage)
+- Slippage: direction-aware (buys pay more, sells receive less)
+- Leverage: Binance-style isolated margin with liquidation price
+- Short selling: independent short position state machine
+
+**Leverage System:**
+- `leverage` param multiplies share count by leverage factor
+- Margin = notional_value / leverage (only margin deducted from cash)
+- Liquidation price calculated at entry: LONG = entry × (1 - 1/leverage), SHORT = entry × (1 + 1/leverage)
+- Liquidation fires when bar_low (LONG) or bar_high (SHORT) crosses liquidation price
+- Exit reason: "liquidation" with -100% PnL on the position (not account)
+
+**Short Selling:**
+- Independent `short_entry_signal` and `short_exit_signal` params
+- Dual position state: `long_pos` and `short_pos` tracked simultaneously
+- Direction-aware PnL: SHORT profit = (entry_price - exit_price) × shares
+- Direction-aware stops: SL triggers on bar_high (price rising), TP on bar_low (price falling)
+- Direction-aware slippage: SHORT entry is a sell (receive less), exit is a buy (pay more)
+
+**Pluggable Exit Rules (ExitRule system):**
+- Runtime-configurable exit conditions via `exit_rules=[ExitRule(...)]` param
+- Each rule is an `ExitRule` dataclass (in `app/engine/exit_rules.py`)
+- Fields: name, ref_col, monitor_col, operator, activation_threshold, activation_operator, min_loss_pct, skip_col, fixed_threshold
+- At entry: captures `ref_col` value (frozen for trade lifetime)
+- Per bar: compares `monitor_col` against captured ref using operator (LT/GT)
+- `fixed_threshold`: compares monitor against a static value (no ref capture needed)
+- `activation_threshold`: rule only active if ref meets threshold at entry
+- `min_loss_pct`: rule only fires if trade is losing >= this %
+- `skip_col`: per-bar boolean column to suppress evaluation
+- `name`: stamps trade's `exit_reason` field for attribution
+- Engine internals: `_capture_exit_rule_states()` at entry, `_check_exit_rules()` per bar
+
+**Dynamic Take Profit:**
+- `dynamic_tp_pct_column` param: column name containing per-bar TP % values
+- Captured at entry bar, overrides static `take_profit_pct` for that trade
+- Enables strategies with variable TP (e.g., TP = candle range %)
 
 **Indicator Warmup:**
 - Moving averages and oscillators need historical data to initialize
@@ -268,6 +332,44 @@ React Frontend (Port 5173)
 - Comparison: GT, LT, EQ, GTE, LTE
 - Crossover: CROSSES_ABOVE, CROSSES_BELOW
 - Trend: IS_RISING, IS_FALLING
+
+**Robustness Analysis Module:**
+Four analysis types, all accessible via API endpoints and Celery tasks:
+
+1. **Parameter Sensitivity** (`parameter_sensitivity.py`):
+   - Generates ±20% variants of all numeric indicator params
+   - Runs backtest for each variant, calculates CV of key metrics
+   - Stability score: 1.0 - mean(CVs), capped [0, 1]
+   - Levels: ROBUST (≥0.8), MODERATE (0.6-0.8), FRAGILE (<0.6)
+
+2. **Walk-Forward Validation** (`walk_forward.py`):
+   - Divides data into N equal windows (default 5)
+   - Runs independent backtest per window
+   - Consistency score from per-metric coefficient of variation
+   - Levels: ROBUST (score ≥0.8 AND ≥80% profitable), MODERATE (≥0.6 AND ≥60%), FRAGILE
+   - Windows with <10 trades excluded from CV
+
+3. **Regime Detection** (`regime_detection.py` + `segmentation/`):
+   - Three strategies via factory pattern:
+     - `pelt_directional`: BULL/BEAR/CHOPPY/RANGING from return slope + R²
+     - `pelt_volatility`: HIGH_VOL/LOW_VOL/TRANSITION from rolling volatility
+     - `l1_trend`: BULL/BEAR from L1 trend filter (cvxpy solver)
+   - Analyzes trade performance per regime
+   - Dependency: CV of regime returns → INDEPENDENT (<0.3), MODERATE (0.3-0.6), DEPENDENT (>0.6)
+
+4. **Feature Conditioning** (`feature_conditioning.py`):
+   - Extracts market features at each trade entry (all real-time computable)
+   - Features: volatility, trend_strength, trend_slope, price_vs_sma50, returns_autocorr, rsi_level, atr_pct
+   - Quartile binning: identifies which market conditions produce best/worst trades
+   - Importance: variance of win rates across quartiles, normalized 0-1
+
+**Robustness API Endpoints:**
+- `POST /robustness/parameter-sensitivity` - Start param sensitivity analysis
+- `POST /robustness/walk-forward` - Start walk-forward validation
+- `POST /robustness/regime-detection` - Start regime detection (strategy: l1_trend/pelt_directional/pelt_volatility)
+- `POST /robustness/feature-conditioning` - Start feature conditioning analysis
+- `GET /robustness/{analysis_id}` - Get analysis status/results
+- `DELETE /robustness/{analysis_id}` - Delete analysis
 
 ### Database Schema
 
@@ -350,8 +452,61 @@ The `state_machine.py` implements the core simulation:
 - **Fills**: Entry/exit at next bar's open price (lookahead bias prevention)
 - **Periodic Contributions**: Cash added at configured frequency (e.g., weekly, monthly)
 - **Dynamic Stop Loss**: Exit when price crosses below indicator-based stop
-- **Commission**: Deducted from cash on entry and exit trades
+- **Commission**: Deducted from cash on entry and exit trades (fixed or percentage)
+- **Slippage**: Direction-aware price impact applied before commission
 - **Force Close**: Open positions closed at last bar
+- **Leverage**: Margin-based entry, liquidation price tracking, -100% on wipe
+- **Short Selling**: Dual position state (long_pos + short_pos), independent fills
+- **Exit Rules**: Pluggable `ExitRule` objects evaluated per bar (stateful, per-trade refs)
+- **Dynamic TP**: Per-trade take profit from DataFrame column captured at entry
+- **Attribution**: Optional indicator snapshots, alpha calculation, condition tracking
+
+**run_backtest() Full Parameter Signature:**
+```python
+def run_backtest(
+    df, entry_signal, exit_signal, initial_capital,
+    asset_class="STOCK",
+    shares=0.0,
+    periodic_contribution=None,       # {"amount", "frequency", "interval_days", "include_start"}
+    position_size_type="full_capital", # full_capital|percent_capital|fixed_amount|risk_based
+    position_size_value=100.0,
+    stop_loss_pct=None,
+    take_profit_pct=None,
+    dynamic_stop_column=None,          # Column for indicator-based trailing stop
+    dynamic_tp_pct_column=None,        # Column for per-trade TP %
+    dynamic_exit_monitor_column=None,  # Legacy: column to monitor for conditional exit
+    dynamic_exit_ref_column=None,      # Legacy: column to capture ref at entry
+    dynamic_exit_skip_column=None,     # Legacy: skip column for conditional exit
+    dynamic_exit_min_loss_pct=None,    # Legacy: min loss gate for conditional exit
+    commission_per_trade=0.0,          # Fixed $ per entry/exit
+    commission_pct=0.0,                # % of trade value
+    slippage_pct=0.0,
+    enable_attribution=True,
+    entry_conditions=None,
+    exit_conditions=None,
+    short_entry_signal=None,
+    short_exit_signal=None,
+    short_entry_conditions=None,
+    short_exit_conditions=None,
+    leverage=1.0,                      # 1.0 = no leverage
+    exit_rules=None,                   # list[ExitRule] - pluggable exit conditions
+) -> tuple[list[dict], pd.Series]:     # Returns (trade_log, equity_curve)
+```
+
+**Key Helper Functions:**
+- `_calculate_position_size()` - Handles all sizing modes including risk_based
+- `_apply_slippage()` - Direction-aware price impact
+- `_fill_entry()` - Leverage-aware entry with margin/liquidation calculation
+- `_execute_exit()` - Direction-aware PnL, commission, proceeds
+- `_check_stops()` - Liquidation → dynamic stop → static SL/TP (priority order)
+- `_mark_to_market()` - Leveraged MTM for equity curve
+- `_capture_exit_rule_states()` - Freeze rule refs at entry
+- `_check_exit_rules()` - Evaluate rules per bar
+
+**TradeRecord Fields:**
+- Core: entry_date, entry_price, exit_date, exit_price, shares, pnl, pnl_pct, trade_duration_days, exit_reason, direction
+- Commission: entry_commission, exit_commission, total_commission
+- Attribution (optional): entry_conditions_met, exit_conditions_met, entry_signal_strength, market_return_during_trade, alpha, indicator_snapshot_entry, indicator_snapshot_exit
 
 Do not modify state machine logic without understanding the full trade lifecycle.
 
@@ -395,6 +550,57 @@ Calculated in `report_generator.py`:
 - API client in `frontend/src/api/client.ts`
 - Type definitions in `frontend/src/types/index.ts`
 - Build with `npm run build`
+
+### Writing Strategy Smoke Scripts
+
+Smoke scripts (`backend/scripts/smoke_*.py`) are standalone backtest scripts that bypass the API/Celery layer:
+
+1. Import engine modules directly: `fetch_ohlcv`, `compute_indicators`, `trim_warmup_period`, `evaluate_conditions`, `run_backtest`, `generate_report`
+2. Define indicators list and entry condition groups
+3. Compute custom filters (volume, trend, body/wick ratios) as boolean Series
+4. Combine into `entry_signal` (AND of all conditions)
+5. Optionally apply deferred entry logic (e.g., wait for close > SMA50)
+6. Define `ExitRule` objects for conditional exits
+7. Call `run_backtest()` with all parameters
+8. Print formatted results with trade log
+
+**Pattern for deferred entry (confirmation candle):**
+```python
+above_sma50 = df["close"] > df["sma_50"]
+deferred_signal = pd.Series(False, index=df.index)
+armed = False
+for i in range(len(df)):
+    if entry_signal.iloc[i]:
+        armed = True
+    if armed and above_sma50.iloc[i]:
+        deferred_signal.iloc[i] = True
+        armed = False
+entry_signal = deferred_signal
+```
+
+**Pattern for ExitRule usage:**
+```python
+from app.engine.exit_rules import ExitRule
+
+atr_exit = ExitRule(name="atr_exit", ref_col="atr_mean_24", monitor_col="atr_14",
+                    min_loss_pct=1.0, skip_col="skip_atr_exit")
+rsi_exit = ExitRule(name="rsi_exit", ref_col="rsi_14", monitor_col="rsi_14",
+                    activation_threshold=30.0, min_loss_pct=1.0)
+rsi_20 = ExitRule(name="rsi_20", monitor_col="rsi_14",
+                  fixed_threshold=20.0, min_loss_pct=1.0)
+
+trades, equity = run_backtest(..., exit_rules=[atr_exit, rsi_exit, rsi_20])
+```
+
+### Adding a New Exit Rule Type
+
+1. No engine changes needed — ExitRule dataclass covers most patterns
+2. For ref-vs-monitor comparison: set `ref_col` + `monitor_col` + `operator`
+3. For fixed threshold: set `fixed_threshold` + `monitor_col` (no ref_col needed)
+4. For activation gates: set `activation_threshold` + `activation_operator`
+5. For loss gates: set `min_loss_pct`
+6. For conditional suppression: set `skip_col` (True = skip this bar)
+7. Test with `pytest tests/unit/test_state_machine.py`
 
 ## Known Patterns
 
@@ -482,6 +688,20 @@ def my_task(arg1, arg2):
 - `backend/app/celery_app.py` - Celery configuration
 - `backend/app/core/config.py` - Settings and environment variables
 - `backend/app/core/database.py` - Database session management
+- `backend/app/engine/state_machine.py` - Core backtest engine (positions, fills, leverage, shorts, exit rules)
+- `backend/app/engine/exit_rules.py` - ExitRule dataclass for pluggable exit conditions
+- `backend/app/engine/data_layer.py` - OHLCV data orchestration (providers, caching, persistence)
+- `backend/app/engine/indicator_layer.py` - Technical indicator computation
+- `backend/app/engine/condition_engine.py` - Condition evaluation (stateless, bar-level)
+- `backend/app/engine/report_generator.py` - Performance metrics calculation
+- `backend/app/engine/robustness/regime_detection.py` - Market regime detection
+- `backend/app/engine/robustness/walk_forward.py` - Walk-forward validation
+- `backend/app/engine/robustness/parameter_sensitivity.py` - Parameter sensitivity analysis
+- `backend/app/engine/robustness/feature_conditioning.py` - Feature conditioning
+- `backend/app/engine/robustness/segmentation/factory.py` - Segmentation strategy factory
+- `backend/app/providers/factory.py` - Data provider factory (yfinance, binance)
+- `backend/app/providers/binance_provider.py` - Binance REST API provider
+- `backend/app/tasks/robustness_task.py` - Celery tasks for robustness analyses
 - `backend/alembic/env.py` - Migration environment setup
 - `frontend/src/App.tsx` - React application routes
 - `docker-compose.yml` - Infrastructure services

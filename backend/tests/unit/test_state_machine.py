@@ -1147,3 +1147,395 @@ def test_long_trades_have_direction_field() -> None:
     assert "direction" in trades[0]
     assert trades[0]["direction"] == "LONG"
 
+
+# ─── Dynamic TP Percentage Column Tests ──────────────────────────────────────
+
+
+def test_dynamic_tp_pct_column_basic() -> None:
+    """Dynamic TP% from column: trade exits when price rises by the signal bar's TP%."""
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 103, 104, 105, 106, 107, 108, 109],
+            "close": [100, 100, 100, 103, 104, 105, 106, 107, 108, 109],
+            "tp_pct": [3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0],
+        },
+        index=index,
+    )
+    # Signal on bar 0, fill at bar 1 (open=100), TP at +3% → exit when open >= 103
+    entry_signal = pd.Series([True] + [False] * 9, index=index)
+    exit_signal = pd.Series([False] * 10, index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        dynamic_tp_pct_column="tp_pct",
+    )
+
+    assert len(trades) == 1
+    assert trades[0]["exit_reason"] == "take_profit"
+    assert trades[0]["pnl_pct"] >= 0.029  # ~3% profit (stored as fraction)
+
+
+def test_dynamic_tp_pct_varies_per_trade() -> None:
+    """Different TP% for different trades based on signal bar value."""
+    index = pd.date_range("2020-01-01", periods=20, freq="D")
+    opens = [100] * 20
+    opens[1] = 100   # fill trade 1 at 100
+    opens[3] = 102   # TP hit for trade 1 (2%)
+    opens[5] = 100   # fill trade 2 at 100
+    opens[10] = 105  # TP hit for trade 2 (5%)
+    df = pd.DataFrame(
+        {
+            "open": opens,
+            "close": opens,
+            "tp_pct": [2.0] * 4 + [5.0] * 16,  # bar 0 signal → 2% TP, bar 4 signal → 5% TP
+        },
+        index=index,
+    )
+    # Two entry signals: bar 0 (tp=2%), bar 4 (tp=5%)
+    entry_signal = pd.Series([False] * 20, index=index)
+    entry_signal.iloc[0] = True
+    entry_signal.iloc[4] = True
+    exit_signal = pd.Series([False] * 20, index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        dynamic_tp_pct_column="tp_pct",
+    )
+
+    assert len(trades) == 2
+    assert trades[0]["exit_reason"] == "take_profit"
+    assert trades[0]["pnl_pct"] >= 0.019  # ~2%
+    assert trades[1]["exit_reason"] == "take_profit"
+    assert trades[1]["pnl_pct"] >= 0.049  # ~5%
+
+
+def test_dynamic_tp_pct_nan_falls_back_to_fixed() -> None:
+    """When column has NaN, falls back to fixed take_profit_pct."""
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 100, 100, 110, 111, 112, 113, 114],
+            "close": [100, 100, 100, 100, 100, 110, 111, 112, 113, 114],
+            "tp_pct": [float("nan")] * 10,
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True] + [False] * 9, index=index)
+    exit_signal = pd.Series([False] * 10, index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        take_profit_pct=10.0,
+        dynamic_tp_pct_column="tp_pct",
+    )
+
+    # NaN in column → dynamic_tp_pct stays None → falls back to fixed 10%
+    assert len(trades) == 1
+    assert trades[0]["exit_reason"] == "take_profit"
+    assert trades[0]["pnl_pct"] >= 0.099  # ~10%
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LEVERAGE TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_leverage_long_profit() -> None:
+    """3x leverage, price up 5% → PnL = 15% of margin."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 105, 105, 105],
+            "high": [100, 100, 105, 105, 105],
+            "low": [100, 100, 105, 105, 105],
+            "close": [100, 100, 105, 105, 105],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, True, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        leverage=3.0,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    # Entry at 100, shares = (1000 * 3) / 100 = 30 shares
+    # Margin = 30 * 100 / 3 = 1000
+    # PnL = (105 - 100) * 30 = 150
+    # pnl_pct = 150 / 1000 = 0.15 (15% return on margin)
+    assert t["shares"] == 30.0
+    assert abs(t["pnl"] - 150.0) < 0.01
+    assert abs(t["pnl_pct"] - 0.15) < 0.001
+
+
+def test_leverage_long_liquidation() -> None:
+    """3x leverage, price drops 33.3% → liquidated, lose margin."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    # Liquidation price for 3x LONG at 100 = 100 * (1 - 1/3) = 66.67
+    # Bar low drops to 60 → triggers liquidation
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 60, 60, 60],
+            "high": [100, 100, 100, 60, 60],
+            "low": [100, 100, 60, 60, 60],
+            "close": [100, 100, 60, 60, 60],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        leverage=3.0,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["exit_reason"] == "liquidation"
+    # Lose entire margin + entry commission
+    assert t["pnl"] < 0
+    assert abs(t["exit_price"] - 100.0 * (1 - 1.0 / 3.0)) < 0.01
+    # Final equity = initial - margin (all lost), cash was 0 after entry
+    final_equity = equity.iloc[-1]
+    assert final_equity < 1.0  # effectively 0
+
+
+def test_leverage_short_profit() -> None:
+    """3x leverage short, price down 5% → PnL = 15% of margin."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 95, 95, 95],
+            "high": [100, 100, 95, 95, 95],
+            "low": [100, 100, 95, 95, 95],
+            "close": [100, 100, 95, 95, 95],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([True, False, False, False, False], index=index)
+    short_exit = pd.Series([False, False, True, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        leverage=3.0,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["direction"] == "SHORT"
+    # Entry at 100, shares = 30, margin = 1000
+    # PnL = (100 - 95) * 30 = 150
+    assert t["shares"] == 30.0
+    assert abs(t["pnl"] - 150.0) < 0.01
+    assert abs(t["pnl_pct"] - 0.15) < 0.001
+
+
+def test_leverage_short_liquidation() -> None:
+    """3x leverage short, price up 33.3% → liquidated."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    # Liquidation price for 3x SHORT at 100 = 100 * (1 + 1/3) = 133.33
+    # Bar high goes to 140 → triggers liquidation
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 140, 140, 140],
+            "high": [100, 100, 140, 140, 140],
+            "low": [100, 100, 100, 140, 140],
+            "close": [100, 100, 140, 140, 140],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([True, False, False, False, False], index=index)
+    short_exit = pd.Series([False] * 5, index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        leverage=3.0,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["exit_reason"] == "liquidation"
+    assert t["direction"] == "SHORT"
+    assert abs(t["exit_price"] - 100.0 * (1 + 1.0 / 3.0)) < 0.01
+    assert t["pnl"] < 0
+
+
+def test_leverage_1x_unchanged() -> None:
+    """leverage=1 produces identical results to default behavior."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 110, 110, 110],
+            "high": [100, 100, 110, 110, 110],
+            "low": [100, 100, 110, 110, 110],
+            "close": [100, 100, 110, 110, 110],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, True, False, False], index=index)
+
+    trades_default, eq_default = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0,
+    )
+    trades_1x, eq_1x = run_backtest(
+        df, entry_signal, exit_signal, initial_capital=1000.0, leverage=1.0,
+    )
+
+    assert len(trades_default) == len(trades_1x) == 1
+    assert abs(trades_default[0]["pnl"] - trades_1x[0]["pnl"]) < 0.001
+    assert abs(trades_default[0]["shares"] - trades_1x[0]["shares"]) < 0.001
+    assert abs(eq_default.iloc[-1] - eq_1x.iloc[-1]) < 0.001
+
+
+def test_leverage_cash_deduction() -> None:
+    """Only margin (not full notional) deducted from cash at entry."""
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 100, 100],
+            "high": [100, 100, 100, 100, 100],
+            "low": [100, 100, 100, 100, 100],
+            "close": [100, 100, 100, 100, 100],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, True], index=index)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        leverage=3.0,
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    # With 3x leverage: shares = 30, notional = 3000, margin = 1000
+    assert t["shares"] == 30.0
+    # Equity while in position should equal initial capital (price unchanged)
+    # Cash = 0 (all margin deployed), MTM = margin + 0 unrealized = 1000
+    assert abs(equity.iloc[2] - 1000.0) < 1.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXIT RULES TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from app.engine.exit_rules import ExitRule
+
+
+def test_exit_rule_fires_when_active() -> None:
+    """RSI at entry < 50, drops below entry RSI, PnL < -1% → exit."""
+    index = pd.date_range("2020-01-01", periods=6, freq="D")
+    # Signal on bar 0, entry fills at bar 1 open (100). RSI at signal bar = 40.
+    # Bar 3: RSI drops to 35 (< 40) and price drops to 97 (PnL = -3%) → should exit.
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 99, 97, 97, 97],
+            "high": [100, 100, 99, 97, 97, 97],
+            "low": [100, 100, 99, 97, 97, 97],
+            "close": [100, 100, 99, 97, 97, 97],
+            "rsi": [40, 42, 38, 35, 30, 30],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False, False], index=index)
+    exit_signal = pd.Series([False] * 6, index=index)
+
+    rule = ExitRule(name="rsi_exit", ref_col="rsi", monitor_col="rsi", activation_threshold=50.0, min_loss_pct=1.0)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        exit_rules=[rule],
+    )
+
+    assert len(trades) == 1
+    t = trades[0]
+    # Exit is pending on bar 3, fills at bar 4 open
+    assert t["exit_reason"] == "rsi_exit"
+    assert t["pnl"] < 0
+
+
+def test_exit_rule_inactive_when_above_threshold() -> None:
+    """RSI at entry >= 50 → rule doesn't activate, no exit despite RSI drop."""
+    index = pd.date_range("2020-01-01", periods=6, freq="D")
+    # RSI at signal bar = 60 (>= 50 threshold) → rule inactive
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 99, 97, 97, 97],
+            "high": [100, 100, 99, 97, 97, 97],
+            "low": [100, 100, 99, 97, 97, 97],
+            "close": [100, 100, 99, 97, 97, 97],
+            "rsi": [60, 55, 50, 45, 40, 35],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False, False], index=index)
+    exit_signal = pd.Series([False] * 6, index=index)
+
+    rule = ExitRule(name="rsi_exit", ref_col="rsi", monitor_col="rsi", activation_threshold=50.0, min_loss_pct=1.0)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        exit_rules=[rule],
+    )
+
+    # Should force-close at last bar, not exit early via rule
+    assert len(trades) == 1
+    assert trades[0]["exit_reason"] == "force_close"
+
+
+def test_exit_rule_no_fire_when_profitable() -> None:
+    """RSI drops below entry RSI but PnL > -1% → stays in trade."""
+    index = pd.date_range("2020-01-01", periods=6, freq="D")
+    # RSI at signal = 40 (<50, rule active). Price stays at 100 (PnL = 0%).
+    # RSI drops to 35 on bar 3 but no loss → rule doesn't fire.
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 100, 100, 100],
+            "high": [100, 100, 100, 100, 100, 100],
+            "low": [100, 100, 100, 100, 100, 100],
+            "close": [100, 100, 100, 100, 100, 100],
+            "rsi": [40, 42, 38, 35, 30, 28],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False, False], index=index)
+    exit_signal = pd.Series([False] * 6, index=index)
+
+    rule = ExitRule(name="rsi_exit", ref_col="rsi", monitor_col="rsi", activation_threshold=50.0, min_loss_pct=1.0)
+
+    trades, equity = run_backtest(
+        df, entry_signal, exit_signal,
+        initial_capital=1000.0,
+        exit_rules=[rule],
+    )
+
+    # Should force-close at end, not exit via rule (no loss)
+    assert len(trades) == 1
+    assert trades[0]["exit_reason"] == "force_close"
+
+
