@@ -96,14 +96,14 @@ def create_multi_regime_df() -> pd.DataFrame:
 
 def test_factory_create_volatility_strategy():
     """Factory creates VolatilityStrategy."""
-    strategy = SegmentationFactory.create_strategy("volatility")
+    strategy = SegmentationFactory.create_strategy("pelt_volatility")
     assert isinstance(strategy, VolatilityStrategy)
     assert strategy.get_strategy_name() == "volatility"
 
 
 def test_factory_create_directional_strategy():
     """Factory creates DirectionalStrategy."""
-    strategy = SegmentationFactory.create_strategy("directional")
+    strategy = SegmentationFactory.create_strategy("pelt_directional")
     assert isinstance(strategy, DirectionalStrategy)
     assert strategy.get_strategy_name() == "directional"
 
@@ -117,8 +117,9 @@ def test_factory_invalid_strategy():
 def test_factory_get_available_strategies():
     """Factory lists available strategies."""
     strategies = SegmentationFactory.get_available_strategies()
-    assert "volatility" in strategies
-    assert "directional" in strategies
+    assert "pelt_volatility" in strategies
+    assert "pelt_directional" in strategies
+    assert "l1_trend" in strategies
 
 
 # =============================================================================
@@ -297,7 +298,7 @@ def test_directional_strategy_r2_mode_affects_labeling():
 def test_factory_creates_directional_with_r2_params():
     """Factory passes R² parameters to DirectionalStrategy."""
     strategy = SegmentationFactory.create_strategy(
-        "directional",
+        "pelt_directional",
         r2_mode="fixed",
         r2_percentile=80,
         r2_fixed=0.5,
@@ -316,7 +317,7 @@ def test_detect_changepoints_volatility_strategy():
     """detect_changepoints works with volatility strategy."""
     df = create_multi_regime_df()
 
-    changepoints = detect_changepoints(df, strategy="volatility", min_segment_length=20)
+    changepoints = detect_changepoints(df, strategy="pelt_volatility", min_segment_length=20)
 
     assert changepoints[0] == 0
     assert changepoints[-1] == len(df)
@@ -326,7 +327,7 @@ def test_detect_changepoints_directional_strategy():
     """detect_changepoints works with directional strategy."""
     df = create_multi_regime_df()
 
-    changepoints = detect_changepoints(df, strategy="directional", min_segment_length=20)
+    changepoints = detect_changepoints(df, strategy="pelt_directional", min_segment_length=20)
 
     assert changepoints[0] == 0
     assert changepoints[-1] == len(df)
@@ -348,7 +349,7 @@ def test_detect_regimes_returns_segments_and_labels():
     """detect_regimes returns segments and labels."""
     df = create_multi_regime_df()
 
-    segments, labels = detect_regimes(df, strategy="directional", min_segment_length=20)
+    segments, labels = detect_regimes(df, strategy="pelt_directional", min_segment_length=20)
 
     assert len(segments) >= 1
     assert len(labels) == len(df)
@@ -370,7 +371,7 @@ def test_detect_regimes_volatility_strategy():
     """detect_regimes uses volatility strategy correctly."""
     df = create_multi_regime_df()
 
-    segments, labels = detect_regimes(df, strategy="volatility", min_segment_length=20)
+    segments, labels = detect_regimes(df, strategy="pelt_volatility", min_segment_length=20)
 
     # Volatility strategy produces HIGH_VOL, LOW_VOL, TRANSITION
     unique_labels = labels.unique()
@@ -382,7 +383,7 @@ def test_detect_regimes_directional_strategy():
     """detect_regimes uses directional strategy correctly."""
     df = create_multi_regime_df()
 
-    segments, labels = detect_regimes(df, strategy="directional", min_segment_length=20)
+    segments, labels = detect_regimes(df, strategy="pelt_directional", min_segment_length=20)
 
     # Directional strategy produces BULL, BEAR, CHOPPY, RANGING
     unique_labels = labels.unique()
@@ -394,7 +395,7 @@ def test_detect_regimes_segment_coverage():
     """Segments cover entire date range."""
     df = create_multi_regime_df()
 
-    segments, labels = detect_regimes(df, strategy="directional", min_segment_length=20)
+    segments, labels = detect_regimes(df, strategy="pelt_directional", min_segment_length=20)
 
     # Check coverage
     assert segments[0].start_date == df.index[0]
@@ -405,7 +406,7 @@ def test_detect_regimes_segment_has_strength():
     """Directional segments have strength for BULL/BEAR."""
     df = create_multi_regime_df()
 
-    segments, labels = detect_regimes(df, strategy="directional", min_segment_length=20)
+    segments, labels = detect_regimes(df, strategy="pelt_directional", min_segment_length=20)
 
     for seg in segments:
         if seg.regime in ["BULL", "BEAR"]:
@@ -422,7 +423,7 @@ def test_extract_segment_features_count():
     df = create_multi_regime_df()
     changepoints = [0, 50, 100, 150]
 
-    features = extract_segment_features(df, changepoints, strategy="directional")
+    features = extract_segment_features(df, changepoints, strategy="pelt_directional")
 
     assert len(features) == 3
 
@@ -432,7 +433,7 @@ def test_extract_segment_features_has_segment_id():
     df = create_multi_regime_df()
     changepoints = [0, 50, 150]
 
-    features = extract_segment_features(df, changepoints, strategy="directional")
+    features = extract_segment_features(df, changepoints, strategy="pelt_directional")
 
     assert features[0]["segment_id"] == 0
     assert features[1]["segment_id"] == 1
@@ -685,7 +686,7 @@ def test_assess_regime_dependency_excludes_no_trade_regimes():
 def test_build_regime_report_structure():
     """Report has all required fields."""
     df = create_multi_regime_df()
-    segments, labels = detect_regimes(df, strategy="directional", min_segment_length=20)
+    segments, labels = detect_regimes(df, strategy="pelt_directional", min_segment_length=20)
 
     trades = [
         {"entry_date": df.index[10], "pnl_pct": 0.05},
@@ -713,7 +714,7 @@ def test_build_regime_report_structure():
 def test_build_regime_report_includes_strength():
     """Report segments include strength."""
     df = create_multi_regime_df()
-    segments, labels = detect_regimes(df, strategy="directional", min_segment_length=20)
+    segments, labels = detect_regimes(df, strategy="pelt_directional", min_segment_length=20)
 
     metrics = analyze_trades_by_regime([], labels)
     distribution = calculate_regime_distribution(labels)
@@ -730,7 +731,7 @@ def test_build_regime_report_includes_strength():
 def test_build_regime_report_risk_flags():
     """Report includes risk flags for poor regimes."""
     df = create_multi_regime_df()
-    segments, labels = detect_regimes(df, strategy="directional", min_segment_length=20)
+    segments, labels = detect_regimes(df, strategy="pelt_directional", min_segment_length=20)
 
     # Create metrics with large losses in one regime
     metrics = {

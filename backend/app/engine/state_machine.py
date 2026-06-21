@@ -565,11 +565,14 @@ def _fill_entry(
             return cash
 
         # Recalculate shares that fit in budget with leverage
+        # Commission is on notional (shares * price), not margin
+        # total_cost = margin + commission = S*P/L + S*P*(C/100) = S*P*(1/L + C/100)
+        # Solving for S: affordable_amount = S*P*(1/L + C/100)
+        # S = affordable_amount / (P * (1/L + C/100))
+        # S = affordable_amount * L / (P * (1 + L*C/100))
         if leverage > 1.0:
-            max_margin = affordable_amount
-            max_notional = max_margin * leverage
-            price_with_pct_commission = execution_price * (1.0 + commission_pct / 100.0 / leverage)
-            max_shares = max_notional / price_with_pct_commission
+            price_with_pct_commission = execution_price * (1.0 + leverage * commission_pct / 100.0)
+            max_shares = affordable_amount * leverage / price_with_pct_commission
         else:
             price_with_pct_commission = execution_price * (1.0 + commission_pct / 100.0)
             max_shares = affordable_amount / price_with_pct_commission
@@ -926,7 +929,13 @@ def run_backtest(
     short_exit_conditions: dict[str, Any] | None = None,
     leverage: float = 1.0,
     exit_rules: list | None = None,
+    # Counter-trade parameters
+    enable_counter_trades: bool = False,
+    counter_tp_multiplier: float = 1.5,
 ) -> tuple[list[dict[str, Any]], pd.Series]:
+    if initial_capital <= 0:
+        raise ValueError(f"initial_capital must be positive, got {initial_capital}")
+
     if df.empty:
         return [], pd.Series([], dtype=float, name="equity")
 
@@ -971,6 +980,9 @@ def run_backtest(
     if slippage_pct < 0:
         raise ValueError(f"slippage_pct must be non-negative, got {slippage_pct}")
 
+    if counter_tp_multiplier <= 0:
+        raise ValueError(f"counter_tp_multiplier must be positive, got {counter_tp_multiplier}")
+
     entry_signal = _ensure_series(entry_signal, df.index)
     exit_signal = _ensure_series(exit_signal, df.index)
 
@@ -998,6 +1010,9 @@ def run_backtest(
     # Position state machines
     long_pos = PositionState(direction="LONG")
     short_pos = PositionState(direction="SHORT")
+
+    # Counter-trade state
+    counter_trade_pending: dict[str, Any] | None = None  # {"direction": str, "tp_pct": float, "bar_idx": int}
 
     # Periodic contributions setup
     contribution_amount = 0.0
@@ -1135,6 +1150,21 @@ def run_backtest(
                 exit_attribution_data=long_pos.exit_attribution_data,
             )
             trade_log.append(trade)
+
+            # ─── Counter-trade triggering (LONG exit) ───
+            if enable_counter_trades:
+                exit_reason = trade.to_dict()["exit_reason"]
+                pnl = trade.to_dict()["pnl"]
+                # Only trigger on signal exits with loss
+                if exit_reason == "signal" and pnl < 0:
+                    pnl_pct = trade.to_dict()["pnl_pct"]
+                    counter_tp_pct = abs(pnl_pct) * counter_tp_multiplier
+                    counter_trade_pending = {
+                        "direction": "SHORT",
+                        "tp_pct": counter_tp_pct,
+                        "bar_idx": i,
+                    }
+
             long_pos.reset()
 
         # ─── Fill pending SHORT exit ───
@@ -1154,6 +1184,21 @@ def run_backtest(
                 exit_attribution_data=short_pos.exit_attribution_data,
             )
             trade_log.append(trade)
+
+            # ─── Counter-trade triggering (SHORT exit) ───
+            if enable_counter_trades:
+                exit_reason = trade.to_dict()["exit_reason"]
+                pnl = trade.to_dict()["pnl"]
+                # Only trigger on signal exits with loss
+                if exit_reason == "signal" and pnl < 0:
+                    pnl_pct = trade.to_dict()["pnl_pct"]
+                    counter_tp_pct = abs(pnl_pct) * counter_tp_multiplier
+                    counter_trade_pending = {
+                        "direction": "LONG",
+                        "tp_pct": counter_tp_pct,
+                        "bar_idx": i,
+                    }
+
             short_pos.reset()
 
         # ─── Check stops for LONG ───
@@ -1246,38 +1291,58 @@ def run_backtest(
         equity_curve.iloc[i] = cash + long_mtm + short_mtm
 
         # ─── Evaluate signals for next bar ───
-        # LONG signals
-        if not long_pos.in_position and not long_pos.pending_entry and entry_signal.iloc[i]:
-            long_pos.pending_entry = True
-            long_pos.entry_bar_idx = i
-            if enable_attribution:
-                long_pos.entry_attribution_data = _capture_entry_attribution(
-                    df, i, entry_conditions
-                )
-        elif long_pos.in_position and not long_pos.pending_exit and exit_signal.iloc[i]:
-            long_pos.pending_exit = True
-            long_pos.exit_bar_idx = i
-            if enable_attribution:
-                long_pos.exit_attribution_data = _capture_exit_attribution(
-                    df, i, exit_conditions
-                )
+        # Counter-trades have priority over regular signals
+        counter_trade_armed_direction: str | None = None
+        if enable_counter_trades and counter_trade_pending is not None:
+            # Counter-trade enters at NEXT bar (i+1), so arm it now
+            target_direction = counter_trade_pending["direction"]
+            target_pos = long_pos if target_direction == "LONG" else short_pos
 
-        # SHORT signals
+            # Only arm if target position is empty
+            if not target_pos.in_position and not target_pos.pending_entry:
+                target_pos.pending_entry = True
+                target_pos.entry_bar_idx = i
+                # Set dynamic TP for counter-trade
+                target_pos.dynamic_tp_pct = counter_trade_pending["tp_pct"]
+                # Mark direction to skip regular signals
+                counter_trade_armed_direction = target_direction
+                # Clear counter-trade
+                counter_trade_pending = None
+
+        # LONG signals (skip if counter-trade is arming SHORT)
+        if counter_trade_armed_direction != "SHORT":
+            if not long_pos.in_position and not long_pos.pending_entry and entry_signal.iloc[i]:
+                long_pos.pending_entry = True
+                long_pos.entry_bar_idx = i
+                if enable_attribution:
+                    long_pos.entry_attribution_data = _capture_entry_attribution(
+                        df, i, entry_conditions
+                    )
+            elif long_pos.in_position and not long_pos.pending_exit and exit_signal.iloc[i]:
+                long_pos.pending_exit = True
+                long_pos.exit_bar_idx = i
+                if enable_attribution:
+                    long_pos.exit_attribution_data = _capture_exit_attribution(
+                        df, i, exit_conditions
+                    )
+
+        # SHORT signals (skip if counter-trade is arming LONG)
         if has_short:
-            if not short_pos.in_position and not short_pos.pending_entry and short_entry_signal.iloc[i]:
-                short_pos.pending_entry = True
-                short_pos.entry_bar_idx = i
-                if enable_attribution:
-                    short_pos.entry_attribution_data = _capture_entry_attribution(
-                        df, i, short_entry_conditions
-                    )
-            elif short_pos.in_position and not short_pos.pending_exit and short_exit_signal.iloc[i]:
-                short_pos.pending_exit = True
-                short_pos.exit_bar_idx = i
-                if enable_attribution:
-                    short_pos.exit_attribution_data = _capture_exit_attribution(
-                        df, i, short_exit_conditions
-                    )
+            if counter_trade_armed_direction != "LONG":
+                if not short_pos.in_position and not short_pos.pending_entry and short_entry_signal.iloc[i]:
+                    short_pos.pending_entry = True
+                    short_pos.entry_bar_idx = i
+                    if enable_attribution:
+                        short_pos.entry_attribution_data = _capture_entry_attribution(
+                            df, i, short_entry_conditions
+                        )
+                elif short_pos.in_position and not short_pos.pending_exit and short_exit_signal.iloc[i]:
+                    short_pos.pending_exit = True
+                    short_pos.exit_bar_idx = i
+                    if enable_attribution:
+                        short_pos.exit_attribution_data = _capture_exit_attribution(
+                            df, i, short_exit_conditions
+                        )
 
     # ─── Handle pending entries on last bar ───
     for pos, is_short in [(long_pos, False), (short_pos, True)]:

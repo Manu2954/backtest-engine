@@ -49,12 +49,12 @@ from app.engine.robustness.walk_forward import (
 TICKER = "BTCUSDT"
 START = "2023-01-01"
 END = "2026-05-08"
-TF = "5m"
+TF = "1h"
 ASSET_CLASS = "CRYPTO"
 INITIAL_CAPITAL = 10_000.0
 
 RANGE_THRESHOLD = 0.02    # 2% high-low range
-STOP_LOSS_PCT = None   # Exit at -1%
+STOP_LOSS_PCT = 20.0   # Exit at -1%
 
 INDICATORS = [
     {"indicator_type": "SMA", "alias": "sma_50", "params": {"period": 50, "source": "close"}},
@@ -193,7 +193,7 @@ def run_backtest_on_df(df, initial_capital: float = INITIAL_CAPITAL) -> tuple[li
         enable_attribution=False,
         # exit_rules=[atr_exit, rsi_exit, rsi_20exit],
         exit_rules=[atr_exit],
-        leverage=5
+        # leverage=5
     )
 
     report = generate_report(trades, equity_curve, initial_capital)
@@ -360,103 +360,103 @@ def main() -> None:
               f"${t['pnl']:>+9,.2f} {t['pnl_pct']*100:>+7.2f}% {max_dd_pct:>+6.2f}% {exit_atr:>6.0f} {ref_atr:>6.0f} {entry_rsi:>5.1f} ${cap:>10,.2f} {t['exit_reason']:<12}")
 
     # ─── Regime-Based Trade Log ───────────────────────────────────────────────
-    # print(f"\n{'─' * 70}")
-    # print("  TRADE LOG BY REGIME")
-    # print(f"{'─' * 70}")
+    print(f"\n{'─' * 70}")
+    print("  TRADE LOG BY REGIME")
+    print(f"{'─' * 70}")
 
-    # df_ohlcv = df[["open", "high", "low", "close", "volume"]].copy()
-    # strategies = ["pelt_directional", "pelt_volatility", "l1_trend"]
+    df_ohlcv = df[["open", "high", "low", "close", "volume"]].copy()
+    strategies = ["pelt_directional", "pelt_volatility", "l1_trend"]
 
-    # for strat_name in strategies:
-    #     segments, regime_labels = detect_regimes(df_ohlcv, strategy=strat_name)
+    for strat_name in strategies:
+        segments, regime_labels = detect_regimes(df_ohlcv, strategy=strat_name)
 
-    #     # Group trades by regime at entry
-    #     regime_trade_map: dict[str, list] = {}
-    #     for t in trades:
-    #         entry_date = t.get("entry_date")
-    #         if entry_date is None:
-    #             continue
-    #         # Find regime at entry
-    #         entry_ts = pd.Timestamp(entry_date)
-    #         if entry_ts in regime_labels.index:
-    #             regime = regime_labels.loc[entry_ts]
-    #         else:
-    #             idx = regime_labels.index.get_indexer([entry_ts], method="ffill")[0]
-    #             regime = regime_labels.iloc[idx] if idx >= 0 else "UNKNOWN"
-    #         regime_trade_map.setdefault(regime, []).append(t)
+        # Group trades by regime at entry
+        regime_trade_map: dict[str, list] = {}
+        for t in trades:
+            entry_date = t.get("entry_date")
+            if entry_date is None:
+                continue
+            # Find regime at entry
+            entry_ts = pd.Timestamp(entry_date)
+            if entry_ts in regime_labels.index:
+                regime = regime_labels.loc[entry_ts]
+            else:
+                idx = regime_labels.index.get_indexer([entry_ts], method="ffill")[0]
+                regime = regime_labels.iloc[idx] if idx >= 0 else "UNKNOWN"
+            regime_trade_map.setdefault(regime, []).append(t)
 
-    #     print(f"\n  [{strat_name}]")
-    #     for regime in sorted(regime_trade_map.keys()):
-    #         rtrades = regime_trade_map[regime]
-    #         wins = sum(1 for t in rtrades if t["pnl"] > 0)
-    #         total_pnl = sum(t["pnl"] for t in rtrades)
-    #         wr = wins / len(rtrades) * 100 if rtrades else 0
-    #         print(f"\n    {regime} ({len(rtrades)} trades, WR: {wr:.0f}%, PnL: ${total_pnl:+,.2f})")
-    #         print(f"    {'#':<4} {'Entry':<18} {'Exit':<18} {'PnL%':>7} {'Reason'}")
-    #         print(f"    {'─' * 60}")
-    #         for j, t in enumerate(rtrades, 1):
-    #             entry_dt = t["entry_date"].strftime("%Y-%m-%d %H:%M")
-    #             exit_dt = t["exit_date"].strftime("%Y-%m-%d %H:%M")
-    #             print(f"    {j:<4} {entry_dt:<18} {exit_dt:<18} {t['pnl_pct']*100:>+6.2f}% {t['exit_reason']}")
-    # print(f"\n{'─' * 70}")
-    # print("  3. REGIME DETECTION")
-    # print(f"{'─' * 70}")
+        print(f"\n  [{strat_name}]")
+        for regime in sorted(regime_trade_map.keys()):
+            rtrades = regime_trade_map[regime]
+            wins = sum(1 for t in rtrades if t["pnl"] > 0)
+            total_pnl = sum(t["pnl"] for t in rtrades)
+            wr = wins / len(rtrades) * 100 if rtrades else 0
+            print(f"\n    {regime} ({len(rtrades)} trades, WR: {wr:.0f}%, PnL: ${total_pnl:+,.2f})")
+            print(f"    {'#':<4} {'Entry':<18} {'Exit':<18} {'PnL%':>7} {'Reason'}")
+            print(f"    {'─' * 60}")
+            for j, t in enumerate(rtrades, 1):
+                entry_dt = t["entry_date"].strftime("%Y-%m-%d %H:%M")
+                exit_dt = t["exit_date"].strftime("%Y-%m-%d %H:%M")
+                print(f"    {j:<4} {entry_dt:<18} {exit_dt:<18} {t['pnl_pct']*100:>+6.2f}% {t['exit_reason']}")
+    print(f"\n{'─' * 70}")
+    print("  3. REGIME DETECTION")
+    print(f"{'─' * 70}")
     
-    # df_ohlcv = df[["open", "high", "low", "close", "volume"]].copy()
-    # strategies = ["pelt_directional", "pelt_volatility", "l1_trend"]
+    df_ohlcv = df[["open", "high", "low", "close", "volume"]].copy()
+    strategies = ["pelt_directional", "pelt_volatility", "l1_trend"]
     
-    # for strat_name in strategies:
-    #     segments, regime_labels = detect_regimes(df_ohlcv, strategy=strat_name)
-    #     regime_metrics = analyze_trades_by_regime(trades, regime_labels)
-    #     distribution = calculate_regime_distribution(regime_labels)
-    #     dependency_level, dependency_score = assess_regime_dependency(regime_metrics)
+    for strat_name in strategies:
+        segments, regime_labels = detect_regimes(df_ohlcv, strategy=strat_name)
+        regime_metrics = analyze_trades_by_regime(trades, regime_labels)
+        distribution = calculate_regime_distribution(regime_labels)
+        dependency_level, dependency_score = assess_regime_dependency(regime_metrics)
     
-    #     print(f"\n  [{strat_name}]  Segments: {len(segments)}  |  Dependency: {dependency_level} (CV={dependency_score:.2f})")
+        print(f"\n  [{strat_name}]  Segments: {len(segments)}  |  Dependency: {dependency_level} (CV={dependency_score:.2f})")
     
-    #     print(f"    {'Regime':<12} {'Time%':>6} {'Trades':>7} {'Win Rate':>10} {'Return':>9}")
-    #     print(f"    {'─' * 48}")
-    #     for regime in sorted(distribution.keys()):
-    #         pct = distribution[regime]
-    #         m = regime_metrics.get(regime, {})
-    #         t_count = m.get("total_trades", 0)
-    #         wr = m.get("win_rate", 0)
-    #         ret = m.get("total_return_pct", 0)
-    #         print(f"    {regime:<12} {pct:>5.1f}% {t_count:>7} {wr:>9.1f}% {ret:>+8.2f}%")
+        print(f"    {'Regime':<12} {'Time%':>6} {'Trades':>7} {'Win Rate':>10} {'Return':>9}")
+        print(f"    {'─' * 48}")
+        for regime in sorted(distribution.keys()):
+            pct = distribution[regime]
+            m = regime_metrics.get(regime, {})
+            t_count = m.get("total_trades", 0)
+            wr = m.get("win_rate", 0)
+            ret = m.get("total_return_pct", 0)
+            print(f"    {regime:<12} {pct:>5.1f}% {t_count:>7} {wr:>9.1f}% {ret:>+8.2f}%")
 
-    # # ─── Stage 4: Walk-Forward Validation ─────────────────────────────────────
-    # print(f"\n{'─' * 70}")
-    # print("  4. WALK-FORWARD VALIDATION")
-    # print(f"{'─' * 70}")
+    # ─── Stage 4: Walk-Forward Validation ─────────────────────────────────────
+    print(f"\n{'─' * 70}")
+    print("  4. WALK-FORWARD VALIDATION")
+    print(f"{'─' * 70}")
     
-    # windows = generate_windows(df, window_count=5)
+    windows = generate_windows(df, window_count=5)
     
-    # window_results = []
-    # print(f"\n  {'Window':<8} {'Period':<27} {'Trades':>7} {'Return':>8} {'Sharpe':>8} {'Win%':>6}")
-    # print(f"  {'─' * 68}")
+    window_results = []
+    print(f"\n  {'Window':<8} {'Period':<27} {'Trades':>7} {'Return':>8} {'Sharpe':>8} {'Win%':>6}")
+    print(f"  {'─' * 68}")
     
-    # for w in windows:
-    #     df_window = df.iloc[w.start_idx:w.end_idx + 1]
+    for w in windows:
+        df_window = df.iloc[w.start_idx:w.end_idx + 1]
     
-    #     if len(df_window) < 30:
-    #         window_results.append({"metrics": {"total_trades": 0}})
-    #         print(f"  {w.index:<8} {str(w.start_date) + ' → ' + str(w.end_date):<27} {'(insufficient data)':>31}")
-    #         continue
+        if len(df_window) < 30:
+            window_results.append({"metrics": {"total_trades": 0}})
+            print(f"  {w.index:<8} {str(w.start_date) + ' → ' + str(w.end_date):<27} {'(insufficient data)':>31}")
+            continue
     
-    #     _, report_w = run_backtest_on_df(df_window)
-    #     metrics_w = extract_metrics(report_w)
-    #     window_results.append({"metrics": metrics_w})
+        _, report_w = run_backtest_on_df(df_window)
+        metrics_w = extract_metrics(report_w)
+        window_results.append({"metrics": metrics_w})
     
-    #     period = f"{w.start_date} → {w.end_date}"
-    #     print(f"  {w.index:<8} {period:<27} {metrics_w['total_trades']:>7} "
-    #           f"{metrics_w['total_return_pct']:>+7.2f}% {metrics_w['sharpe_ratio']:>8.3f} {metrics_w['win_rate']:>5.1f}%")
+        period = f"{w.start_date} → {w.end_date}"
+        print(f"  {w.index:<8} {period:<27} {metrics_w['total_trades']:>7} "
+              f"{metrics_w['total_return_pct']:>+7.2f}% {metrics_w['sharpe_ratio']:>8.3f} {metrics_w['win_rate']:>5.1f}%")
     
-    # consistency_score, metric_cvs = calculate_consistency_score(window_results, min_trades=3)
-    # assessment = assess_walk_forward_results(window_results, consistency_score, min_trades=3)
+    consistency_score, metric_cvs = calculate_consistency_score(window_results, min_trades=3)
+    assessment = assess_walk_forward_results(window_results, consistency_score, min_trades=3)
     
-    # print(f"\n  Consistency: {consistency_score:.3f}  →  {assessment['level']}")
-    # if assessment.get("risk_flags"):
-    #     for flag in assessment["risk_flags"]:
-    #         print(f"    ! {flag}")
+    print(f"\n  Consistency: {consistency_score:.3f}  →  {assessment['level']}")
+    if assessment.get("risk_flags"):
+        for flag in assessment["risk_flags"]:
+            print(f"    ! {flag}")
 
     # ─── Summary ──────────────────────────────────────────────────────────────
     print(f"\n{'═' * 70}")

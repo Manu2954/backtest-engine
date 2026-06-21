@@ -208,6 +208,65 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             # OBV doesn't use a period parameter
             df_out[alias] = ta.obv(df_out["close"], df_out["volume"])
             indicator_columns.append(alias)
+        elif kind in {"DONCHIAN", "DC"}:
+            # Donchian Channel: highest high and lowest low over period
+            period = int(_require_param(params, "period"))
+            dc_df = ta.donchian(
+                df_out["high"],
+                df_out["low"],
+                lower_length=period,
+                upper_length=period,
+            )
+            if dc_df is None or dc_df.empty:
+                raise ValueError("Donchian Channel computation returned empty data")
+            df_out[f"{alias}_upper"] = _pick_first_col(dc_df, f"DCU_{period}")
+            df_out[f"{alias}_lower"] = _pick_first_col(dc_df, f"DCL_{period}")
+            df_out[f"{alias}_mid"] = _pick_first_col(dc_df, f"DCM_{period}")
+            indicator_columns.extend([f"{alias}_upper", f"{alias}_lower", f"{alias}_mid"])
+        elif kind in {"HEIKINASHI", "HA"}:
+            # Heikin Ashi candles: smoothed candlesticks
+            ha_df = ta.ha(
+                df_out["open"],
+                df_out["high"],
+                df_out["low"],
+                df_out["close"],
+            )
+            if ha_df is None or ha_df.empty:
+                raise ValueError("Heikin Ashi computation returned empty data")
+            df_out[f"{alias}_open"] = ha_df["HA_open"]
+            df_out[f"{alias}_high"] = ha_df["HA_high"]
+            df_out[f"{alias}_low"] = ha_df["HA_low"]
+            df_out[f"{alias}_close"] = ha_df["HA_close"]
+            indicator_columns.extend([
+                f"{alias}_open",
+                f"{alias}_high",
+                f"{alias}_low",
+                f"{alias}_close",
+            ])
+        elif kind == "SUPERTREND":
+            # Supertrend: trend-following indicator using ATR
+            period = int(_require_param(params, "period"))
+            multiplier = float(_require_param(params, "multiplier"))
+            supertrend_df = ta.supertrend(
+                df_out["high"],
+                df_out["low"],
+                df_out["close"],
+                length=period,
+                multiplier=multiplier,
+            )
+            if supertrend_df is None or supertrend_df.empty:
+                raise ValueError("Supertrend computation returned empty data")
+            # Supertrend returns: SUPERT_<period>_<multiplier>, SUPERTd_<period>_<multiplier>, SUPERTl_<period>_<multiplier>, SUPERTs_<period>_<multiplier>
+            # SUPERT = trend line value
+            # SUPERTd = direction (1 = bullish, -1 = bearish)
+            # SUPERTl = long stop (NaN when bearish)
+            # SUPERTs = short stop (NaN when bullish)
+            df_out[f"{alias}_trend"] = _pick_first_col(supertrend_df, f"SUPERT_{period}_{multiplier}")
+            df_out[alias] = _pick_first_col(supertrend_df, f"SUPERTd_{period}_{multiplier}")
+            df_out[f"{alias}_long"] = _pick_first_col(supertrend_df, f"SUPERTl_{period}_{multiplier}")
+            df_out[f"{alias}_short"] = _pick_first_col(supertrend_df, f"SUPERTs_{period}_{multiplier}")
+            # Only check primary column for warmup (long/short are conditionally NaN by design)
+            indicator_columns.append(alias)
         else:
             raise ValueError(f"Unsupported indicator type: {indicator_type}")
 

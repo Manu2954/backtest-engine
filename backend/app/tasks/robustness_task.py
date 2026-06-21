@@ -1295,7 +1295,8 @@ async def _run_feature_conditioning_async(
             end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
 
         # Step 1: Fetch OHLCV data
-        logger.info(f"Feature conditioning: Fetching OHLCV for {backtest_params[\"ticker\"]}")
+        ticker = backtest_params["ticker"]
+        logger.info(f"Feature conditioning: Fetching OHLCV for {ticker}")
         async with session_maker() as session:
             df = await fetch_ohlcv_async(
                 backtest_params["ticker"],

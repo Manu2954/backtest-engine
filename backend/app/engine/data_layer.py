@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+import logging
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -15,6 +16,12 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.models.ohlcv import OhlcvBar
+
+logger = logging.getLogger(__name__)
+
+# Constants for cache invalidation
+RECENT_DATA_DAYS = 30  # Days considered "recent" where splits/dividends are more impactful
+STALE_CACHE_DAYS = 7   # DB cache older than this is re-fetched for recent date ranges
 
 REQUIRED_COLUMNS = ("open", "high", "low", "close", "volume")
 STOCK_RESOLUTIONS = {
@@ -107,9 +114,12 @@ def deserialize_df(blob: bytes) -> pd.DataFrame:
 
 
 def store_cache(key: str, df: pd.DataFrame, ttl_seconds: int) -> None:
-    client = _redis_client()
-    payload = serialize_df(df)
-    client.setex(name=key, time=ttl_seconds, value=payload)
+    try:
+        client = _redis_client()
+        payload = serialize_df(df)
+        client.setex(name=key, time=ttl_seconds, value=payload)
+    except (redis.RedisError, redis.ConnectionError, ConnectionError, OSError) as e:
+        logger.warning("Redis cache write failed for key %s: %s", key, e)
 
 
 def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -232,7 +242,14 @@ async def _load_db_ohlcv(
     resolution: str,
     start: date,
     end: date,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, datetime | None]:
+    """
+    Load OHLCV data from PostgreSQL.
+
+    Returns:
+        Tuple of (DataFrame, oldest_fetched_at) where oldest_fetched_at is the
+        minimum fetched_at timestamp across the returned bars, or None if no data.
+    """
     start_dt, end_dt = _to_datetime_bounds(start, end)
     stmt = (
         select(
@@ -242,6 +259,7 @@ async def _load_db_ohlcv(
             OhlcvBar.low,
             OhlcvBar.close,
             OhlcvBar.volume,
+            OhlcvBar.fetched_at,
         )
         .where(
             and_(
@@ -257,15 +275,18 @@ async def _load_db_ohlcv(
     result = await session.execute(stmt)
     rows = result.all()
     if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume"])
+        return pd.DataFrame(), None
+    df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume", "fetched_at"])
+    # Extract min fetched_at before dropping the column
+    oldest_fetched_at = df["fetched_at"].min()
+    df = df.drop(columns=["fetched_at"])
     df = df.set_index("date")
     df.index = pd.to_datetime(df.index)
     df.index.name = "date"
     # Convert Decimal columns to float (DB uses Numeric which returns Decimal)
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
-    return df
+    return df, oldest_fetched_at
 
 
 async def _store_db_ohlcv(
@@ -278,6 +299,7 @@ async def _store_db_ohlcv(
 ) -> None:
     if df.empty:
         return
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     records: list[dict[str, Any]] = []
     for ts, row in df.iterrows():
         records.append(
@@ -291,6 +313,7 @@ async def _store_db_ohlcv(
                 "low": float(row["low"]),
                 "close": float(row["close"]),
                 "volume": float(row["volume"]),
+                "fetched_at": now,
             }
         )
 
@@ -298,10 +321,53 @@ async def _store_db_ohlcv(
     for i in range(0, len(records), batch_size):
         chunk = records[i : i + batch_size]
         stmt = pg_insert(OhlcvBar).values(chunk)
-        stmt = stmt.on_conflict_do_nothing(
-            index_elements=["ticker", "asset_class", "resolution", "ts"]
+        # On conflict, update prices and fetched_at (split/dividend adjustment refresh)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["ticker", "asset_class", "resolution", "ts"],
+            set_={
+                "open": stmt.excluded.open,
+                "high": stmt.excluded.high,
+                "low": stmt.excluded.low,
+                "close": stmt.excluded.close,
+                "volume": stmt.excluded.volume,
+                "fetched_at": stmt.excluded.fetched_at,
+            },
         )
         await session.execute(stmt)
+    if own_session:
+        await session.commit()
+    else:
+        await session.flush()
+
+
+async def _invalidate_stale_db_cache(
+    session: AsyncSession,
+    ticker: str,
+    asset: str,
+    resolution: str,
+    start: date,
+    end: date,
+    own_session: bool,
+) -> None:
+    """
+    Delete stale OHLCV bars from PostgreSQL for fresh re-fetch.
+
+    Used when force_refresh is requested or when cached data is too old
+    for date ranges that include recent data (where splits/dividends matter).
+    """
+    from sqlalchemy import delete
+
+    start_dt, end_dt = _to_datetime_bounds(start, end)
+    stmt = delete(OhlcvBar).where(
+        and_(
+            OhlcvBar.ticker == ticker.upper(),
+            OhlcvBar.asset_class == asset,
+            OhlcvBar.resolution == resolution,
+            OhlcvBar.ts >= start_dt,
+            OhlcvBar.ts < end_dt,
+        )
+    )
+    await session.execute(stmt)
     if own_session:
         await session.commit()
     else:
@@ -317,9 +383,18 @@ async def fetch_ohlcv_async(
     session: AsyncSession | None = None,
     provider: str | None = None,
     timezone: str = "Asia/Kolkata",
+    force_refresh: bool = False,
 ) -> pd.DataFrame:
     """
     Fetch OHLCV data from cache, database, or external API.
+
+    Cache Invalidation for Splits/Dividends:
+    - Redis: 24h TTL ensures stale data expires naturally
+    - PostgreSQL: Data is re-fetched when:
+      1. force_refresh=True (user suspects stale data)
+      2. Date range includes recent data (last 30 days) AND cache is stale (>7 days old)
+    - Stock prices are always auto-adjusted by yfinance, so historical data can change
+      retroactively after a split/dividend
 
     Bug Fix #10: Added gap detection for cached database data.
     Previously, only checked if min/max dates covered the range, which could
@@ -339,6 +414,7 @@ async def fetch_ohlcv_async(
                    - "yfinance" for STOCK
                    - "binance" for CRYPTO
         timezone: Timezone for date range interpretation (default: "Asia/Kolkata" = IST)
+        force_refresh: Bypass cache and fetch fresh data (for split/dividend updates)
 
     Returns:
         DataFrame with OHLCV data
@@ -356,12 +432,25 @@ async def fetch_ohlcv_async(
     end_date = _to_date(end)
 
     key = get_cache_key(ticker, resolution, start_date, end_date)
-    client = _redis_client()
-    cached_blob = client.get(key)
-    if cached_blob:
-        cached_df = deserialize_df(cached_blob)
-        if not cached_df.empty:
-            return cached_df
+
+    # Try Redis cache (graceful fallback on failure)
+    try:
+        client = _redis_client()
+        # Skip Redis cache on force_refresh
+        if not force_refresh:
+            cached_blob = client.get(key)
+            if cached_blob:
+                try:
+                    cached_df = deserialize_df(cached_blob)
+                    if not cached_df.empty:
+                        return cached_df
+                except Exception as e:
+                    logger.warning("Redis cache deserialization failed for key %s: %s", key, e)
+        else:
+            # Invalidate Redis cache on force_refresh
+            client.delete(key)
+    except (redis.RedisError, redis.ConnectionError, ConnectionError, OSError) as e:
+        logger.warning("Redis cache read failed for key %s: %s", key, e)
 
     own_session = False
     engine = None
@@ -376,7 +465,18 @@ async def fetch_ohlcv_async(
         own_session = True
 
     try:
-        db_df = await _load_db_ohlcv(session, ticker, asset, resolution, start_date, end_date)
+        # On force_refresh, invalidate DB cache first
+        if force_refresh:
+            await _invalidate_stale_db_cache(
+                session, ticker, asset, resolution, start_date, end_date, own_session
+            )
+            db_df = pd.DataFrame()
+            oldest_fetched_at = None
+        else:
+            db_df, oldest_fetched_at = await _load_db_ohlcv(
+                session, ticker, asset, resolution, start_date, end_date
+            )
+
         if not db_df.empty:
             covers_start = db_df.index.min().date() <= start_date
             covers_end = db_df.index.max().date() >= end_date
@@ -398,8 +498,21 @@ async def fetch_ohlcv_async(
                     min_expected_bars = 1
 
                 if actual_bars >= min_expected_bars:
-                    store_cache(key, db_df, settings.ohlcv_cache_ttl_seconds)
-                    return db_df
+                    # Check if cache is stale for STOCK data with recent date ranges
+                    # Crypto doesn't have splits/dividends, so skip staleness check
+                    should_refresh = False
+                    if asset == "STOCK" and oldest_fetched_at is not None:
+                        today = date.today()
+                        includes_recent = end_date >= (today - timedelta(days=RECENT_DATA_DAYS))
+                        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                        cache_age_days = (now_utc - oldest_fetched_at).days
+                        if includes_recent and cache_age_days > STALE_CACHE_DAYS:
+                            should_refresh = True
+
+                    if not should_refresh:
+                        store_cache(key, db_df, settings.ohlcv_cache_ttl_seconds)
+                        return db_df
+                    # else: fall through to re-fetch (stale cache for recent data)
                 # else: fall through to re-fetch (likely has gaps)
 
         if asset == "STOCK" and resolution in STOCK_INTRADAY_RESOLUTIONS:
@@ -463,7 +576,24 @@ def fetch_ohlcv(
     asset_class: str = "STOCK",
     provider: str | None = None,
     timezone: str = "Asia/Kolkata",
+    force_refresh: bool = False,
 ) -> pd.DataFrame:
+    """
+    Synchronous wrapper for fetch_ohlcv_async.
+
+    Args:
+        ticker: Stock/crypto ticker symbol
+        start: Start date
+        end: End date
+        resolution: Time resolution (e.g., "1d", "1h")
+        asset_class: "STOCK" or "CRYPTO"
+        provider: Data provider to use (optional)
+        timezone: Timezone for date range interpretation
+        force_refresh: Bypass cache and fetch fresh data (for split/dividend updates)
+
+    Returns:
+        DataFrame with OHLCV data
+    """
     import asyncio
 
     try:
@@ -478,6 +608,7 @@ def fetch_ohlcv(
                 asset_class=asset_class,
                 provider=provider,
                 timezone=timezone,
+                force_refresh=force_refresh,
             )
         )
     raise RuntimeError("fetch_ohlcv cannot be called from an active event loop; use fetch_ohlcv_async.")
@@ -496,7 +627,7 @@ def validate_ticker(ticker: str, asset_class: str = "STOCK") -> bool:
     Returns:
         True if ticker is valid, False otherwise
     """
-    end_date = datetime.utcnow().date()
+    end_date = datetime.now(timezone.utc).date()
     start_date = end_date - timedelta(days=7)
 
     try:

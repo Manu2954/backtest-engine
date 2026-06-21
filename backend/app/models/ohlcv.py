@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import DateTime, Numeric, String, UniqueConstraint
+from sqlalchemy import DateTime, Numeric, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,3 +26,7 @@ class OhlcvBar(Base):
     low: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     close: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     volume: Mapped[float] = mapped_column(Numeric(24, 6), nullable=False)
+    # Track when data was fetched for split/dividend invalidation
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, server_default=func.now()
+    )

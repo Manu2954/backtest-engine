@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.engine.state_machine import run_backtest  # noqa: E402
+from app.engine.exit_rules import ExitRule  # noqa: E402
 
 
 def test_next_bar_fills_and_pnl() -> None:
@@ -1537,5 +1538,281 @@ def test_exit_rule_no_fire_when_profitable() -> None:
     # Should force-close at end, not exit via rule (no loss)
     assert len(trades) == 1
     assert trades[0]["exit_reason"] == "force_close"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COUNTER-TRADE TESTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_counter_trade_triggers_on_long_loss_signal_exit():
+    """Counter-trade triggers SHORT entry after LONG exits with loss via signal."""
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 90, 90, 85, 85, 85, 85, 85],
+            "close": [100, 100, 100, 90, 90, 85, 85, 85, 85, 85],
+            "high": [100, 100, 100, 90, 90, 85, 85, 85, 85, 85],
+            "low": [100, 100, 100, 90, 90, 85, 85, 85, 85, 85],
+        },
+        index=index,
+    )
+    # LONG: Signal at bar 1 → Enter at bar 2 @ 100
+    # Exit signal at bar 3 → Exit at bar 4 @ 90 (loss)
+    long_entry = pd.Series([False, True, False, False, False, False, False, False, False, False], index=index)
+    long_exit = pd.Series([False, False, False, True, False, False, False, False, False, False], index=index)
+    short_entry = pd.Series([False] * 10, index=index)
+    short_exit = pd.Series([False] * 10, index=index)
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal=long_entry,
+        exit_signal=long_exit,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+        initial_capital=1000.0,
+        enable_counter_trades=True,
+        counter_tp_multiplier=1.5,
+    )
+
+    # Should have 2 trades: LONG (loss) + SHORT (counter-trade)
+    assert len(trades) == 2
+
+    # First trade: LONG loss
+    assert trades[0]["direction"] == "LONG"
+    assert trades[0]["entry_price"] == 100.0
+    assert trades[0]["exit_price"] == 90.0
+    assert trades[0]["exit_reason"] == "signal"
+    assert trades[0]["pnl"] < 0
+    long_loss_pct = abs(trades[0]["pnl_pct"])
+
+    # Second trade: SHORT counter-trade
+    assert trades[1]["direction"] == "SHORT"
+    assert trades[1]["entry_price"] == 85.0  # Enter at bar after exit bar
+    assert trades[1]["exit_reason"] == "force_close"  # No exit signal, force close at end
+
+
+def test_counter_trade_uses_dynamic_tp():
+    """Counter-trade exits at TP = loss_pct × multiplier."""
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 90, 90, 87, 85, 83, 76, 76],
+            "close": [100, 100, 100, 90, 90, 87, 85, 83, 76, 76],
+            "high": [100, 100, 100, 90, 90, 87, 85, 83, 76, 76],
+            "low": [100, 100, 100, 90, 90, 87, 85, 83, 75, 75],  # Bar 8 low hits TP
+        },
+        index=index,
+    )
+    # LONG: Signal bar 1 → Enter bar 2 @ 100, Exit signal bar 3 → Exit bar 4 @ 90 (-10%)
+    # Counter SHORT: Enter bar 5 @ 87, TP at +15% (10% × 1.5) = 87 × (1 - 0.15) = 73.95
+    # Bar 8 low reaches 75, should trigger TP
+    long_entry = pd.Series([False, True, False, False, False, False, False, False, False, False], index=index)
+    long_exit = pd.Series([False, False, False, True, False, False, False, False, False, False], index=index)
+    short_entry = pd.Series([False] * 10, index=index)
+    short_exit = pd.Series([False] * 10, index=index)
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal=long_entry,
+        exit_signal=long_exit,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+        initial_capital=1000.0,
+        enable_counter_trades=True,
+        counter_tp_multiplier=1.5,
+    )
+
+    assert len(trades) == 2
+    # LONG loss: pnl_pct is stored as decimal, -0.1 = -10%
+    assert abs(trades[0]["pnl_pct"] + 0.1) < 0.01  # -10% stored as -0.1
+    assert trades[0]["exit_reason"] == "signal"
+
+    # SHORT counter: should hit TP
+    assert trades[1]["direction"] == "SHORT"
+    assert trades[1]["entry_price"] == 87.0  # Bar 5 open
+    # TP should trigger when low reaches below TP price
+    assert trades[1]["exit_reason"] == "take_profit"
+
+
+def test_counter_trade_short_to_long():
+    """Counter-trade triggers LONG entry after SHORT exits with loss via signal."""
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 110, 110, 115, 115, 115, 115, 115],
+            "close": [100, 100, 100, 110, 110, 115, 115, 115, 115, 115],
+            "high": [100, 100, 100, 110, 110, 115, 115, 115, 115, 115],
+            "low": [100, 100, 100, 110, 110, 115, 115, 115, 115, 115],
+        },
+        index=index,
+    )
+    # SHORT: Signal bar 1 → Enter bar 2 @ 100, Exit signal bar 3 → Exit bar 4 @ 110 (loss)
+    long_entry = pd.Series([False] * 10, index=index)
+    long_exit = pd.Series([False] * 10, index=index)
+    short_entry = pd.Series([False, True, False, False, False, False, False, False, False, False], index=index)
+    short_exit = pd.Series([False, False, False, True, False, False, False, False, False, False], index=index)
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal=long_entry,
+        exit_signal=long_exit,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+        initial_capital=1000.0,
+        enable_counter_trades=True,
+        counter_tp_multiplier=1.5,
+    )
+
+    # Should have 2 trades: SHORT (loss) + LONG (counter-trade)
+    assert len(trades) == 2
+
+    # First trade: SHORT loss
+    assert trades[0]["direction"] == "SHORT"
+    assert trades[0]["entry_price"] == 100.0
+    assert trades[0]["exit_price"] == 110.0
+    assert trades[0]["exit_reason"] == "signal"
+    assert trades[0]["pnl"] < 0
+
+    # Second trade: LONG counter-trade
+    assert trades[1]["direction"] == "LONG"
+    assert trades[1]["entry_price"] == 115.0  # Enter at bar 5
+    assert trades[1]["exit_reason"] == "force_close"
+
+
+def test_counter_trade_no_trigger_on_profit():
+    """Counter-trade does NOT trigger when trade exits with profit."""
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 110, 110, 110, 110, 110, 110, 110],
+            "close": [100, 100, 100, 110, 110, 110, 110, 110, 110, 110],
+        },
+        index=index,
+    )
+    # LONG: Signal bar 1 → Enter bar 2 @ 100, Exit signal bar 3 → Exit bar 4 @ 110 (+10% profit)
+    long_entry = pd.Series([False, True, False, False, False, False, False, False, False, False], index=index)
+    long_exit = pd.Series([False, False, False, True, False, False, False, False, False, False], index=index)
+    short_entry = pd.Series([False] * 10, index=index)
+    short_exit = pd.Series([False] * 10, index=index)
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal=long_entry,
+        exit_signal=long_exit,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+        initial_capital=1000.0,
+        enable_counter_trades=True,
+        counter_tp_multiplier=1.5,
+    )
+
+    # Only 1 trade (profitable LONG), no counter-trade
+    assert len(trades) == 1
+    assert trades[0]["direction"] == "LONG"
+    assert trades[0]["pnl"] > 0
+
+
+def test_counter_trade_no_trigger_on_tp_exit():
+    """Counter-trade does NOT trigger when trade exits via take profit."""
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 105, 105, 105, 105, 105, 105, 105],
+            "close": [100, 100, 100, 105, 105, 105, 105, 105, 105, 105],
+            "high": [100, 100, 100, 106, 106, 106, 106, 106, 106, 106],
+            "low": [100, 100, 100, 105, 105, 105, 105, 105, 105, 105],
+        },
+        index=index,
+    )
+    # LONG: Signal bar 1 → Enter bar 2 @ 100
+    # Bar 3 high reaches 106, triggers TP at 105 (5%)
+    long_entry = pd.Series([False, True, False, False, False, False, False, False, False, False], index=index)
+    long_exit = pd.Series([False] * 10, index=index)
+    short_entry = pd.Series([False] * 10, index=index)
+    short_exit = pd.Series([False] * 10, index=index)
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal=long_entry,
+        exit_signal=long_exit,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+        initial_capital=1000.0,
+        take_profit_pct=5.0,  # TP at 5%
+        enable_counter_trades=True,
+        counter_tp_multiplier=1.5,
+    )
+
+    # Only 1 trade (TP exit), no counter-trade
+    assert len(trades) == 1
+    assert trades[0]["exit_reason"] == "take_profit"
+
+
+def test_counter_trade_with_leverage():
+    """Counter-trade works correctly with leverage."""
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 90, 90, 85, 85, 85, 85, 85],
+            "close": [100, 100, 100, 90, 90, 85, 85, 85, 85, 85],
+            "high": [100, 100, 100, 90, 90, 85, 85, 85, 85, 85],
+            "low": [100, 100, 100, 90, 90, 85, 85, 85, 85, 85],
+        },
+        index=index,
+    )
+    # LONG: Signal bar 1 → Enter bar 2 @ 100, Exit signal bar 3 → Exit bar 4 @ 90 (loss)
+    long_entry = pd.Series([False, True, False, False, False, False, False, False, False, False], index=index)
+    long_exit = pd.Series([False, False, False, True, False, False, False, False, False, False], index=index)
+    short_entry = pd.Series([False] * 10, index=index)
+    short_exit = pd.Series([False] * 10, index=index)
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal=long_entry,
+        exit_signal=long_exit,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+        initial_capital=1000.0,
+        leverage=5.0,
+        enable_counter_trades=True,
+        counter_tp_multiplier=1.5,
+    )
+
+    # Should have 2 trades both using leverage
+    assert len(trades) == 2
+    assert trades[0]["direction"] == "LONG"
+    assert trades[1]["direction"] == "SHORT"
+    # Both trades should have leveraged position sizes
+
+
+def test_counter_trade_disabled_by_default():
+    """Counter-trade does not trigger when enable_counter_trades=False (default)."""
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 90, 90, 90, 85, 85, 85, 85, 85],
+            "close": [100, 100, 90, 90, 90, 85, 85, 85, 85, 85],
+        },
+        index=index,
+    )
+    long_entry = pd.Series([False, True, False, False, False, False, False, False, False, False], index=index)
+    long_exit = pd.Series([False, False, False, True, False, False, False, False, False, False], index=index)
+    short_entry = pd.Series([False] * 10, index=index)
+    short_exit = pd.Series([False] * 10, index=index)
+
+    trades, equity = run_backtest(
+        df,
+        entry_signal=long_entry,
+        exit_signal=long_exit,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+        initial_capital=1000.0,
+        enable_counter_trades=False,  # Explicitly disabled
+    )
+
+    # Only 1 trade (no counter-trade)
+    assert len(trades) == 1
+    assert trades[0]["direction"] == "LONG"
 
 

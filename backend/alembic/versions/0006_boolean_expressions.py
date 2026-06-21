@@ -1,7 +1,7 @@
 """add boolean expression support to strategies
 
-Revision ID: 0006_boolean_expressions
-Revises: 0005_add_transaction_costs
+Revision ID: 0006_boolean_expr
+Revises: 0005_transaction_costs
 Create Date: 2026-03-13
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '0006_boolean_expressions'
-down_revision = '0005_add_transaction_costs'
+revision = '0006_boolean_expr'
+down_revision = '0005_transaction_costs'
 branch_labels = None
 depends_on = None
 
