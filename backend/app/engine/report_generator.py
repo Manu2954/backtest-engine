@@ -221,6 +221,9 @@ def generate_report(
     benchmark_equity: pd.Series | None = None,
     risk_free_rate: float = 0.0,
 ) -> dict[str, Any]:
+    if initial_capital <= 0:
+        raise ValueError(f"initial_capital must be positive, got {initial_capital}")
+
     equity = _to_series(equity_curve).dropna()
     equity = _ensure_datetime_index(equity)
 
