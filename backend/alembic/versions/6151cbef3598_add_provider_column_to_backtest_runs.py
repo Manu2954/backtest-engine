@@ -17,8 +17,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    pass
+    op.add_column(
+        'backtest_runs',
+        sa.Column('provider', sa.String(16), nullable=True)
+    )
 
 
 def downgrade() -> None:
-    pass
+    op.drop_column('backtest_runs', 'provider')
