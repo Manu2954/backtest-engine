@@ -1,86 +1,152 @@
 import { Link } from "react-router-dom";
+import {
+  BarChart3,
+  LineChart,
+  Plus,
+  TrendingUp,
+  Zap,
+  Shield,
+  Target,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+
+const features = [
+  {
+    icon: TrendingUp,
+    title: "Technical Indicators",
+    description:
+      "RSI, MACD, Bollinger Bands, ATR, and more. Build complex strategies with multiple indicators.",
+  },
+  {
+    icon: Target,
+    title: "Flexible Conditions",
+    description:
+      "Crossovers, comparisons, and boolean expressions. Define precise entry and exit rules.",
+  },
+  {
+    icon: LineChart,
+    title: "Realistic Simulation",
+    description:
+      "Commission, slippage, position sizing, and risk management. See true performance.",
+  },
+  {
+    icon: Shield,
+    title: "Risk Management",
+    description:
+      "Stop loss, take profit, and dynamic trailing stops. Protect your capital.",
+  },
+  {
+    icon: BarChart3,
+    title: "Performance Analytics",
+    description:
+      "Sharpe ratio, max drawdown, win rate, and more. Understand your strategy's edge.",
+  },
+  {
+    icon: Zap,
+    title: "Robustness Testing",
+    description:
+      "Parameter sensitivity, walk-forward validation, and regime analysis.",
+  },
+];
 
 export default function Dashboard() {
   return (
-    <div className="container fade-in">
-      <div className="card" style={{ background: "linear-gradient(135deg, var(--card) 0%, #f8f6f2 100%)" }}>
-        <h1 style={{ fontSize: "2.5rem", marginBottom: "16px" }}>Build, Test, Optimize</h1>
-        <p style={{ fontSize: "1.1rem", color: "var(--muted)", maxWidth: "600px" }}>
-          Create technical indicator-based trading strategies, backtest them against historical data,
-          and analyze comprehensive performance metrics—all in one place.
+    <div className="space-y-8">
+      {/* Hero Section */}
+      <div className="flex flex-col items-center text-center space-y-4 py-8">
+        <div className="inline-flex items-center rounded-full border px-3 py-1 text-sm">
+          <span className="text-primary">Professional Backtesting Platform</span>
+        </div>
+        <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+          Test Your Trading Strategies
+        </h1>
+        <p className="max-w-[600px] text-muted-foreground text-lg">
+          Build, backtest, and analyze trading strategies with realistic
+          simulation. Support for stocks and crypto with comprehensive
+          performance metrics.
         </p>
-        <div className="row" style={{ marginTop: "24px" }}>
-          <Link className="btn" to="/strategies/new">
-            Create Strategy
+        <div className="flex gap-4">
+          <Link to="/strategies/new">
+            <Button size="lg" className="gap-2">
+              <Plus className="h-4 w-4" />
+              Create Strategy
+            </Button>
           </Link>
-          <Link className="btn secondary" to="/strategies">
-            View Strategies
+          <Link to="/strategies">
+            <Button size="lg" variant="outline">
+              View Strategies
+            </Button>
           </Link>
         </div>
       </div>
 
-      <div className="grid grid-2">
-        <div className="card">
-          <h3 style={{ color: "var(--accent)" }}>✨ What You Can Do</h3>
-          <ul style={{ lineHeight: "1.8", color: "var(--muted)" }}>
-            <li><strong>11 Technical Indicators</strong> - RSI, MACD, EMA, SMA, Bollinger Bands, ATR, ADX, Ichimoku, and more</li>
-            <li><strong>Advanced Operators</strong> - Crossovers, trend detection (IS_RISING/IS_FALLING), lookback comparisons</li>
-            <li><strong>Risk Management</strong> - Stop loss, take profit, risk-based position sizing, dynamic stops</li>
-            <li><strong>Multiple Asset Classes</strong> - Test on stocks (via Yahoo Finance) or crypto (via Binance)</li>
-            <li><strong>Realistic Simulation</strong> - Commission, slippage, and periodic contributions</li>
-          </ul>
-        </div>
+      {/* Features Grid */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {features.map((feature) => {
+          const Icon = feature.icon;
+          return (
+            <Card key={feature.title}>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <div className="rounded-lg bg-primary/10 p-2">
+                    <Icon className="h-5 w-5 text-primary" />
+                  </div>
+                  <CardTitle className="text-lg">{feature.title}</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <CardDescription>{feature.description}</CardDescription>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
 
-        <div className="card">
-          <h3 style={{ color: "var(--accent)" }}>📊 Get Started</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            <Link
-              className="btn secondary"
-              to="/strategies/new"
-              style={{ textAlign: "left", padding: "16px" }}
-            >
-              <div style={{ fontWeight: 600, marginBottom: "4px" }}>1. Strategy Builder</div>
-              <div style={{ fontSize: "0.9rem", opacity: 0.8 }}>
-                Define indicators and entry/exit conditions
-              </div>
-            </Link>
-            <Link
-              className="btn secondary"
-              to="/backtests"
-              style={{ textAlign: "left", padding: "16px" }}
-            >
-              <div style={{ fontWeight: 600, marginBottom: "4px" }}>2. Run Backtests</div>
-              <div style={{ fontSize: "0.9rem", opacity: 0.8 }}>
-                Test strategies on historical data
-              </div>
-            </Link>
-            <div className="btn secondary" style={{ textAlign: "left", padding: "16px", cursor: "default" }}>
-              <div style={{ fontWeight: 600, marginBottom: "4px" }}>3. Analyze Results</div>
-              <div style={{ fontSize: "0.9rem", opacity: 0.8 }}>
-                Review metrics, equity curves, and trade logs
-              </div>
+      {/* Quick Actions */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Quick Start</CardTitle>
+          <CardDescription>
+            Get started with a new strategy or view your existing work
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-3">
+          <Link to="/strategies/new" className="block">
+            <div className="rounded-lg border p-4 hover:bg-accent transition-colors">
+              <Plus className="h-8 w-8 text-primary mb-2" />
+              <h3 className="font-medium">New Strategy</h3>
+              <p className="text-sm text-muted-foreground">
+                Create a new trading strategy
+              </p>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="card" style={{ background: "#fff6e8", border: "1px solid #f2e2c6" }}>
-        <h3 style={{ color: "var(--accent-2)", marginBottom: "12px" }}>💡 Pro Tips</h3>
-        <div className="grid grid-2" style={{ gap: "12px" }}>
-          <div>
-            <strong>Start Simple</strong> - Begin with 1-2 indicators and basic conditions, then add complexity.
-          </div>
-          <div>
-            <strong>Test Realistically</strong> - Always include commission and slippage for accurate results.
-          </div>
-          <div>
-            <strong>Compare Benchmarks</strong> - Check if your strategy beats buy-and-hold returns.
-          </div>
-          <div>
-            <strong>Use LOOKBACK</strong> - Detect trends by comparing current values to historical ones (e.g., "adx:-3").
-          </div>
-        </div>
-      </div>
+          </Link>
+          <Link to="/strategies" className="block">
+            <div className="rounded-lg border p-4 hover:bg-accent transition-colors">
+              <TrendingUp className="h-8 w-8 text-primary mb-2" />
+              <h3 className="font-medium">My Strategies</h3>
+              <p className="text-sm text-muted-foreground">
+                View and manage strategies
+              </p>
+            </div>
+          </Link>
+          <Link to="/backtests" className="block">
+            <div className="rounded-lg border p-4 hover:bg-accent transition-colors">
+              <BarChart3 className="h-8 w-8 text-primary mb-2" />
+              <h3 className="font-medium">Backtest Results</h3>
+              <p className="text-sm text-muted-foreground">
+                View backtest history
+              </p>
+            </div>
+          </Link>
+        </CardContent>
+      </Card>
     </div>
   );
 }
