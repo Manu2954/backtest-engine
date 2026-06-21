@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pandas_ta as ta
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
 
@@ -34,6 +38,62 @@ def _pick_first_col(frame: pd.DataFrame, prefix: str) -> pd.Series:
     return frame[matches[0]]
 
 
+def _validate_period(period: int, indicator_name: str) -> None:
+    """Validate that period is positive."""
+    if period <= 0:
+        raise ValueError(f"{indicator_name}: period must be positive, got {period}")
+
+
+def _validate_std_dev(std_dev: float, indicator_name: str) -> None:
+    """Validate that standard deviation is positive."""
+    if std_dev <= 0:
+        raise ValueError(f"{indicator_name}: std_dev must be positive, got {std_dev}")
+
+
+def _validate_macd_periods(fast: int, slow: int) -> None:
+    """Validate MACD periods relationship."""
+    if fast >= slow:
+        raise ValueError(f"MACD: fast_period ({fast}) must be less than slow_period ({slow})")
+
+
+def _validate_multiplier(multiplier: float, indicator_name: str) -> None:
+    """Validate that multiplier is positive."""
+    if multiplier <= 0:
+        raise ValueError(f"{indicator_name}: multiplier must be positive, got {multiplier}")
+
+
+def _validate_input_data(df: pd.DataFrame) -> None:
+    """Validate input DataFrame for common data quality issues."""
+    ohlcv_cols = ["open", "high", "low", "close", "volume"]
+
+    for col in ohlcv_cols:
+        if col not in df.columns:
+            continue
+
+        # Check for inf values (critical - raise error)
+        if np.isinf(df[col]).any():
+            raise ValueError(f"Column '{col}' contains inf values - data is corrupted")
+
+        # Check for NaN values (warning only - may be expected at edges)
+        nan_count = df[col].isna().sum()
+        if nan_count > 0:
+            nan_pct = nan_count / len(df) * 100
+            logger.warning(
+                "Column '%s' has %d NaN values (%.1f%%) - may affect indicator accuracy",
+                col, nan_count, nan_pct
+            )
+
+    # Check for negative prices (critical for OHLC)
+    price_cols = ["open", "high", "low", "close"]
+    for col in price_cols:
+        if col in df.columns and (df[col] < 0).any():
+            raise ValueError(f"Column '{col}' contains negative values - invalid price data")
+
+    # Check for negative volume (warning - some data sources use -1 for missing)
+    if "volume" in df.columns and (df["volume"] < 0).any():
+        logger.warning("Column 'volume' contains negative values - may indicate missing data")
+
+
 def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd.DataFrame:
     """
     Compute indicators using pandas-ta and append them to the DataFrame.
@@ -50,6 +110,9 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
 
     df_out = df.copy()
     _ensure_ohlcv(df_out)
+
+    # Validate input data quality
+    _validate_input_data(df_out)
 
     # Track all indicator column names for warmup detection
     indicator_columns = []
@@ -77,16 +140,19 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
 
         if kind == "RSI":
             period = int(_require_param(params, "period"))
+            _validate_period(period, "RSI")
             series = _get_series(df_out, source)
             df_out[alias] = ta.rsi(series, length=period)
             indicator_columns.append(alias)
         elif kind == "EMA":
             period = int(_require_param(params, "period"))
+            _validate_period(period, "EMA")
             series = _get_series(df_out, source)
             df_out[alias] = ta.ema(series, length=period)
             indicator_columns.append(alias)
         elif kind == "SMA":
             period = int(_require_param(params, "period"))
+            _validate_period(period, "SMA")
             series = _get_series(df_out, source)
             df_out[alias] = ta.sma(series, length=period)
             indicator_columns.append(alias)
@@ -94,6 +160,10 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             fast = int(_require_param(params, "fast"))
             slow = int(_require_param(params, "slow"))
             signal = int(_require_param(params, "signal"))
+            _validate_period(fast, "MACD fast")
+            _validate_period(slow, "MACD slow")
+            _validate_period(signal, "MACD signal")
+            _validate_macd_periods(fast, slow)
             series = _get_series(df_out, source)
             macd_df = ta.macd(series, fast=fast, slow=slow, signal=signal)
             if macd_df is None or macd_df.empty:
@@ -105,6 +175,8 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
         elif kind in {"BB", "BBANDS", "BOLLINGER"}:
             length = int(_require_param(params, "period"))
             std = float(_require_param(params, "std_dev"))
+            _validate_period(length, "Bollinger Bands")
+            _validate_std_dev(std, "Bollinger Bands")
             series = _get_series(df_out, source)
             bb_df = ta.bbands(series, length=length, std=std)
             if bb_df is None or bb_df.empty:
@@ -115,6 +187,7 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             indicator_columns.extend([f"{alias}_upper", f"{alias}_mid", f"{alias}_lower"])
         elif kind == "ATR":
             period = int(_require_param(params, "period"))
+            _validate_period(period, "ATR")
             df_out[alias] = ta.atr(
                 df_out["high"],
                 df_out["low"],
@@ -125,6 +198,8 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
         elif kind in {"STOCH", "STOCHASTIC"}:
             k_period = int(_require_param(params, "k_period"))
             d_period = int(_require_param(params, "d_period"))
+            _validate_period(k_period, "Stochastic k")
+            _validate_period(d_period, "Stochastic d")
             stoch_df = ta.stoch(
                 df_out["high"],
                 df_out["low"],
@@ -139,6 +214,7 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             indicator_columns.extend([f"{alias}_k", f"{alias}_d"])
         elif kind == "ADX":
             period = int(_require_param(params, "period"))
+            _validate_period(period, "ADX")
             adx_df = ta.adx(
                 df_out["high"],
                 df_out["low"],
@@ -157,6 +233,9 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             tenkan = int(params.get("tenkan", 9))
             kijun = int(params.get("kijun", 26))
             senkou = int(params.get("senkou", 52))
+            _validate_period(tenkan, "Ichimoku tenkan")
+            _validate_period(kijun, "Ichimoku kijun")
+            _validate_period(senkou, "Ichimoku senkou")
 
             ichimoku_result = ta.ichimoku(
                 df_out["high"],
@@ -247,6 +326,8 @@ def compute_indicators(df: pd.DataFrame, indicators: list[dict[str, Any]]) -> pd
             # Supertrend: trend-following indicator using ATR
             period = int(_require_param(params, "period"))
             multiplier = float(_require_param(params, "multiplier"))
+            _validate_period(period, "Supertrend")
+            _validate_multiplier(multiplier, "Supertrend")
             supertrend_df = ta.supertrend(
                 df_out["high"],
                 df_out["low"],
@@ -312,7 +393,7 @@ def get_warmup_period(df: pd.DataFrame) -> int:
     # First True value is the first valid bar
     first_valid_idx = valid_rows.idxmax()
     warmup_bars = df.index.get_loc(first_valid_idx)
-    print(f"warm up period {warmup_bars}")
+    logger.debug("Warmup period: %d bars", warmup_bars)
     return warmup_bars
 
 

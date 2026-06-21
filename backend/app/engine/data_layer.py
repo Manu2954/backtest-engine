@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
+import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import httpx
 import msgpack
@@ -18,6 +21,95 @@ from app.core.config import settings
 from app.models.ohlcv import OhlcvBar
 
 logger = logging.getLogger(__name__)
+
+# Type variable for retry decorator
+T = TypeVar("T")
+
+# Transient errors that should trigger retry
+TRANSIENT_ERRORS = (ConnectionError, TimeoutError, httpx.RequestError)
+
+
+def retry_with_backoff(
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    transient_errors: tuple = TRANSIENT_ERRORS,
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """
+    Decorator for retrying functions with exponential backoff.
+
+    Args:
+        max_retries: Maximum number of retry attempts (default: 3)
+        base_delay: Base delay in seconds (default: 1.0). Delays are 1s, 2s, 4s.
+        transient_errors: Tuple of exception types to catch and retry
+
+    Returns:
+        Decorated function with retry logic
+    """
+
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> T:
+            last_exception: Exception | None = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except transient_errors as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        delay = base_delay * (2**attempt)
+                        logger.warning(
+                            "Retry %d/%d for %s after %s: %s",
+                            attempt + 1,
+                            max_retries,
+                            func.__name__,
+                            type(e).__name__,
+                            str(e),
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.error(
+                            "All %d retries exhausted for %s: %s",
+                            max_retries,
+                            func.__name__,
+                            str(e),
+                        )
+            raise last_exception  # type: ignore[misc]
+
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> T:
+            last_exception: Exception | None = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except transient_errors as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        delay = base_delay * (2**attempt)
+                        logger.warning(
+                            "Retry %d/%d for %s after %s: %s",
+                            attempt + 1,
+                            max_retries,
+                            func.__name__,
+                            type(e).__name__,
+                            str(e),
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(
+                            "All %d retries exhausted for %s: %s",
+                            max_retries,
+                            func.__name__,
+                            str(e),
+                        )
+            raise last_exception  # type: ignore[misc]
+
+        # Return appropriate wrapper based on function type
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper  # type: ignore[return-value]
+        return sync_wrapper  # type: ignore[return-value]
+
+    return decorator
+
 
 # Constants for cache invalidation
 RECENT_DATA_DAYS = 30  # Days considered "recent" where splits/dividends are more impactful
@@ -173,6 +265,7 @@ def _binance_symbol(ticker: str) -> str:
     return symbol
 
 
+@retry_with_backoff(max_retries=3, base_delay=1.0)
 def _fetch_binance_ohlcv(
     symbol: str, start: date, end: date, resolution: str
 ) -> pd.DataFrame:

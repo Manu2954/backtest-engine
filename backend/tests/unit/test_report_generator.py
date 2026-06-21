@@ -123,3 +123,88 @@ def test_no_trades_avg_win_loss() -> None:
     assert report["avg_win_loss"] == 0.0
     assert report["avg_win"] == 0.0
     assert report["avg_loss"] == 0.0
+
+
+def test_sortino_ratio_with_downside_volatility() -> None:
+    """
+    Test Sortino ratio calculation with both positive and negative returns.
+
+    Sortino ratio should only penalize downside volatility, unlike Sharpe
+    which penalizes all volatility equally.
+    """
+    # Create an equity curve with both up and down days
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
+    # Equity: 100 -> 102 -> 101 -> 103 -> 100 -> 105 -> 104 -> 108 -> 106 -> 110
+    # This creates a mix of positive and negative daily returns
+    equity = pd.Series([100, 102, 101, 103, 100, 105, 104, 108, 106, 110], index=index)
+    trade_log = []
+
+    report = generate_report(trade_log, equity, initial_capital=100.0)
+
+    # Sortino ratio should be calculated (we have negative returns)
+    assert report["sortino_ratio"] is not None
+    assert isinstance(report["sortino_ratio"], float)
+    # Should be a reasonable annualized value (positive given overall upward trend)
+    assert report["sortino_ratio"] > 0
+
+
+def test_sortino_ratio_no_negative_returns() -> None:
+    """
+    Test Sortino ratio when there are no negative daily returns.
+
+    When a strategy never has a down day, downside deviation is zero,
+    and Sortino should be None (undefined).
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    # Monotonically increasing equity - no negative returns
+    equity = pd.Series([100, 105, 110, 115, 120], index=index)
+    trade_log = []
+
+    report = generate_report(trade_log, equity, initial_capital=100.0)
+
+    # No negative returns means sortino is undefined
+    assert report["sortino_ratio"] is None
+
+
+def test_sortino_ratio_empty_equity() -> None:
+    """
+    Test Sortino ratio with empty equity curve.
+    """
+    equity = pd.Series([], dtype=float)
+    report = generate_report([], equity, initial_capital=100.0)
+
+    # Empty equity means no returns to calculate
+    assert report["sortino_ratio"] is None
+
+
+def test_sortino_vs_sharpe_relationship() -> None:
+    """
+    Test that Sortino >= Sharpe when there is downside volatility.
+
+    Sortino should typically be higher than Sharpe because it doesn't
+    penalize upside volatility.
+    """
+    index = pd.date_range("2020-01-01", periods=20, freq="D")
+    # Asymmetric returns: big gains, small losses
+    # This should result in Sortino > Sharpe
+    equity_values = [100]
+    for i in range(19):
+        if i % 3 == 0:
+            # Small loss
+            equity_values.append(equity_values[-1] * 0.99)
+        else:
+            # Bigger gain
+            equity_values.append(equity_values[-1] * 1.03)
+
+    equity = pd.Series(equity_values, index=index)
+    trade_log = []
+
+    report = generate_report(trade_log, equity, initial_capital=100.0)
+
+    # Both should be calculable
+    assert report["sharpe_ratio"] != 0.0
+    assert report["sortino_ratio"] is not None
+
+    # Sortino should be >= Sharpe for asymmetric positive returns
+    # (upside vol doesn't penalize Sortino)
+    assert report["sortino_ratio"] >= report["sharpe_ratio"]
