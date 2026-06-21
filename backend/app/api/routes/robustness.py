@@ -3,7 +3,9 @@ API routes for robustness analysis.
 """
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 
 from app.api.schemas.robustness import (
@@ -13,6 +15,7 @@ from app.api.schemas.robustness import (
     RegimeDetectionCreate,
     FeatureConditioningCreate,
 )
+from app.core.config import settings
 from app.core.database import get_session
 from app.models.robustness import RobustnessAnalysis
 from app.tasks.robustness_task import (
@@ -22,12 +25,17 @@ from app.tasks.robustness_task import (
     run_feature_conditioning,
 )
 
+# Initialize limiter for expensive endpoints
+limiter = Limiter(key_func=get_remote_address)
+
 router = APIRouter(prefix="/robustness", tags=["robustness"])
 
 
 @router.post("/parameter-sensitivity", response_model=RobustnessAnalysisOut, summary="Run parameter sensitivity analysis")
+@limiter.limit(f"{settings.rate_limit_expensive_per_minute}/minute")
 async def create_parameter_sensitivity_analysis(
-    request: ParameterSensitivityCreate,
+    request: Request,
+    data: ParameterSensitivityCreate,
 ):
     """
     Run parameter sensitivity analysis on a strategy.
@@ -48,25 +56,25 @@ async def create_parameter_sensitivity_analysis(
     """
     # Build backtest params dict
     backtest_params = {
-        "ticker": request.ticker,
-        "asset_class": request.asset_class,
-        "start_date": request.start_date,
-        "end_date": request.end_date,
-        "bar_resolution": request.bar_resolution,
-        "initial_capital": request.initial_capital,
-        "position_size_type": request.position_size_type,
-        "position_size_value": request.position_size_value,
-        "stop_loss_pct": request.stop_loss_pct,
-        "take_profit_pct": request.take_profit_pct,
-        "commission_per_trade": request.commission_per_trade,
-        "commission_pct": request.commission_pct,
-        "slippage_pct": request.slippage_pct,
-        "enable_attribution": request.enable_attribution,
+        "ticker": data.ticker,
+        "asset_class": data.asset_class,
+        "start_date": data.start_date,
+        "end_date": data.end_date,
+        "bar_resolution": data.bar_resolution,
+        "initial_capital": data.initial_capital,
+        "position_size_type": data.position_size_type,
+        "position_size_value": data.position_size_value,
+        "stop_loss_pct": data.stop_loss_pct,
+        "take_profit_pct": data.take_profit_pct,
+        "commission_per_trade": data.commission_per_trade,
+        "commission_pct": data.commission_pct,
+        "slippage_pct": data.slippage_pct,
+        "enable_attribution": data.enable_attribution,
     }
 
     # Submit Celery task (runs in background)
     run_parameter_sensitivity_analysis.apply_async(
-        args=[str(request.strategy_id), backtest_params, request.variation_pct]
+        args=[str(data.strategy_id), backtest_params, data.variation_pct]
     )
 
     # Poll database briefly for analysis record (created at start of task)
@@ -74,7 +82,7 @@ async def create_parameter_sensitivity_analysis(
     for _ in range(30):  # Try for up to 6 seconds
         async for session in get_session():
             stmt = select(RobustnessAnalysis).where(
-                RobustnessAnalysis.strategy_id == request.strategy_id
+                RobustnessAnalysis.strategy_id == data.strategy_id
             ).order_by(RobustnessAnalysis.created_at.desc()).limit(1)
             result = await session.execute(stmt)
             analysis = result.scalar_one_or_none()
@@ -136,8 +144,10 @@ async def delete_robustness_analysis(analysis_id: UUID):
 
 
 @router.post("/walk-forward", response_model=RobustnessAnalysisOut, summary="Run walk-forward validation")
+@limiter.limit(f"{settings.rate_limit_expensive_per_minute}/minute")
 async def create_walk_forward_validation(
-    request: WalkForwardCreate,
+    request: Request,
+    data: WalkForwardCreate,
 ):
     """
     Run walk-forward validation on a strategy.
@@ -163,24 +173,24 @@ async def create_walk_forward_validation(
     """
     # Build backtest params dict
     backtest_params = {
-        "ticker": request.ticker,
-        "asset_class": request.asset_class,
-        "start_date": request.start_date,
-        "end_date": request.end_date,
-        "bar_resolution": request.bar_resolution,
-        "initial_capital": request.initial_capital,
-        "position_size_type": request.position_size_type,
-        "position_size_value": request.position_size_value,
-        "stop_loss_pct": request.stop_loss_pct,
-        "take_profit_pct": request.take_profit_pct,
-        "commission_per_trade": request.commission_per_trade,
-        "commission_pct": request.commission_pct,
-        "slippage_pct": request.slippage_pct,
+        "ticker": data.ticker,
+        "asset_class": data.asset_class,
+        "start_date": data.start_date,
+        "end_date": data.end_date,
+        "bar_resolution": data.bar_resolution,
+        "initial_capital": data.initial_capital,
+        "position_size_type": data.position_size_type,
+        "position_size_value": data.position_size_value,
+        "stop_loss_pct": data.stop_loss_pct,
+        "take_profit_pct": data.take_profit_pct,
+        "commission_per_trade": data.commission_per_trade,
+        "commission_pct": data.commission_pct,
+        "slippage_pct": data.slippage_pct,
     }
 
     # Submit Celery task
     run_walk_forward_validation.apply_async(
-        args=[str(request.strategy_id), backtest_params, request.window_count]
+        args=[str(data.strategy_id), backtest_params, data.window_count]
     )
 
     # Poll database briefly for analysis record
@@ -188,7 +198,7 @@ async def create_walk_forward_validation(
     for _ in range(30):
         async for session in get_session():
             stmt = select(RobustnessAnalysis).where(
-                RobustnessAnalysis.strategy_id == request.strategy_id,
+                RobustnessAnalysis.strategy_id == data.strategy_id,
                 RobustnessAnalysis.analysis_type == "WALK_FORWARD",
             ).order_by(RobustnessAnalysis.created_at.desc()).limit(1)
             result = await session.execute(stmt)
@@ -206,8 +216,10 @@ async def create_walk_forward_validation(
 
 
 @router.post("/regime-detection", response_model=RobustnessAnalysisOut, summary="Run regime detection analysis")
+@limiter.limit(f"{settings.rate_limit_expensive_per_minute}/minute")
 async def create_regime_detection(
-    request: RegimeDetectionCreate,
+    request: Request,
+    data: RegimeDetectionCreate,
 ):
     """
     Run regime detection analysis on a strategy.
@@ -246,31 +258,31 @@ async def create_regime_detection(
     """
     # Build backtest params dict
     backtest_params = {
-        "ticker": request.ticker,
-        "asset_class": request.asset_class,
-        "start_date": request.start_date,
-        "end_date": request.end_date,
-        "bar_resolution": request.bar_resolution,
-        "initial_capital": request.initial_capital,
-        "position_size_type": request.position_size_type,
-        "position_size_value": request.position_size_value,
-        "stop_loss_pct": request.stop_loss_pct,
-        "take_profit_pct": request.take_profit_pct,
-        "commission_per_trade": request.commission_per_trade,
-        "commission_pct": request.commission_pct,
-        "slippage_pct": request.slippage_pct,
+        "ticker": data.ticker,
+        "asset_class": data.asset_class,
+        "start_date": data.start_date,
+        "end_date": data.end_date,
+        "bar_resolution": data.bar_resolution,
+        "initial_capital": data.initial_capital,
+        "position_size_type": data.position_size_type,
+        "position_size_value": data.position_size_value,
+        "stop_loss_pct": data.stop_loss_pct,
+        "take_profit_pct": data.take_profit_pct,
+        "commission_per_trade": data.commission_per_trade,
+        "commission_pct": data.commission_pct,
+        "slippage_pct": data.slippage_pct,
     }
 
     # Submit Celery task
     run_regime_detection.apply_async(
         args=[
-            str(request.strategy_id),
+            str(data.strategy_id),
             backtest_params,
-            request.segmentation_strategy,
-            request.k,
-            request.penalty,
-            request.min_segment_length,
-            request.vol_window,
+            data.segmentation_strategy,
+            data.k,
+            data.penalty,
+            data.min_segment_length,
+            data.vol_window,
         ]
     )
 
@@ -279,7 +291,7 @@ async def create_regime_detection(
     for _ in range(30):
         async for session in get_session():
             stmt = select(RobustnessAnalysis).where(
-                RobustnessAnalysis.strategy_id == request.strategy_id,
+                RobustnessAnalysis.strategy_id == data.strategy_id,
                 RobustnessAnalysis.analysis_type == "REGIME_DETECTION",
             ).order_by(RobustnessAnalysis.created_at.desc()).limit(1)
             result = await session.execute(stmt)
@@ -298,8 +310,10 @@ async def create_regime_detection(
 
 
 @router.post("/feature-conditioning", response_model=RobustnessAnalysisOut, summary="Run feature-based conditional analysis")
+@limiter.limit(f"{settings.rate_limit_expensive_per_minute}/minute")
 async def create_feature_conditioning(
-    request: FeatureConditioningCreate,
+    request: Request,
+    data: FeatureConditioningCreate,
 ):
     """
     Run feature-based conditional analysis on a strategy.
@@ -340,28 +354,28 @@ async def create_feature_conditioning(
     """
     # Build backtest params dict
     backtest_params = {
-        "ticker": request.ticker,
-        "asset_class": request.asset_class,
-        "start_date": request.start_date,
-        "end_date": request.end_date,
-        "bar_resolution": request.bar_resolution,
-        "initial_capital": request.initial_capital,
-        "position_size_type": request.position_size_type,
-        "position_size_value": request.position_size_value,
-        "stop_loss_pct": request.stop_loss_pct,
-        "take_profit_pct": request.take_profit_pct,
-        "commission_per_trade": request.commission_per_trade,
-        "commission_pct": request.commission_pct,
-        "slippage_pct": request.slippage_pct,
+        "ticker": data.ticker,
+        "asset_class": data.asset_class,
+        "start_date": data.start_date,
+        "end_date": data.end_date,
+        "bar_resolution": data.bar_resolution,
+        "initial_capital": data.initial_capital,
+        "position_size_type": data.position_size_type,
+        "position_size_value": data.position_size_value,
+        "stop_loss_pct": data.stop_loss_pct,
+        "take_profit_pct": data.take_profit_pct,
+        "commission_per_trade": data.commission_per_trade,
+        "commission_pct": data.commission_pct,
+        "slippage_pct": data.slippage_pct,
     }
 
     # Submit Celery task
     run_feature_conditioning.apply_async(
         args=[
-            str(request.strategy_id),
+            str(data.strategy_id),
             backtest_params,
-            request.lookback_window,
-            request.min_trades_per_bin,
+            data.lookback_window,
+            data.min_trades_per_bin,
         ]
     )
 
@@ -370,7 +384,7 @@ async def create_feature_conditioning(
     for _ in range(30):
         async for session in get_session():
             stmt = select(RobustnessAnalysis).where(
-                RobustnessAnalysis.strategy_id == request.strategy_id,
+                RobustnessAnalysis.strategy_id == data.strategy_id,
                 RobustnessAnalysis.analysis_type == "FEATURE_CONDITIONING",
             ).order_by(RobustnessAnalysis.created_at.desc()).limit(1)
             result = await session.execute(stmt)
@@ -385,4 +399,3 @@ async def create_feature_conditioning(
         status_code=500,
         detail="Analysis record not created in time"
     )
-
