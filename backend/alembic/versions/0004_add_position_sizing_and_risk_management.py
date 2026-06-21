@@ -1,6 +1,6 @@
 """add position sizing and risk management
 
-Revision ID: 0004_add_position_sizing_and_risk_management
+Revision ID: 0004_position_sizing
 Revises: 0003_add_periodic_contribution
 Create Date: 2026-03-05
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "0004_add_position_sizing_and_risk_management"
+revision = "0004_position_sizing"
 down_revision = "0003_add_periodic_contribution"
 branch_labels = None
 depends_on = None

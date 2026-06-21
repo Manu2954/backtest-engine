@@ -1,7 +1,7 @@
 """add transaction costs
 
-Revision ID: 0005_add_transaction_costs
-Revises: 0004_add_position_sizing_and_risk_management
+Revision ID: 0005_transaction_costs
+Revises: 0004_position_sizing
 Create Date: 2026-03-06
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "0005_add_transaction_costs"
-down_revision = "0004_add_position_sizing_and_risk_management"
+revision = "0005_transaction_costs"
+down_revision = "0004_position_sizing"
 branch_labels = None
 depends_on = None
 

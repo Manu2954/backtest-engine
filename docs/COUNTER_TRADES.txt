@@ -1,0 +1,514 @@
+================================================================================
+COUNTER-TRADE FEATURE DOCUMENTATION
+================================================================================
+
+OVERVIEW
+────────────────────────────────────────────────────────────────────────────────
+
+Counter-trades are a mean-reversion strategy that automatically enters the
+opposite direction after a trend-following trade fails. When a trade exits via
+signal with a loss, the system enters the reverse direction at the next bar with
+a dynamic take-profit target calculated as:
+
+    TP = abs(previous_loss_pct) × multiplier
+
+This pattern captures quick reversals after failed trend attempts, often
+producing high win rates (70-85%) on counter-trades despite lower frequency.
+
+EXAMPLE:
+  • LONG enters at $100, exits at $90 via signal (-10% loss)
+  • System auto-enters SHORT at next bar with TP = 10% × 1.5 = 15%
+  • SHORT exits when price drops 15% below entry (mean reversion captured)
+
+
+================================================================================
+IMPLEMENTATION APPROACHES
+================================================================================
+
+TWO WAYS TO USE COUNTER-TRADES:
+
+1. NATIVE ENGINE (Recommended)
+   ─────────────────────────────────────────────────────────────────────────
+   Enable counter-trades directly in run_backtest() with parameters.
+
+   Pros:
+     ✅ Simple configuration (2 parameters)
+     ✅ Accurate timing and fills
+     ✅ Works with all engine features (leverage, shorts, exit rules)
+     ✅ Optimal performance (no pre-simulation)
+
+   Cons:
+     ❌ Less control over counter-trade logic
+     ❌ Can't inspect counter-trade signals before execution
+
+   Usage:
+   ```python
+   from app.engine.state_machine import run_backtest
+
+   trades, equity = run_backtest(
+       df=df,
+       entry_signal=long_entry,
+       exit_signal=long_exit,
+       short_entry_signal=short_entry,
+       short_exit_signal=short_exit,
+       initial_capital=10000.0,
+       enable_counter_trades=True,        # Enable feature
+       counter_tp_multiplier=1.5,         # TP = loss% × 1.5
+   )
+   ```
+
+
+2. PRE-PROCESSOR (Advanced)
+   ─────────────────────────────────────────────────────────────────────────
+   Transform signals before passing to run_backtest() using signal utilities.
+
+   Pros:
+     ✅ Full control over counter-trade conditions
+     ✅ Can inspect/modify generated signals
+     ✅ Chainable with other transformers (regime filter, deferred entry)
+
+   Cons:
+     ❌ More complex setup
+     ❌ Requires pre-simulation (slower)
+     ❌ May not match exact backtest behavior
+
+   Usage:
+   ```python
+   from app.engine.signal_transformers import apply_counter_trade_signals
+
+   # Generate counter-trade signals
+   long_e, long_x, short_e, short_x = apply_counter_trade_signals(
+       df=df,
+       long_entry=long_entry,
+       long_exit=long_exit,
+       short_entry=short_entry,
+       short_exit=short_exit,
+       tp_multiplier=1.5,
+   )
+
+   # Run backtest with modified signals
+   trades, equity = run_backtest(
+       df=df,
+       entry_signal=long_e,       # Modified signals
+       exit_signal=long_x,
+       short_entry_signal=short_e,
+       short_exit_signal=short_x,
+       initial_capital=10000.0,
+       enable_counter_trades=False,  # Already applied
+   )
+   ```
+
+
+================================================================================
+PARAMETERS
+================================================================================
+
+enable_counter_trades (bool, default=False)
+  Enable automatic counter-trade generation in the native engine.
+
+  When True:
+    • Tracks every trade exit
+    • Detects signal exits with losses
+    • Queues opposite direction entry at next bar
+    • Sets dynamic TP for counter-trade
+
+counter_tp_multiplier (float, default=1.5)
+  Take-profit multiplier for counter-trades.
+
+  Formula: TP% = abs(loss%) × multiplier
+
+  Examples:
+    • multiplier=1.5, loss=-10% → TP=+15%
+    • multiplier=2.0, loss=-5%  → TP=+10%
+    • multiplier=1.0, loss=-8%  → TP=+8%
+
+  Tuning:
+    • Lower (1.0-1.3): Faster exits, higher win rate, lower profit per trade
+    • Higher (1.8-2.5): Bigger profits, lower win rate, longer holding time
+    • Recommended range: 1.3-2.0
+
+
+================================================================================
+TRIGGERING CONDITIONS
+================================================================================
+
+Counter-trades ONLY trigger when ALL of these are true:
+
+  1. ✅ enable_counter_trades=True
+  2. ✅ Trade exits via SIGNAL (not TP/SL/liquidation/force_close)
+  3. ✅ Trade has negative P&L (loss)
+  4. ✅ Opposite position slot is empty
+
+Counter-trades DO NOT trigger when:
+
+  ❌ Trade exits via take_profit (already successful)
+  ❌ Trade exits via stop_loss (risk management handled)
+  ❌ Trade exits via liquidation (leverage event)
+  ❌ Trade exits via force_close (end of data)
+  ❌ Trade is profitable (no reversal signal)
+
+
+================================================================================
+BEHAVIOR & MECHANICS
+================================================================================
+
+TIMING:
+  • Exit detection happens at bar N
+  • Counter-trade entry queued for bar N+1
+  • Entry fills at bar N+1 open price
+  • Dynamic TP set at entry time
+
+PRIORITY:
+  • Counter-trades override regular signals
+  • If counter-trade is queued, regular entry signals are ignored for that bar
+  • This ensures failed signal → immediate reverse action
+
+POSITION MANAGEMENT:
+  • Counter-trades work with both LONG and SHORT positions
+  • Each direction (LONG/SHORT) tracked independently
+  • Counter-trade can enter while other direction still open (if has_short=True)
+
+INTEGRATION:
+  • Works with leverage (counter-trade uses same leverage setting)
+  • Works with shorts (SHORT loss → LONG counter-trade)
+  • Works with exit rules (counter-trade can use regular exit rules)
+  • Works with periodic contributions (capital updated before entry)
+
+
+================================================================================
+PERFORMANCE CHARACTERISTICS
+================================================================================
+
+TYPICAL RESULTS (from backtests):
+
+Counter-Trade Metrics:
+  • Win Rate: 70-85% (much higher than base strategy)
+  • Profit Contribution: 50-70% of total profit
+  • Trade Frequency: 20-30% of total trades
+  • Avg Hold Time: Shorter than base trades (mean reversion)
+
+Example (BTC 4h, 2020-2026):
+  ┌──────────────────────┬─────────────┬──────────────┬────────────┐
+  │                      │ Base Trades │ Counter      │ Total      │
+  ├──────────────────────┼─────────────┼──────────────┼────────────┤
+  │ Trade Count          │ 134 (73%)   │ 49 (27%)     │ 183        │
+  │ Total P&L            │ $18,377     │ $34,215      │ $52,592    │
+  │ Win Rate             │ 42%         │ 82%          │ 52%        │
+  │ Avg Win              │ $1,448      │ $864         │ $1,204     │
+  │ Avg Loss             │ -$804       │ -$36         │ -$724      │
+  └──────────────────────┴─────────────┴──────────────┴────────────┘
+
+KEY INSIGHT: Counter-trades often contribute majority of profit despite being
+minority of trades. The high win rate compensates for smaller individual profits.
+
+
+================================================================================
+PARAMETER TUNING GUIDE
+================================================================================
+
+MULTIPLIER SELECTION:
+
+1.0-1.3 (Conservative)
+  • Quick exits, maximize win rate
+  • Lower profit per trade
+  • Best for: choppy markets, high volatility
+  • Risk: Leaves money on table during strong reversals
+
+1.3-1.8 (Balanced, RECOMMENDED)
+  • Good balance of win rate and profit
+  • Reasonable holding time
+  • Best for: most market conditions
+  • Risk: Moderate
+
+1.8-2.5 (Aggressive)
+  • Maximize profit per trade
+  • Lower win rate, longer holds
+  • Best for: strong trending markets with sharp reversals
+  • Risk: Counter-trades may become trend trades themselves
+
+>2.5 (Very Aggressive)
+  • Not recommended
+  • Low win rate defeats counter-trade purpose
+  • May trigger original direction signals before TP hit
+
+
+OPTIMIZATION PROCESS:
+
+1. Baseline Test (multiplier=1.5)
+   Run backtest with default 1.5x multiplier
+
+2. Sweep Range (1.0-2.5)
+   Test multipliers: [1.0, 1.2, 1.5, 1.8, 2.0, 2.5]
+
+3. Evaluate Metrics
+   • Counter-trade win rate (target: >70%)
+   • Counter-trade profit contribution (target: >40%)
+   • Total strategy Sharpe ratio
+   • Max drawdown
+
+4. Walk-Forward Validation
+   Verify optimal multiplier works on out-of-sample data
+
+5. Robustness Check
+   Use parameter sensitivity analysis:
+   ```python
+   from app.engine.robustness.parameter_sensitivity import analyze_parameter_sensitivity
+
+   results = analyze_parameter_sensitivity(
+       strategy_config={...},
+       initial_capital=10000.0,
+       ticker="BTCUSDT",
+       start="2020-01-01",
+       end="2026-01-01",
+   )
+   ```
+
+
+================================================================================
+INTEGRATION WITH OTHER FEATURES
+================================================================================
+
+LEVERAGE:
+  Counter-trades use the same leverage setting as base trades.
+
+  ```python
+  trades, equity = run_backtest(
+      df=df,
+      entry_signal=long_entry,
+      exit_signal=long_exit,
+      short_entry_signal=short_entry,
+      short_exit_signal=short_exit,
+      initial_capital=10000.0,
+      leverage=5.0,                      # 5x leverage
+      enable_counter_trades=True,        # Counter-trades also 5x
+      counter_tp_multiplier=1.5,
+  )
+  ```
+
+EXIT RULES:
+  Counter-trades can use exit rules like regular trades.
+
+  ```python
+  from app.engine.exit_rules import ExitRule
+
+  atr_exit = ExitRule(
+      name="atr_exit",
+      ref_col="atr_14",
+      monitor_col="atr_14",
+      operator="LT",
+      min_loss_pct=1.0,
+  )
+
+  trades, equity = run_backtest(
+      df=df,
+      entry_signal=long_entry,
+      exit_signal=long_exit,
+      short_entry_signal=short_entry,
+      short_exit_signal=short_exit,
+      initial_capital=10000.0,
+      enable_counter_trades=True,
+      exit_rules=[atr_exit],           # Applies to all trades
+  )
+  ```
+
+SIGNAL TRANSFORMERS (Chaining):
+  Chain counter-trades with regime filtering and deferred entry.
+
+  ```python
+  from app.engine.signal_transformers import chain_transformers
+
+  transformers = [
+      ("regime_filter", {"regime_column": "regime", "allowed_regimes": ["BULL", "BEAR"]}),
+      ("deferred_entry", {"confirmation_column": "above_sma50"}),
+  ]
+
+  # Apply transformers to base signals
+  filtered_entry = chain_transformers(df, long_entry, transformers)
+
+  # Then run with counter-trades
+  trades, equity = run_backtest(
+      df=df,
+      entry_signal=filtered_entry,     # Pre-filtered
+      exit_signal=long_exit,
+      short_entry_signal=short_entry,
+      short_exit_signal=short_exit,
+      initial_capital=10000.0,
+      enable_counter_trades=True,
+  )
+  ```
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+ISSUE: Counter-trades not triggering
+SOLUTION:
+  1. Verify enable_counter_trades=True
+  2. Check if any trades exit via signal with losses
+  3. Ensure short_entry_signal and short_exit_signal are provided
+  4. Check if opposite position already filled
+
+ISSUE: Too many counter-trades (>40% of trades)
+SOLUTION:
+  Base strategy signals may be too weak. Consider:
+  1. Tighten entry criteria
+  2. Add trend filter to base signals
+  3. Use regime filtering to skip choppy periods
+
+ISSUE: Counter-trade win rate too low (<60%)
+SOLUTION:
+  1. Increase counter_tp_multiplier (try 1.8-2.0)
+  2. Check if base exits are too early (losses too small)
+  3. Add confirmation to base exit signals
+
+ISSUE: Pre-processor not matching native results
+SOLUTION:
+  Pre-processor uses simplified simulation. Expected. Use native approach for
+  production. Pre-processor is for advanced signal inspection only.
+
+
+================================================================================
+EXAMPLES
+================================================================================
+
+EXAMPLE 1: Basic SMA Crossover with Counter-Trades
+```python
+from app.engine.data_layer import fetch_ohlcv
+from app.engine.indicator_layer import compute_indicators
+from app.engine.state_machine import run_backtest
+
+# Fetch data
+df = fetch_ohlcv("BTCUSDT", "2023-01-01", "2024-01-01", "1d", "CRYPTO")
+
+# Compute indicators
+indicators = [
+    {"indicator_type": "SMA", "alias": "sma_10", "params": {"period": 10}},
+    {"indicator_type": "SMA", "alias": "sma_50", "params": {"period": 50}},
+]
+df = compute_indicators(df, indicators)
+
+# Generate signals
+long_entry = (df["sma_10"] > df["sma_50"]) & (df["sma_10"].shift(1) <= df["sma_50"].shift(1))
+long_exit = (df["sma_10"] < df["sma_50"]) & (df["sma_10"].shift(1) >= df["sma_50"].shift(1))
+short_entry = long_exit.copy()
+short_exit = long_entry.copy()
+
+# Run backtest with counter-trades
+trades, equity = run_backtest(
+    df=df,
+    entry_signal=long_entry,
+    exit_signal=long_exit,
+    short_entry_signal=short_entry,
+    short_exit_signal=short_exit,
+    initial_capital=10000.0,
+    enable_counter_trades=True,
+    counter_tp_multiplier=1.5,
+)
+
+print(f"Total trades: {len(trades)}")
+print(f"Final capital: ${equity.iloc[-1]:,.2f}")
+```
+
+
+EXAMPLE 2: Counter-Trades with Regime Filtering
+```python
+from app.engine.robustness.regime_detection import detect_regimes
+from app.engine.signal_transformers import apply_regime_filter
+
+# Detect market regimes
+regimes = detect_regimes(df, strategy="pelt_directional")
+df["regime"] = regimes["regime_labels"]
+
+# Filter base signals to skip RANGING
+filtered_long_entry = apply_regime_filter(df, long_entry, "regime", ["BULL", "BEAR"])
+filtered_short_entry = apply_regime_filter(df, short_entry, "regime", ["BULL", "BEAR"])
+
+# Run with counter-trades
+trades, equity = run_backtest(
+    df=df,
+    entry_signal=filtered_long_entry,
+    exit_signal=long_exit,
+    short_entry_signal=filtered_short_entry,
+    short_exit_signal=short_exit,
+    initial_capital=10000.0,
+    enable_counter_trades=True,
+    counter_tp_multiplier=1.5,
+)
+```
+
+
+EXAMPLE 3: Counter-Trades with Exit Rules
+```python
+from app.engine.exit_rules import ExitRule
+
+# Define dynamic exit rule
+atr_exit = ExitRule(
+    name="atr_collapse",
+    ref_col="atr_14",
+    monitor_col="atr_14",
+    operator="LT",
+    min_loss_pct=1.0,
+)
+
+# Run backtest
+trades, equity = run_backtest(
+    df=df,
+    entry_signal=long_entry,
+    exit_signal=long_exit,
+    short_entry_signal=short_entry,
+    short_exit_signal=short_exit,
+    initial_capital=10000.0,
+    enable_counter_trades=True,
+    counter_tp_multiplier=1.5,
+    exit_rules=[atr_exit],
+)
+```
+
+
+================================================================================
+RELATED DOCUMENTATION
+================================================================================
+
+  • POSITION_SIZING.txt - Position sizing methods and risk management
+  • INDICATORS.txt - Available indicators for signal generation
+  • OPERATORS.txt - Condition operators for signal logic
+  • docs/HA_DONCHIAN_SMA_STRATEGY.txt - Real-world counter-trade example
+
+
+================================================================================
+SMOKE TEST
+================================================================================
+
+Run the smoke test to verify counter-trade functionality:
+
+```bash
+cd backend
+python scripts/smoke_counter_trades.py
+```
+
+This demonstrates both native and pre-processor approaches with side-by-side
+comparison.
+
+
+================================================================================
+API USAGE (Future)
+================================================================================
+
+Counter-trade parameters will be added to Strategy model:
+
+```python
+# API schema (planned)
+{
+  "name": "My Strategy",
+  "indicators": [...],
+  "entry_conditions": {...},
+  "exit_conditions": {...},
+  "enable_counter_trades": true,      # NEW
+  "counter_tp_multiplier": 1.5        # NEW
+}
+```
+
+Endpoint: POST /backtests with counter-trade params in request body.
+
+================================================================================

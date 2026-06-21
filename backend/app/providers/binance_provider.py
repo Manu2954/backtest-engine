@@ -5,6 +5,7 @@ Uses Binance public API for OHLCV data (no API key required).
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -133,10 +134,24 @@ class BinanceProvider(DataProvider):
             interval_ms = BINANCE_INTERVAL_MS[interval]
 
             # Fetch data in batches (Binance limits to 1000 bars per request)
+            # Rate limiting: 600 requests per minute (stay well below Binance's 1200/min limit)
             rows = []
+            request_count = 0
+            rate_limit_start = time.time()
+
             with httpx.Client(timeout=20.0) as client:
                 current_start = start_ms
                 while current_start < end_ms:
+                    # Rate limiting: max 600 requests per 60 seconds
+                    if request_count >= 600:
+                        elapsed = time.time() - rate_limit_start
+                        if elapsed < 60:
+                            sleep_time = 60 - elapsed
+                            time.sleep(sleep_time)
+                        # Reset counter
+                        request_count = 0
+                        rate_limit_start = time.time()
+
                     params = {
                         "symbol": symbol,
                         "interval": interval,
@@ -147,6 +162,7 @@ class BinanceProvider(DataProvider):
                     response = client.get(f"{BINANCE_URL}/klines", params=params)
                     response.raise_for_status()
                     data = response.json()
+                    request_count += 1
 
                     if not data:
                         break
@@ -154,6 +170,9 @@ class BinanceProvider(DataProvider):
                     rows.extend(data)
                     last_open_time = data[-1][0]
                     current_start = last_open_time + interval_ms
+
+                    # Small delay between requests to be a good API citizen
+                    time.sleep(0.1)
 
             if not rows:
                 raise ValueError(f"No data returned for ticker '{ticker}'")

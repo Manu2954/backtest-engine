@@ -1,15 +1,11 @@
 """
-Volatile Bearish Bar — Mean-Reversion Strategy
+Golden Cross Strategy — Trend-Following
 
-Entry: Buy after a bearish 1h candle with high-low range >= 2%
-  - (high - low) >= low * 0.02   (2% range)
-  - close < open                  (bearish candle)
-  - volume is highest since last SMA50/SMA200 crossover
-
-Exit: Dynamic TP = bar's range %, Stop loss -1%
+Entry: SMA50 crosses above SMA200 (bullish crossover)
+Exit: SMA50 crosses below SMA200 (bearish crossover)
 
 Usage:
-  python scripts/smoke_volatile_bounce.py
+  python scripts/smoke_volatile_bounce_5m.py
 """
 from __future__ import annotations
 
@@ -28,32 +24,17 @@ from app.engine.condition_engine import evaluate_conditions
 from app.engine.state_machine import run_backtest
 from app.engine.report_generator import generate_report
 
-from app.engine.robustness.regime_detection import (
-    detect_regimes,
-    analyze_trades_by_regime,
-    calculate_regime_distribution,
-    assess_regime_dependency,
-)
-from app.engine.robustness.walk_forward import (
-    generate_windows,
-    calculate_consistency_score,
-    assess_walk_forward_results,
-)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-TICKER = "BTCUSDT"
-START = "2023-01-01"
+TICKER = "^NSEI"
+START = "2001-01-01"
 END = "2026-05-08"
-TF = "1h"
-ASSET_CLASS = "CRYPTO"
+TF = "1d"
+ASSET_CLASS = "STOCK"
 INITIAL_CAPITAL = 10_000.0
-
-RANGE_THRESHOLD = 0.02    # 2% high-low range
-STOP_LOSS_PCT = 6.0       # Exit at -1%
 
 INDICATORS = [
     {"indicator_type": "SMA", "alias": "sma_50", "params": {"period": 50, "source": "close"}},
@@ -62,23 +43,50 @@ INDICATORS = [
 ]
 
 # Entry conditions (volume filter applied separately as custom logic)
-LONG_ENTRY_GROUP = {
+# LONG_ENTRY_GROUP = {
+#     "logic": "AND",
+#     "conditions": [
+#         {
+#             "left_operand_type": "EXPRESSION",
+#             "left_operand_value": "high - low",
+#             "operator": "GTE",
+#             "right_operand_type": "EXPRESSION",
+#             "right_operand_value": f"low * {RANGE_THRESHOLD}",
+#         },
+#         {
+#             "left_operand_type": "OHLCV",
+#             "left_operand_value": "close",
+#             "operator": "LT",
+#             "right_operand_type": "OHLCV",
+#             "right_operand_value": "open",
+#         },
+#     ],
+# }
+
+
+entry_group = {
     "logic": "AND",
     "conditions": [
         {
-            "left_operand_type": "EXPRESSION",
-            "left_operand_value": "high - low",
-            "operator": "GTE",
-            "right_operand_type": "EXPRESSION",
-            "right_operand_value": f"low * {RANGE_THRESHOLD}",
-        },
+            "left_operand_type": "INDICATOR",
+            "left_operand_value": "sma_50",
+            "operator": "CROSSES_ABOVE",
+            "right_operand_type": "INDICATOR",
+            "right_operand_value": "sma_200",
+        }
+    ],
+}
+
+exit_group = {
+    "logic": "AND",
+    "conditions": [
         {
-            "left_operand_type": "OHLCV",
-            "left_operand_value": "close",
-            "operator": "LT",
-            "right_operand_type": "OHLCV",
-            "right_operand_value": "open",
-        },
+            "left_operand_type": "INDICATOR",
+            "left_operand_value": "sma_50",
+            "operator": "CROSSES_BELOW",
+            "right_operand_type": "INDICATOR",
+            "right_operand_value": "sma_200",
+        }
     ],
 }
 
@@ -87,76 +95,13 @@ LONG_ENTRY_GROUP = {
 # ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-import numpy as np
-
-
-def compute_max_volume_since_cross(df: pd.DataFrame) -> pd.Series:
-    """
-    For each bar, compute the max volume since the last SMA50/SMA200 crossover.
-    Returns a Series of the running max volume within each cross-segment.
-    """
-    cross = (
-        ((df["sma_50"] > df["sma_200"]) & (df["sma_50"].shift(1) <= df["sma_200"].shift(1))) |
-        ((df["sma_50"] < df["sma_200"]) & (df["sma_50"].shift(1) >= df["sma_200"].shift(1)))
-    )
-
-    # Assign a segment ID that increments at each crossover
-    segment_id = cross.cumsum()
-
-    # Rolling max volume within each segment
-    max_vol = df.groupby(segment_id)["volume"].cummax()
-    return max_vol
-
-
-def last_cross_was_bullish(df: pd.DataFrame) -> pd.Series:
-    """
-    For each bar, True if the most recent SMA50/SMA200 crossover was
-    a bullish cross (50 crossed above 200).
-    """
-    bull_cross = (df["sma_50"] > df["sma_200"]) & (df["sma_50"].shift(1) <= df["sma_200"].shift(1))
-    bear_cross = (df["sma_50"] < df["sma_200"]) & (df["sma_50"].shift(1) >= df["sma_200"].shift(1))
-
-    # Track which type of cross happened last: 1 = bullish, -1 = bearish
-    cross_type = pd.Series(0, index=df.index)
-    cross_type[bull_cross] = 1
-    cross_type[bear_cross] = -1
-
-    # Forward-fill to carry last cross type
-    cross_type = cross_type.replace(0, np.nan).ffill().fillna(0)
-
-    return cross_type == 1
-
 
 def run_backtest_on_df(df, initial_capital: float = INITIAL_CAPITAL) -> tuple[list[dict], dict]:
-    # Base conditions from condition engine
-    base_signal = evaluate_conditions(df, LONG_ENTRY_GROUP)
+    # Entry: SMA50 crosses above SMA200 (golden cross)
+    entry_signal = evaluate_conditions(df, entry_group)
 
-    # Volume filter: bar's volume must be the highest since last MA cross
-    max_vol_since_cross = compute_max_volume_since_cross(df)
-    volume_is_highest = df["volume"] >= max_vol_since_cross
-
-    # Trend filter: last crossover must be bullish (50 above 200)
-    bullish_cross_filter = last_cross_was_bullish(df)
-
-    # ATR filter: ATR of signal candle > mean of 24 candles before it (excluding current)
-    atr_mean_24 = df["atr_14"].shift(1).rolling(24).mean()
-    df["atr_mean_24"] = atr_mean_24
-    atr_above_mean = df["atr_14"] > atr_mean_24
-
-    # Body > wick filter: candle body must be larger than total wicks
-    body = (df["open"] - df["close"]).abs()
-    upper_wick = df["high"] - df[["open", "close"]].max(axis=1)
-    lower_wick = df[["open", "close"]].min(axis=1) - df["low"]
-    total_wick = upper_wick + lower_wick
-    body_gt_wick = body > total_wick
-
-    # Combined entry signal
-    entry_signal = base_signal & volume_is_highest & bullish_cross_filter & atr_above_mean & body_gt_wick
-
-    # Exit: ATR drops below the mean of 24 candles before the entry signal (captured at entry)
-    # Skip ATR exit when price is above SMA200 (let profits run)
-    exit_signal = pd.Series(False, index=df.index)
-    # df["above_sma200"] = df["close"] > df["sma_200"]
+    # Exit: SMA50 crosses below SMA200 (death cross)
+    exit_signal = evaluate_conditions(df, exit_group)
 
     trades, equity_curve = run_backtest(
         df=df,
@@ -164,21 +109,13 @@ def run_backtest_on_df(df, initial_capital: float = INITIAL_CAPITAL) -> tuple[li
         exit_signal=exit_signal,
         initial_capital=initial_capital,
         asset_class=ASSET_CLASS,
-        # periodic_contribution={"amount": 2000, "frequency": "monthly"},
-        position_size_type="percent_capital",
-        position_size_value=50.0,
-        # stop_loss_pct=5.0,
-        take_profit_pct=5.0,
-        dynamic_exit_monitor_column="atr_14",
-        dynamic_exit_ref_column="atr_mean_24",
-        dynamic_exit_min_loss_pct=1.0,
-        # dynamic_exit_skip_column="above_sma200",
-        commission_per_trade=1.0,
-        slippage_pct=0.0,
+        # periodic_contribution={"amount": 10000, "frequency": "monthly"},
         enable_attribution=False,
+        # stop_loss_pct=6
     )
 
     report = generate_report(trades, equity_curve, initial_capital)
+    report['equity_curve'] = equity_curve  # Add equity curve to report
     return trades, report
 
 
@@ -194,13 +131,11 @@ def extract_metrics(report: dict) -> dict:
 def main() -> None:
     print()
     print("╔══════════════════════════════════════════════════════════════════════╗")
-    print("║           VOLATILE BEARISH BAR — MEAN-REVERSION                     ║")
+    print("║                  GOLDEN CROSS STRATEGY                               ║")
     print("╚══════════════════════════════════════════════════════════════════════╝")
     print(f"  Ticker: {TICKER}  | TF: {TF} | Period: {START} to {END} | Capital: ${INITIAL_CAPITAL:,.0f}")
-    print(f"  Entry: bearish candle with (high-low)/low >= {RANGE_THRESHOLD*100:.1f}%")
-    print(f"         + volume is highest since last SMA50/SMA200 crossover")
-    print(f"         + last crossover was bullish (SMA50 > SMA200)")
-    print(f"  Exit:  TP = bar's range %  |  SL -{STOP_LOSS_PCT}%")
+    print(f"  Entry: SMA50 crosses above SMA200 (golden cross)")
+    print(f"  Exit:  SMA50 crosses below SMA200 (death cross)")
 
     # ─── Stage 1: Data ────────────────────────────────────────────────────────
     print(f"\n{'─' * 70}")
@@ -217,12 +152,12 @@ def main() -> None:
     print(f"  Effective start: {df.index[0].strftime('%Y-%m-%d %H:%M')}")
 
     # Show how many entry signals fire
-    base_signal = evaluate_conditions(df, LONG_ENTRY_GROUP)
-    max_vol_since_cross = compute_max_volume_since_cross(df)
-    volume_is_highest = df["volume"] >= max_vol_since_cross
-    bullish_cross_filter = last_cross_was_bullish(df)
-    entry_signal = base_signal & volume_is_highest & bullish_cross_filter
-    print(f"  Entry signals: {entry_signal.sum()} (base: {base_signal.sum()}, +vol: {(base_signal & volume_is_highest).sum()}, +bull cross: {entry_signal.sum()})")
+    # base_signal = evaluate_conditions(df, LONG_ENTRY_GROUP)
+    # max_vol_since_cross = compute_max_volume_since_cross(df)
+    # volume_is_highest = df["volume"] >= max_vol_since_cross
+    # bullish_cross_filter = last_cross_was_bullish(df)
+    # entry_signal = base_signal & volume_is_highest & bullish_cross_filter
+    # print(f"  Entry signals: {entry_signal.sum()} (base: {base_signal.sum()}, +vol: {(base_signal & volume_is_highest).sum()}, +bull cross: {entry_signal.sum()})")
 
     # ─── Stage 2: Backtest ────────────────────────────────────────────────────
     print(f"\n{'─' * 70}")
@@ -230,6 +165,7 @@ def main() -> None:
     print(f"{'─' * 70}")
 
     trades, report = run_backtest_on_df(df)
+    equity_curve = report.get('equity_curve', pd.Series([INITIAL_CAPITAL]))
 
     print(f"  {'Metric':<24} {'Value':>12}")
     print(f"  {'─' * 38}")
@@ -248,16 +184,55 @@ def main() -> None:
     print(f"  {'Avg trade duration':<24} {report.get('avg_trade_duration_days', 0):>10.1f} days")
     print(f"  {'Final capital':<24} {'$'}{report['final_capital']:>11,.2f}")
 
+    # ─── Rolling Returns ──────────────────────────────────────────────────────
+    print(f"\n{'─' * 70}")
+    print("  3. ROLLING RETURNS")
+    print(f"{'─' * 70}")
+
+    # Calculate rolling returns for different windows
+    windows = [252, 504, 756]  # 1Y, 2Y, 3Y in trading days
+    window_labels = ["1-Year", "2-Year", "3-Year"]
+
+    print(f"\n  {'Window':<12} {'Best':>10} {'Worst':>10} {'Avg':>10} {'Median':>10} {'StdDev':>10}")
+    print(f"  {'─' * 65}")
+
+    for window, label in zip(windows, window_labels):
+        if len(equity_curve) > window:
+            rolling_returns = []
+            for i in range(window, len(equity_curve)):
+                start_val = equity_curve.iloc[i - window]
+                end_val = equity_curve.iloc[i]
+                ret = (end_val - start_val) / start_val * 100
+                rolling_returns.append(ret)
+
+            if rolling_returns:
+                best = max(rolling_returns)
+                worst = min(rolling_returns)
+                avg = sum(rolling_returns) / len(rolling_returns)
+                median = sorted(rolling_returns)[len(rolling_returns) // 2]
+                std = (sum((x - avg) ** 2 for x in rolling_returns) / len(rolling_returns)) ** 0.5
+
+                print(f"  {label:<12} {best:>+9.2f}% {worst:>+9.2f}% {avg:>+9.2f}% {median:>+9.2f}% {std:>9.2f}%")
+            else:
+                print(f"  {label:<12} {'N/A':>10} {'N/A':>10} {'N/A':>10} {'N/A':>10} {'N/A':>10}")
+        else:
+            print(f"  {label:<12} {'(insufficient data)':>54}")
+
     # Exit reason breakdown
     tp_count = sum(1 for t in trades if t.get("exit_reason") == "take_profit")
     sl_count = sum(1 for t in trades if t.get("exit_reason") == "stop_loss")
-    other_count = len(trades) - tp_count - sl_count
+    signal_count = sum(1 for t in trades if t.get("exit_reason") == "signal")
+    other_count = len(trades) - tp_count - sl_count - signal_count
 
     print(f"\n  Exit reasons:")
-    print(f"    Take profit (dynamic): {tp_count}")
-    print(f"    Stop loss (-{STOP_LOSS_PCT}%):   {sl_count}")
+    if signal_count:
+        print(f"    Signal (death cross): {signal_count}")
+    if tp_count:
+        print(f"    Take profit:          {tp_count}")
+    if sl_count:
+        print(f"    Stop loss:            {sl_count}")
     if other_count:
-        print(f"    Other (force close):   {other_count}")
+        print(f"    Other (force close):  {other_count}")
 
     # ─── Signal Log ────────────────────────────────────────────────────────────
     # print(f"\n{'─' * 70}")
@@ -276,22 +251,19 @@ def main() -> None:
     print(f"\n{'─' * 70}")
     print("  TRADE LOG")
     print(f"{'─' * 70}")
-    atr_mean_24_col = df["atr_mean_24"]
-    print(f"  {'#':<4} {'Entry':<18} {'Exit':<18} {'Entry$':>9} {'Exit$':>9} {'PnL':>9} {'PnL%':>7} {'MDD%':>7} {'eATR':>6} {'rATR':>6} {'Reason'}")
-    print(f"  {'─' * 110}")
+    # atr_mean_24_col = df["atr_mean_24"]
+    print(f"  {'#':<4} {'Entry':<18} {'Exit':<18} {'Entry$':>9} {'Exit$':>9} {'PnL':>9} {'PnL%':>7} {'MDD%':>7} {'Reason'}")
+    print(f"  {'─' * 95}")
     for i, t in enumerate(trades, 1):
         entry_dt = t["entry_date"].strftime("%Y-%m-%d %H:%M")
         exit_dt = t["exit_date"].strftime("%Y-%m-%d %H:%M")
         exit_loc = df.index.get_loc(t["exit_date"])
         entry_loc = df.index.get_loc(t["entry_date"])
-        signal_loc = max(entry_loc - 1, 0)
-        exit_atr = df.iloc[exit_loc]["atr_14"]
-        ref_atr = atr_mean_24_col.iloc[signal_loc]
         entry_price = t["entry_price"]
         trade_lows = df.iloc[entry_loc:exit_loc + 1]["low"]
         max_dd_pct = (trade_lows.min() - entry_price) / entry_price * 100
         print(f"  {i:<4} {entry_dt:<18} {exit_dt:<18} ${t['entry_price']:>8,.0f} ${t['exit_price']:>8,.0f} "
-              f"${t['pnl']:>+8,.2f} {t['pnl_pct']*100:>+6.2f}% {max_dd_pct:>+6.2f}% {exit_atr:>6.0f} {ref_atr:>6.0f} {t['exit_reason']}")
+              f"${t['pnl']:>+8,.2f} {t['pnl_pct']*100:>+6.2f}% {max_dd_pct:>+6.2f}% {t['exit_reason']}")
 
     # # ─── Stage 3: Regime Detection ────────────────────────────────────────────
     # print(f"\n{'─' * 70}")
@@ -360,7 +332,7 @@ def main() -> None:
     print(f"{'═' * 70}")
     print(f"  Return: {report['total_return_pct']:+.2f}%  |  Sharpe: {report['sharpe_ratio']:.3f}  |  "
           f"Drawdown: {report['max_drawdown_pct']:.2f}%  |  Trades: {report['total_trades']}")
-    print(f"  Win rate: {report['win_rate']:.1f}%  |  TP hits: {tp_count}  |  SL hits: {sl_count}")
+    print(f"  Win rate: {report['win_rate']:.1f}%")
     print(f"{'═' * 70}")
     print()
 
