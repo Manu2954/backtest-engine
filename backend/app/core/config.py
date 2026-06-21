@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_backend_url: str = "redis://localhost:6379/2"
     ohlcv_cache_ttl_seconds: int = 60 * 60 * 24
+    cors_origins: str = "http://localhost:5173"
+    rate_limit_per_minute: int = 100
+    rate_limit_expensive_per_minute: int = 10
 
 
 settings = Settings()
