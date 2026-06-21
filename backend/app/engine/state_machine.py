@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -141,7 +144,8 @@ def _capture_entry_attribution(
             ]
 
         return attribution_data
-    except Exception:
+    except (KeyError, ValueError, TypeError, ImportError) as e:
+        logger.debug("Failed to capture entry attribution at bar %d: %s", bar_idx, e)
         return None
 
 
@@ -174,7 +178,8 @@ def _capture_exit_attribution(
             ]
 
         return attribution_data
-    except Exception:
+    except (KeyError, ValueError, TypeError, ImportError) as e:
+        logger.debug("Failed to capture exit attribution at bar %d: %s", bar_idx, e)
         return None
 
 
@@ -193,7 +198,11 @@ def _calculate_trade_attribution(
         )
         alpha = pnl_pct - market_return
         return market_return, alpha
-    except Exception:
+    except (KeyError, ValueError, TypeError, ImportError) as e:
+        logger.debug(
+            "Failed to calculate trade attribution for bars %d-%d: %s",
+            entry_bar_idx, exit_bar_idx, e
+        )
         return None, None
 
 
@@ -480,6 +489,14 @@ def _execute_exit(
     # Simplified: we use same model as long — cash += shares * exit_price - commission
     new_cash = cash + proceeds
     if abs(new_cash) < 1e-8:
+        new_cash = 0.0
+
+    # Prevent negative cash - should not happen in normal operation
+    if new_cash < 0.0:
+        logger.warning(
+            "Negative cash detected after %s exit (%.6f), clamping to 0.0",
+            direction, new_cash
+        )
         new_cash = 0.0
 
     return trade, new_cash
@@ -979,6 +996,12 @@ def run_backtest(
         raise ValueError(f"commission_pct must be non-negative, got {commission_pct}")
     if slippage_pct < 0:
         raise ValueError(f"slippage_pct must be non-negative, got {slippage_pct}")
+
+    # Leverage bounds validation (Binance max is 125x for futures)
+    if leverage < 1.0 or leverage > 125.0:
+        raise ValueError(
+            f"leverage must be between 1.0 and 125.0 (Binance max), got {leverage}"
+        )
 
     if counter_tp_multiplier <= 0:
         raise ValueError(f"counter_tp_multiplier must be positive, got {counter_tp_multiplier}")

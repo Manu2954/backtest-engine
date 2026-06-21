@@ -221,9 +221,6 @@ def generate_report(
     benchmark_equity: pd.Series | None = None,
     risk_free_rate: float = 0.0,
 ) -> dict[str, Any]:
-    if initial_capital <= 0:
-        raise ValueError(f"initial_capital must be positive, got {initial_capital}")
-
     equity = _to_series(equity_curve).dropna()
     equity = _ensure_datetime_index(equity)
 
@@ -274,6 +271,26 @@ def generate_report(
     else:
         sharpe = 0.0
 
+    # Sortino ratio: only penalizes downside volatility
+    # Formula: (Mean Return - Risk Free Rate) / Downside Deviation * sqrt(252)
+    if not daily_returns.empty:
+        daily_rf = (1 + risk_free_rate) ** (1 / 252) - 1
+        excess_returns_sortino = daily_returns - daily_rf
+        # Downside deviation: std of returns below target (risk-free rate)
+        downside_returns = excess_returns_sortino[excess_returns_sortino < 0]
+        if len(downside_returns) > 0:
+            downside_std = downside_returns.std()
+            if downside_std != 0:
+                sortino = (excess_returns_sortino.mean() / downside_std) * (252 ** 0.5)
+            else:
+                # No volatility in downside returns (all same value)
+                sortino = None
+        else:
+            # No negative returns - strategy never had a down day
+            sortino = None
+    else:
+        sortino = None
+
     gross_profit = sum(p for p in pnl_values if p > 0)
     gross_loss = abs(sum(p for p in pnl_values if p < 0))
     profit_factor = _safe_div(gross_profit, gross_loss) if gross_loss != 0 else 0.0
@@ -293,6 +310,7 @@ def generate_report(
         "largest_loss": largest_loss,
         "max_drawdown_pct": _max_drawdown(equity),
         "sharpe_ratio": sharpe,
+        "sortino_ratio": sortino,
         "profit_factor": profit_factor,
         "avg_trade_duration_days": avg_trade_duration,
         "longest_drawdown_days": _longest_drawdown_days(equity),
