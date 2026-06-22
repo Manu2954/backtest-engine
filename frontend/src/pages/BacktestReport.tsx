@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import { EquityCurve } from '@/components/charts'
 import { useBacktest, useBacktestTrades } from '@/api/hooks'
 import { formatPercent, formatDate, cn } from '@/lib/utils'
 import {
@@ -342,16 +343,24 @@ export function BacktestReportPage() {
               </Card>
             </div>
 
-            {/* Equity Curve Placeholder */}
+            {/* Equity Curve */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Equity Curve</CardTitle>
                 <CardDescription>Strategy performance over time</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center justify-center h-[300px] border border-dashed border-border rounded-lg">
-                  <p className="text-muted-foreground">Chart coming in Phase 3...</p>
-                </div>
+                {results.equity_curve && results.equity_curve.length > 0 ? (
+                  <EquityCurve
+                    data={results.equity_curve}
+                    height={300}
+                    showBenchmark={true}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-[300px] border border-dashed border-border rounded-lg">
+                    <p className="text-muted-foreground">No equity curve data available</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
