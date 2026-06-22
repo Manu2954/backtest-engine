@@ -10,9 +10,28 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+import {
+  Card,
+  CardContent,
+} from '@/components/ui/card'
 import { useStrategies } from '@/api/hooks'
 import { useCreateBacktest } from '@/api/hooks'
-import { Play, Loader2 } from 'lucide-react'
+import {
+  Play,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  TrendingUp,
+  Calendar,
+  DollarSign,
+  Shield,
+  Settings2,
+  AlertCircle,
+} from 'lucide-react'
+import { cn } from '@/lib/utils'
 import type { BacktestConfig } from '@/types'
 
 interface NewBacktestModalProps {
@@ -22,14 +41,39 @@ interface NewBacktestModalProps {
   defaultStrategyId?: string
 }
 
-const STOCK_RESOLUTIONS = ['1m', '5m', '15m', '1h', '1d']
-const CRYPTO_RESOLUTIONS = ['1m', '5m', '15m', '1h', '4h', '1d']
+const STOCK_RESOLUTIONS = [
+  { value: '1m', label: '1 Minute' },
+  { value: '5m', label: '5 Minutes' },
+  { value: '15m', label: '15 Minutes' },
+  { value: '1h', label: '1 Hour' },
+  { value: '1d', label: '1 Day' },
+]
+
+const CRYPTO_RESOLUTIONS = [
+  { value: '1m', label: '1 Minute' },
+  { value: '5m', label: '5 Minutes' },
+  { value: '15m', label: '15 Minutes' },
+  { value: '1h', label: '1 Hour' },
+  { value: '4h', label: '4 Hours' },
+  { value: '1d', label: '1 Day' },
+]
 
 const POSITION_SIZE_TYPES = [
-  { value: 'full_capital', label: 'Full Capital' },
-  { value: 'percent_capital', label: 'Percent of Capital' },
-  { value: 'fixed_amount', label: 'Fixed Amount' },
+  { value: 'full_capital', label: 'Full Capital', description: 'Use all available capital' },
+  { value: 'percent_capital', label: 'Percent of Capital', description: 'Use a percentage of capital' },
+  { value: 'fixed_amount', label: 'Fixed Amount', description: 'Use a fixed dollar amount' },
 ]
+
+// Get default dates (1 year back from today)
+function getDefaultDates() {
+  const end = new Date()
+  const start = new Date()
+  start.setFullYear(start.getFullYear() - 1)
+  return {
+    start: start.toISOString().split('T')[0],
+    end: end.toISOString().split('T')[0],
+  }
+}
 
 export function NewBacktestModal({
   open,
@@ -41,12 +85,14 @@ export function NewBacktestModal({
   const { data: strategies, isLoading: loadingStrategies } = useStrategies({ limit: 100 })
   const createBacktest = useCreateBacktest()
 
+  const defaultDates = getDefaultDates()
+
   // Form state
   const [strategyId, setStrategyId] = useState(defaultStrategyId || '')
-  const [ticker, setTicker] = useState('AAPL')
+  const [ticker, setTicker] = useState('')
   const [assetClass, setAssetClass] = useState<'STOCK' | 'CRYPTO'>('STOCK')
-  const [startDate, setStartDate] = useState('2020-01-01')
-  const [endDate, setEndDate] = useState('2023-12-31')
+  const [startDate, setStartDate] = useState(defaultDates.start)
+  const [endDate, setEndDate] = useState(defaultDates.end)
   const [resolution, setResolution] = useState('1d')
   const [initialCapital, setInitialCapital] = useState('10000')
 
@@ -63,7 +109,21 @@ export function NewBacktestModal({
   const [commissionPct, setCommissionPct] = useState('')
   const [slippagePct, setSlippagePct] = useState('')
 
+  // UI state
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [touched, setTouched] = useState<Record<string, boolean>>({})
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (open) {
+      setError(null)
+      setTouched({})
+      if (!defaultStrategyId && strategies && strategies.length > 0) {
+        setStrategyId(strategies[0].id)
+      }
+    }
+  }, [open, strategies, defaultStrategyId])
 
   // Set default strategy when strategies load
   useEffect(() => {
@@ -77,14 +137,33 @@ export function NewBacktestModal({
   // Reset resolution when asset class changes
   useEffect(() => {
     const resolutions = assetClass === 'CRYPTO' ? CRYPTO_RESOLUTIONS : STOCK_RESOLUTIONS
-    if (!resolutions.includes(resolution)) {
+    if (!resolutions.find(r => r.value === resolution)) {
       setResolution('1d')
     }
-  }, [assetClass, resolution])
+    // Update ticker placeholder
+    if (assetClass === 'CRYPTO' && !ticker) {
+      setTicker('BTCUSDT')
+    } else if (assetClass === 'STOCK' && ticker === 'BTCUSDT') {
+      setTicker('AAPL')
+    }
+  }, [assetClass, resolution, ticker])
 
   const resolutionOptions = assetClass === 'CRYPTO' ? CRYPTO_RESOLUTIONS : STOCK_RESOLUTIONS
+  const selectedStrategy = strategies?.find(s => s.id === strategyId)
+
+  // Validation
+  const tickerError = touched.ticker && !ticker.trim() ? 'Ticker is required' : null
+  const dateError = touched.dates && new Date(startDate) >= new Date(endDate)
+    ? 'Start date must be before end date' : null
+  const capitalError = touched.capital && (isNaN(Number(initialCapital)) || Number(initialCapital) <= 0)
+    ? 'Must be a positive number' : null
+
+  const canSubmit = strategyId && ticker.trim() && !dateError && !capitalError
 
   const handleSubmit = async () => {
+    // Mark all fields as touched for validation
+    setTouched({ ticker: true, dates: true, capital: true })
+
     if (!strategyId) {
       setError('Please select a strategy')
       return
@@ -92,11 +171,6 @@ export function NewBacktestModal({
 
     if (!ticker.trim()) {
       setError('Please enter a ticker symbol')
-      return
-    }
-
-    if (!startDate || !endDate) {
-      setError('Please select date range')
       return
     }
 
@@ -115,7 +189,7 @@ export function NewBacktestModal({
 
     const config: BacktestConfig = {
       strategy_id: strategyId,
-      ticker: ticker.toUpperCase(),
+      ticker: ticker.toUpperCase().trim(),
       asset_class: assetClass,
       start_date: startDate,
       end_date: endDate,
@@ -128,37 +202,23 @@ export function NewBacktestModal({
     // Add optional fields if provided
     if (stopLossPct) {
       const sl = Number(stopLossPct)
-      if (!isNaN(sl) && sl > 0) {
-        config.stop_loss_pct = sl
-      }
+      if (!isNaN(sl) && sl > 0) config.stop_loss_pct = sl
     }
-
     if (takeProfitPct) {
       const tp = Number(takeProfitPct)
-      if (!isNaN(tp) && tp > 0) {
-        config.take_profit_pct = tp
-      }
+      if (!isNaN(tp) && tp > 0) config.take_profit_pct = tp
     }
-
     if (commissionPerTrade) {
       const comm = Number(commissionPerTrade)
-      if (!isNaN(comm) && comm >= 0) {
-        config.commission_per_trade = comm
-      }
+      if (!isNaN(comm) && comm >= 0) config.commission_per_trade = comm
     }
-
     if (commissionPct) {
       const commP = Number(commissionPct)
-      if (!isNaN(commP) && commP >= 0) {
-        config.commission_pct = commP
-      }
+      if (!isNaN(commP) && commP >= 0) config.commission_pct = commP
     }
-
     if (slippagePct) {
       const slip = Number(slippagePct)
-      if (!isNaN(slip) && slip >= 0) {
-        config.slippage_pct = slip
-      }
+      if (!isNaN(slip) && slip >= 0) config.slippage_pct = slip
     }
 
     try {
@@ -176,239 +236,343 @@ export function NewBacktestModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>New Backtest</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-primary" />
+            New Backtest
+          </DialogTitle>
           <DialogDescription>
-            Configure and run a new backtest for your trading strategy
+            Test your strategy against historical market data
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 py-4">
+        <div className="space-y-5 py-2 max-h-[60vh] overflow-y-auto pr-2">
+          {/* Error Alert */}
           {error && (
-            <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded">
+            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
               {error}
             </div>
           )}
 
           {/* Strategy Selection */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Strategy</label>
+            <Label className="flex items-center gap-2">
+              <Settings2 className="h-4 w-4 text-muted-foreground" />
+              Strategy
+            </Label>
             {loadingStrategies ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Loading strategies...
               </div>
             ) : strategies && strategies.length > 0 ? (
-              <select
-                value={strategyId}
-                onChange={(e) => setStrategyId(e.target.value)}
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                {strategies.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className="text-sm text-muted-foreground">
-                No strategies found. Create a strategy first.
+              <div className="space-y-2">
+                <select
+                  value={strategyId}
+                  onChange={(e) => setStrategyId(e.target.value)}
+                  className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
+                >
+                  {strategies.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                {selectedStrategy && (
+                  <p className="text-xs text-muted-foreground">
+                    {selectedStrategy.description || 'No description'}
+                  </p>
+                )}
               </div>
+            ) : (
+              <Card className="border-dashed">
+                <CardContent className="py-4 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No strategies found. Create a strategy first.
+                  </p>
+                  <Button variant="link" size="sm" className="mt-1" onClick={() => {
+                    onOpenChange(false)
+                    navigate('/strategies/new')
+                  }}>
+                    Create Strategy →
+                  </Button>
+                </CardContent>
+              </Card>
             )}
           </div>
 
-          {/* Ticker and Asset Class */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Ticker</label>
-              <Input
-                value={ticker}
-                onChange={(e) => setTicker(e.target.value)}
-                placeholder="AAPL, BTC-USD, etc."
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Asset Class</label>
-              <select
-                value={assetClass}
-                onChange={(e) => setAssetClass(e.target.value as 'STOCK' | 'CRYPTO')}
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="STOCK">Stock</option>
-                <option value="CRYPTO">Crypto</option>
-              </select>
+          <Separator />
+
+          {/* Market Selection */}
+          <div className="space-y-3">
+            <Label className="flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              Market
+            </Label>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Asset Class Toggle */}
+              <div className="space-y-1.5">
+                <span className="text-xs text-muted-foreground">Asset Class</span>
+                <div className="flex rounded-md border border-input overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setAssetClass('STOCK')}
+                    className={cn(
+                      "flex-1 py-2 text-sm font-medium transition-colors",
+                      assetClass === 'STOCK'
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background hover:bg-muted"
+                    )}
+                  >
+                    Stock
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssetClass('CRYPTO')}
+                    className={cn(
+                      "flex-1 py-2 text-sm font-medium transition-colors",
+                      assetClass === 'CRYPTO'
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background hover:bg-muted"
+                    )}
+                  >
+                    Crypto
+                  </button>
+                </div>
+              </div>
+
+              {/* Ticker */}
+              <div className="space-y-1.5">
+                <span className="text-xs text-muted-foreground">Ticker Symbol</span>
+                <Input
+                  value={ticker}
+                  onChange={(e) => {
+                    setTicker(e.target.value.toUpperCase())
+                    setTouched(t => ({ ...t, ticker: true }))
+                  }}
+                  placeholder={assetClass === 'CRYPTO' ? 'BTCUSDT' : 'AAPL'}
+                  className={cn(tickerError && "border-destructive")}
+                />
+                {tickerError && (
+                  <p className="text-xs text-destructive">{tickerError}</p>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Date Range */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Start Date</label>
-              <Input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
+          <div className="space-y-3">
+            <Label className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              Date Range
+            </Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <span className="text-xs text-muted-foreground">Start Date</span>
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    setStartDate(e.target.value)
+                    setTouched(t => ({ ...t, dates: true }))
+                  }}
+                  className={cn(dateError && "border-destructive")}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <span className="text-xs text-muted-foreground">End Date</span>
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => {
+                    setEndDate(e.target.value)
+                    setTouched(t => ({ ...t, dates: true }))
+                  }}
+                  className={cn(dateError && "border-destructive")}
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">End Date</label>
-              <Input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
-            </div>
+            {dateError && (
+              <p className="text-xs text-destructive">{dateError}</p>
+            )}
           </div>
 
-          {/* Resolution and Initial Capital */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Bar Resolution</label>
+          {/* Resolution & Capital */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Bar Resolution</Label>
               <select
                 value={resolution}
                 onChange={(e) => setResolution(e.target.value)}
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
               >
                 {resolutionOptions.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
+                  <option key={r.value} value={r.value}>
+                    {r.label}
                   </option>
                 ))}
               </select>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Initial Capital ($)</label>
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1 text-xs text-muted-foreground">
+                <DollarSign className="h-3 w-3" />
+                Initial Capital
+              </Label>
               <Input
                 type="number"
                 value={initialCapital}
-                onChange={(e) => setInitialCapital(e.target.value)}
+                onChange={(e) => {
+                  setInitialCapital(e.target.value)
+                  setTouched(t => ({ ...t, capital: true }))
+                }}
                 min="0"
                 step="1000"
+                className={cn(capitalError && "border-destructive")}
               />
+              {capitalError && (
+                <p className="text-xs text-destructive">{capitalError}</p>
+              )}
             </div>
           </div>
 
-          {/* Position Sizing */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Position Sizing</label>
-              <select
-                value={positionSizeType}
-                onChange={(e) => setPositionSizeType(e.target.value)}
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                {POSITION_SIZE_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">
-                {positionSizeType === 'percent_capital'
-                  ? 'Percent (%)'
-                  : positionSizeType === 'fixed_amount'
-                  ? 'Amount ($)'
-                  : 'Value'}
-              </label>
-              <Input
-                type="number"
-                value={positionSizeValue}
-                onChange={(e) => setPositionSizeValue(e.target.value)}
-                min="0"
-                disabled={positionSizeType === 'full_capital'}
-              />
-            </div>
-          </div>
+          {/* Advanced Settings Toggle */}
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-full py-2"
+          >
+            {showAdvanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            Advanced Settings
+            {(stopLossPct || takeProfitPct || commissionPerTrade || commissionPct || slippagePct) && (
+              <Badge variant="secondary" className="ml-auto text-xs">Configured</Badge>
+            )}
+          </button>
 
-          {/* Optional: Risk Management */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">
-              Risk Management (Optional)
-            </label>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Stop Loss %</label>
-                <Input
-                  type="number"
-                  value={stopLossPct}
-                  onChange={(e) => setStopLossPct(e.target.value)}
-                  placeholder="e.g., 2"
-                  min="0"
-                  step="0.1"
-                />
+          {/* Advanced Settings */}
+          {showAdvanced && (
+            <div className="space-y-4 pl-2 border-l-2 border-border">
+              {/* Position Sizing */}
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Position Sizing</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <select
+                    value={positionSizeType}
+                    onChange={(e) => setPositionSizeType(e.target.value)}
+                    className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
+                  >
+                    {POSITION_SIZE_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Input
+                    type="number"
+                    value={positionSizeValue}
+                    onChange={(e) => setPositionSizeValue(e.target.value)}
+                    min="0"
+                    disabled={positionSizeType === 'full_capital'}
+                    placeholder={positionSizeType === 'percent_capital' ? '% of capital' : '$ amount'}
+                    className="h-9"
+                  />
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Take Profit %</label>
-                <Input
-                  type="number"
-                  value={takeProfitPct}
-                  onChange={(e) => setTakeProfitPct(e.target.value)}
-                  placeholder="e.g., 5"
-                  min="0"
-                  step="0.1"
-                />
-              </div>
-            </div>
-          </div>
 
-          {/* Optional: Transaction Costs */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">
-              Transaction Costs (Optional)
-            </label>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Commission ($)</label>
-                <Input
-                  type="number"
-                  value={commissionPerTrade}
-                  onChange={(e) => setCommissionPerTrade(e.target.value)}
-                  placeholder="0"
-                  min="0"
-                  step="0.01"
-                />
+              {/* Risk Management */}
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Shield className="h-3 w-3" />
+                  Risk Management
+                </Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Stop Loss %</span>
+                    <Input
+                      type="number"
+                      value={stopLossPct}
+                      onChange={(e) => setStopLossPct(e.target.value)}
+                      placeholder="e.g., 2"
+                      min="0"
+                      step="0.5"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Take Profit %</span>
+                    <Input
+                      type="number"
+                      value={takeProfitPct}
+                      onChange={(e) => setTakeProfitPct(e.target.value)}
+                      placeholder="e.g., 5"
+                      min="0"
+                      step="0.5"
+                      className="h-9"
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Commission %</label>
-                <Input
-                  type="number"
-                  value={commissionPct}
-                  onChange={(e) => setCommissionPct(e.target.value)}
-                  placeholder="0"
-                  min="0"
-                  step="0.01"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Slippage %</label>
-                <Input
-                  type="number"
-                  value={slippagePct}
-                  onChange={(e) => setSlippagePct(e.target.value)}
-                  placeholder="0"
-                  min="0"
-                  step="0.01"
-                />
+
+              {/* Transaction Costs */}
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Transaction Costs</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Commission $</span>
+                    <Input
+                      type="number"
+                      value={commissionPerTrade}
+                      onChange={(e) => setCommissionPerTrade(e.target.value)}
+                      placeholder="0"
+                      min="0"
+                      step="0.01"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Commission %</span>
+                    <Input
+                      type="number"
+                      value={commissionPct}
+                      onChange={(e) => setCommissionPct(e.target.value)}
+                      placeholder="0"
+                      min="0"
+                      step="0.01"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Slippage %</span>
+                    <Input
+                      type="number"
+                      value={slippagePct}
+                      onChange={(e) => setSlippagePct(e.target.value)}
+                      placeholder="0"
+                      min="0"
+                      step="0.01"
+                      className="h-9"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={createBacktest.isPending || !strategyId}
+            disabled={createBacktest.isPending || !canSubmit || !strategies?.length}
           >
             {createBacktest.isPending ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Creating...
+                Running...
               </>
             ) : (
               <>
