@@ -13,7 +13,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { useBacktest, useBacktestTrades } from '@/api/hooks'
-import { formatPercent, formatDateTimeFull, formatDurationDetailed, cn } from '@/lib/utils'
+import { formatPercent, formatDateTimeFull, formatDurationFromTimestamps, cn } from '@/lib/utils'
 import { ArrowLeft, Search, Download } from 'lucide-react'
 
 export function BacktestTradesPage() {
@@ -212,7 +212,7 @@ export function BacktestTradesPage() {
                         )}>
                           {formatPercent(trade.pnl_pct)}
                         </td>
-                        <td className="px-4 py-3 text-right numeric">{formatDurationDetailed(trade.trade_duration_days)}</td>
+                        <td className="px-4 py-3 text-right numeric">{formatDurationFromTimestamps(trade.entry_date, trade.exit_date)}</td>
                         <td className="px-4 py-3">
                           {trade.exit_reason && (
                             <Badge variant="outline" className="text-xs">

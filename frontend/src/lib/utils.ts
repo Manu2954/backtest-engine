@@ -86,6 +86,26 @@ export function formatDurationDetailed(days: number): string {
   return parts.join(' ')
 }
 
+export function formatDurationFromTimestamps(entryDate: string | Date, exitDate: string | Date): string {
+  const entry = new Date(entryDate)
+  const exit = new Date(exitDate)
+  const diffMs = exit.getTime() - entry.getTime()
+  const totalSeconds = Math.floor(diffMs / 1000)
+
+  const d = Math.floor(totalSeconds / 86400)
+  const h = Math.floor((totalSeconds % 86400) / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  const s = totalSeconds % 60
+
+  const parts: string[] = []
+  if (d > 0) parts.push(`${d}d`)
+  if (h > 0) parts.push(`${h}h`)
+  if (m > 0) parts.push(`${m}m`)
+  if (s > 0 || parts.length === 0) parts.push(`${s}s`)
+
+  return parts.join(' ')
+}
+
 export function getPnLColor(value: number): string {
   if (value > 0) return 'text-profit'
   if (value < 0) return 'text-loss'
