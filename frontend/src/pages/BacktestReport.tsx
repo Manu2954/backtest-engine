@@ -100,10 +100,11 @@ export function BacktestReportPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { data: backtest, isLoading, error } = useBacktest(id!)
+  const isBacktestComplete = backtest?.status === 'COMPLETE' || backtest?.status === 'COMPLETED'
   const { data: trades } = useBacktestTrades(
     id!,
     { limit: 10 },
-    { enabled: backtest?.status === 'COMPLETED' }
+    { enabled: isBacktestComplete }
   )
   const [runningAnalysis, setRunningAnalysis] = useState<string | null>(null)
   const [rerunning, setRerunning] = useState(false)
@@ -111,7 +112,8 @@ export function BacktestReportPage() {
 
   // Refetch trades when backtest completes
   useEffect(() => {
-    if (backtest && prevStatusRef.current !== 'COMPLETED' && backtest.status === 'COMPLETED') {
+    const wasComplete = prevStatusRef.current === 'COMPLETE' || prevStatusRef.current === 'COMPLETED'
+    if (backtest && !wasComplete && isBacktestComplete) {
       queryClient.invalidateQueries({ queryKey: backtestKeys.trades(id!) })
     }
     prevStatusRef.current = backtest?.status
