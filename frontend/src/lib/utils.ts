@@ -21,3 +21,12 @@ export function formatPercent(value: number): string {
 export function formatNumber(value: number, decimals = 2): string {
   return value.toFixed(decimals);
 }
+
+export function formatDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}

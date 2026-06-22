@@ -1,9 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn, formatCurrency, formatPercent, formatNumber } from "@/lib/utils";
-import type { BacktestReport } from "@/types";
+import type { BacktestResults } from "@/types";
 
 interface MetricsGridProps {
-  report: BacktestReport;
+  results: BacktestResults;
   className?: string;
 }
 
@@ -31,13 +31,13 @@ function MetricCard({ label, value, variant = "default" }: MetricCardProps) {
   );
 }
 
-export function MetricsGrid({ report, className }: MetricsGridProps) {
-  const totalReturnVariant =
-    report.total_return_pct >= 0 ? "success" : "danger";
+export function MetricsGrid({ results, className }: MetricsGridProps) {
+  const totalReturn = results.total_return ?? results.total_return_pct ?? 0;
+  const totalReturnVariant = totalReturn >= 0 ? "success" : "danger";
   const sharpeVariant =
-    report.sharpe_ratio >= 1.0
+    results.sharpe_ratio >= 1.0
       ? "success"
-      : report.sharpe_ratio >= 0.5
+      : results.sharpe_ratio >= 0.5
         ? "warning"
         : "danger";
 
@@ -53,17 +53,17 @@ export function MetricsGrid({ report, className }: MetricsGridProps) {
         <CardContent className="space-y-3">
           <MetricCard
             label="Total Return"
-            value={formatPercent(report.total_return_pct)}
+            value={formatPercent(totalReturn)}
             variant={totalReturnVariant}
           />
           <MetricCard
             label="CAGR"
-            value={formatPercent(report.cagr * 100)}
-            variant={report.cagr >= 0 ? "success" : "danger"}
+            value={formatPercent(results.cagr * 100)}
+            variant={results.cagr >= 0 ? "success" : "danger"}
           />
           <MetricCard
             label="Max Drawdown"
-            value={formatPercent(-report.max_drawdown_pct)}
+            value={formatPercent(-results.max_drawdown_pct)}
             variant="danger"
           />
         </CardContent>
@@ -79,20 +79,20 @@ export function MetricsGrid({ report, className }: MetricsGridProps) {
         <CardContent className="space-y-3">
           <MetricCard
             label="Sharpe Ratio"
-            value={formatNumber(report.sharpe_ratio)}
+            value={formatNumber(results.sharpe_ratio)}
             variant={sharpeVariant}
           />
-          {report.sortino_ratio !== undefined && (
+          {results.sortino_ratio !== undefined && (
             <MetricCard
               label="Sortino Ratio"
-              value={formatNumber(report.sortino_ratio)}
-              variant={report.sortino_ratio >= 1.0 ? "success" : "warning"}
+              value={formatNumber(results.sortino_ratio)}
+              variant={results.sortino_ratio >= 1.0 ? "success" : "warning"}
             />
           )}
           <MetricCard
             label="Profit Factor"
-            value={formatNumber(report.profit_factor)}
-            variant={report.profit_factor >= 1.5 ? "success" : "warning"}
+            value={formatNumber(results.profit_factor)}
+            variant={results.profit_factor >= 1.5 ? "success" : "warning"}
           />
         </CardContent>
       </Card>
@@ -107,16 +107,16 @@ export function MetricsGrid({ report, className }: MetricsGridProps) {
         <CardContent className="space-y-3">
           <MetricCard
             label="Total Trades"
-            value={report.total_trades.toString()}
+            value={results.total_trades.toString()}
           />
           <MetricCard
             label="Win Rate"
-            value={formatPercent(report.win_rate * 100)}
-            variant={report.win_rate >= 0.5 ? "success" : "warning"}
+            value={formatPercent(results.win_rate * 100)}
+            variant={results.win_rate >= 0.5 ? "success" : "warning"}
           />
           <MetricCard
             label="Avg Duration"
-            value={`${formatNumber(report.avg_trade_duration_days, 1)} days`}
+            value={`${formatNumber(results.avg_trade_duration_days, 1)} days`}
           />
         </CardContent>
       </Card>
@@ -131,23 +131,23 @@ export function MetricsGrid({ report, className }: MetricsGridProps) {
         <CardContent className="space-y-3">
           <MetricCard
             label="Winning Trades"
-            value={report.winning_trades.toString()}
+            value={results.winning_trades.toString()}
             variant="success"
           />
           <MetricCard
             label="Losing Trades"
-            value={report.losing_trades.toString()}
+            value={results.losing_trades.toString()}
             variant="danger"
           />
           <div className="flex gap-4">
             <MetricCard
               label="Avg Win"
-              value={formatCurrency(report.avg_win)}
+              value={formatCurrency(results.avg_win)}
               variant="success"
             />
             <MetricCard
               label="Avg Loss"
-              value={formatCurrency(report.avg_loss)}
+              value={formatCurrency(results.avg_loss)}
               variant="danger"
             />
           </div>
@@ -155,7 +155,7 @@ export function MetricsGrid({ report, className }: MetricsGridProps) {
       </Card>
 
       {/* Benchmark Comparison */}
-      {report.benchmark_return_pct !== undefined && (
+      {results.benchmark_return_pct !== undefined && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -165,18 +165,18 @@ export function MetricsGrid({ report, className }: MetricsGridProps) {
           <CardContent className="space-y-3">
             <MetricCard
               label="Benchmark Return"
-              value={formatPercent(report.benchmark_return_pct)}
-              variant={report.benchmark_return_pct >= 0 ? "success" : "danger"}
+              value={formatPercent(results.benchmark_return_pct)}
+              variant={results.benchmark_return_pct >= 0 ? "success" : "danger"}
             />
-            {report.alpha !== undefined && (
+            {results.alpha !== undefined && (
               <MetricCard
                 label="Alpha"
-                value={formatPercent(report.alpha * 100)}
-                variant={report.alpha >= 0 ? "success" : "danger"}
+                value={formatPercent(results.alpha * 100)}
+                variant={results.alpha >= 0 ? "success" : "danger"}
               />
             )}
-            {report.beta !== undefined && (
-              <MetricCard label="Beta" value={formatNumber(report.beta)} />
+            {results.beta !== undefined && (
+              <MetricCard label="Beta" value={formatNumber(results.beta)} />
             )}
           </CardContent>
         </Card>

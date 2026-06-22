@@ -8,7 +8,6 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
 
 interface EquityCurveData {
@@ -17,12 +16,22 @@ interface EquityCurveData {
   benchmark?: number;
 }
 
-interface EquityCurveProps {
-  data: EquityCurveData[];
+export interface EquityCurveProps {
+  equityCurve: EquityCurveData[];
+  benchmarkCurve?: Array<{ date: string; equity: number }>;
   showBenchmark?: boolean;
 }
 
-export function EquityCurve({ data, showBenchmark = true }: EquityCurveProps) {
+export function EquityCurve({ equityCurve, benchmarkCurve, showBenchmark = true }: EquityCurveProps) {
+  // Merge equity curve with benchmark curve if provided
+  const data = equityCurve.map((d) => {
+    const benchmarkPoint = benchmarkCurve?.find((b) => b.date === d.date);
+    return {
+      ...d,
+      benchmark: d.benchmark ?? benchmarkPoint?.equity,
+    };
+  });
+
   // Format data for chart
   const chartData = data.map((d) => ({
     ...d,
@@ -34,60 +43,61 @@ export function EquityCurve({ data, showBenchmark = true }: EquityCurveProps) {
 
   const hasBenchmark = showBenchmark && data.some((d) => d.benchmark !== undefined);
 
+  if (chartData.length === 0) {
+    return (
+      <div className="h-[400px] flex items-center justify-center text-muted-foreground">
+        No equity data available
+      </div>
+    );
+  }
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Equity Curve</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="h-[400px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 12 }}
-                className="text-muted-foreground"
-              />
-              <YAxis
-                tickFormatter={(value) => formatCurrency(value)}
-                tick={{ fontSize: 12 }}
-                className="text-muted-foreground"
-                width={80}
-              />
-              <Tooltip
-                formatter={(value: number) => [formatCurrency(value), ""]}
-                labelFormatter={(label) => `Date: ${label}`}
-                contentStyle={{
-                  backgroundColor: "hsl(var(--card))",
-                  borderColor: "hsl(var(--border))",
-                  borderRadius: "8px",
-                }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="equity"
-                name="Strategy"
-                stroke="hsl(var(--primary))"
-                strokeWidth={2}
-                dot={false}
-              />
-              {hasBenchmark && (
-                <Line
-                  type="monotone"
-                  dataKey="benchmark"
-                  name="Benchmark"
-                  stroke="hsl(var(--muted-foreground))"
-                  strokeWidth={2}
-                  strokeDasharray="5 5"
-                  dot={false}
-                />
-              )}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="h-[400px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={chartData}>
+          <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+          <XAxis
+            dataKey="date"
+            tick={{ fontSize: 12 }}
+            className="text-muted-foreground"
+          />
+          <YAxis
+            tickFormatter={(value) => formatCurrency(value)}
+            tick={{ fontSize: 12 }}
+            className="text-muted-foreground"
+            width={80}
+          />
+          <Tooltip
+            formatter={(value: number) => [formatCurrency(value), ""]}
+            labelFormatter={(label) => `Date: ${label}`}
+            contentStyle={{
+              backgroundColor: "hsl(var(--card))",
+              borderColor: "hsl(var(--border))",
+              borderRadius: "8px",
+            }}
+          />
+          <Legend />
+          <Line
+            type="monotone"
+            dataKey="equity"
+            name="Strategy"
+            stroke="hsl(var(--primary))"
+            strokeWidth={2}
+            dot={false}
+          />
+          {hasBenchmark && (
+            <Line
+              type="monotone"
+              dataKey="benchmark"
+              name="Benchmark"
+              stroke="hsl(var(--muted-foreground))"
+              strokeWidth={2}
+              strokeDasharray="5 5"
+              dot={false}
+            />
+          )}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   );
 }

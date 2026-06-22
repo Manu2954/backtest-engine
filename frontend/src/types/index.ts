@@ -55,7 +55,7 @@ export interface StrategyCreate {
 export interface BacktestConfig {
   strategy_id: string;
   ticker: string;
-  asset_class: "STOCK" | "CRYPTO";
+  asset_class: string;
   start_date: string;
   end_date: string;
   bar_resolution: string;
@@ -63,12 +63,12 @@ export interface BacktestConfig {
   provider?: string;
   position_size_type: string;
   position_size_value: number;
-  stop_loss_pct?: number;
-  take_profit_pct?: number;
+  stop_loss_pct?: number | null;
+  take_profit_pct?: number | null;
   commission_per_trade: number;
   commission_pct: number;
   slippage_pct: number;
-  enable_attribution: boolean;
+  enable_attribution?: boolean;
   periodic_contribution?: {
     amount: number;
     frequency: string;
@@ -77,8 +77,9 @@ export interface BacktestConfig {
   };
 }
 
-export interface BacktestReport {
-  total_return_pct: number;
+export interface BacktestResults {
+  total_return: number;
+  total_return_pct?: number;
   cagr: number;
   sharpe_ratio: number;
   sortino_ratio?: number;
@@ -95,6 +96,7 @@ export interface BacktestReport {
   alpha?: number;
   beta?: number;
   equity_curve?: Array<{ date: string; equity: number; benchmark?: number }>;
+  benchmark_curve?: Array<{ date: string; equity: number }>;
 }
 
 export interface Backtest {
@@ -107,12 +109,13 @@ export interface Backtest {
   end_date: string;
   bar_resolution: string;
   initial_capital: number;
-  status: "PENDING" | "RUNNING" | "COMPLETE" | "FAILED";
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
   celery_task_id?: string;
   created_at?: string;
   completed_at?: string;
   error_message?: string;
-  report?: BacktestReport;
+  results?: BacktestResults;
+  report?: BacktestResults; // Legacy alias
   position_size_type?: string;
   position_size_value?: number;
   stop_loss_pct?: number;
@@ -121,6 +124,9 @@ export interface Backtest {
   commission_pct?: number;
   slippage_pct?: number;
 }
+
+// Alias for compatibility
+export type BacktestRun = Backtest;
 
 export interface Trade {
   id: string;

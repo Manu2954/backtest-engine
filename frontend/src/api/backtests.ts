@@ -16,6 +16,10 @@ export async function createBacktest(data: BacktestConfig): Promise<Backtest> {
   return response.data;
 }
 
+export async function deleteBacktest(id: string): Promise<void> {
+  await api.delete(`/backtests/${id}`);
+}
+
 export interface GetTradesParams {
   limit?: number;
   offset?: number;

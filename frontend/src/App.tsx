@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Toaster } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import Dashboard from "@/pages/Dashboard";
 import StrategyList from "@/pages/StrategyList";
@@ -33,6 +34,7 @@ function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      <Toaster richColors position="top-right" />
     </QueryClientProvider>
   );
 }

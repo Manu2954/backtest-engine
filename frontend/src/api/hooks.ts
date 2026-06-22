@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   getStrategies,
   getStrategy,
@@ -10,6 +11,7 @@ import {
   getBacktests,
   getBacktest,
   createBacktest,
+  deleteBacktest,
   getBacktestTrades,
   type GetTradesParams,
 } from "./backtests";
@@ -38,6 +40,10 @@ export function useCreateStrategy() {
     mutationFn: (data: StrategyCreate) => createStrategy(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["strategies"] });
+      toast.success("Strategy created successfully");
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to create strategy: ${error.message}`);
     },
   });
 }
@@ -51,6 +57,10 @@ export function useUpdateStrategy() {
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: ["strategies"] });
       queryClient.invalidateQueries({ queryKey: ["strategy", id] });
+      toast.success("Strategy updated successfully");
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to update strategy: ${error.message}`);
     },
   });
 }
@@ -62,6 +72,10 @@ export function useDeleteStrategy() {
     mutationFn: (id: string) => deleteStrategy(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["strategies"] });
+      toast.success("Strategy deleted");
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to delete strategy: ${error.message}`);
     },
   });
 }
@@ -97,6 +111,25 @@ export function useCreateBacktest() {
     mutationFn: (data: BacktestConfig) => createBacktest(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["backtests"] });
+      toast.success("Backtest started");
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to start backtest: ${error.message}`);
+    },
+  });
+}
+
+export function useDeleteBacktest() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => deleteBacktest(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["backtests"] });
+      toast.success("Backtest deleted");
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to delete backtest: ${error.message}`);
     },
   });
 }
