@@ -79,9 +79,9 @@ class TradeLogOut(BaseModel):
 
     id: UUID = Field(..., description="Unique trade ID")
     run_id: UUID = Field(..., description="Parent backtest ID")
-    entry_date: date = Field(..., description="Position entry date")
+    entry_date: datetime = Field(..., description="Position entry timestamp")
     entry_price: float = Field(..., description="Entry fill price")
-    exit_date: date = Field(..., description="Position exit date")
+    exit_date: datetime = Field(..., description="Position exit timestamp")
     exit_price: float = Field(..., description="Exit fill price")
     shares: float = Field(..., description="Number of shares/units")
     pnl: float = Field(..., description="Profit/loss in dollars")
