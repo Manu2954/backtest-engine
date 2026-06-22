@@ -459,7 +459,7 @@ def _execute_exit(
         trade_cost = pos.margin + pos.entry_commission
     else:
         trade_cost = entry_price * pos.shares + pos.entry_commission
-    pnl_pct = (pnl / trade_cost) if trade_cost > 0 else 0.0
+    pnl_pct = (pnl / trade_cost * 100) if trade_cost > 0 else 0.0
     trade_duration_days = (
         (exit_date - pos.entry_date).days if pos.entry_date is not None else 0
     )
@@ -673,7 +673,7 @@ def _check_stops(
             entry_price = pos.entry_price
             pnl = -(pos.margin + pos.entry_commission)
             trade_cost = pos.margin + pos.entry_commission
-            pnl_pct = (pnl / trade_cost) if trade_cost > 0 else -1.0
+            pnl_pct = (pnl / trade_cost * 100) if trade_cost > 0 else -100.0
             trade_duration_days = (
                 (ts - pos.entry_date).days if pos.entry_date is not None else 0
             )

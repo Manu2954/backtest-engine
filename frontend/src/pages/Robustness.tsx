@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ErrorBoundary } from '@/components/shared'
 import { useStrategies } from '@/api/hooks'
 import {
   startParameterSensitivity,
@@ -152,7 +153,10 @@ export function RobustnessPage() {
   const renderResults = () => {
     if (!analysis?.report) return null
 
-    switch (analysis.analysis_type) {
+    // Normalize to lowercase for comparison
+    const analysisType = analysis.analysis_type?.toLowerCase()
+
+    switch (analysisType) {
       case 'parameter_sensitivity':
         return (
           <ParameterSensitivityResults
@@ -269,7 +273,9 @@ export function RobustnessPage() {
               </CardContent>
             </Card>
           ) : (
-            renderResults()
+            <ErrorBoundary>
+              {renderResults()}
+            </ErrorBoundary>
           )}
         </div>
       </>

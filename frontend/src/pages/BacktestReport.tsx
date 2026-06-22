@@ -1,4 +1,5 @@
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 import { Header } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -13,6 +14,13 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { EquityCurve } from '@/components/charts'
 import { useBacktest, useBacktestTrades } from '@/api/hooks'
+import { createBacktest } from '@/api'
+import {
+  startParameterSensitivity,
+  startWalkForward,
+  startRegimeDetection,
+  startFeatureConditioning,
+} from '@/api/endpoints/robustness'
 import { formatPercent, formatDate, cn } from '@/lib/utils'
 import {
   ArrowLeft,
@@ -23,6 +31,10 @@ import {
   DollarSign,
   BarChart3,
   Loader2,
+  Shield,
+  Layers,
+  ArrowRight,
+  RefreshCw,
 } from 'lucide-react'
 
 function MetricCard({
@@ -84,8 +96,32 @@ function MetricCard({
 
 export function BacktestReportPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { data: backtest, isLoading, error } = useBacktest(id!)
   const { data: trades } = useBacktestTrades(id!, { limit: 10 })
+  const [runningAnalysis, setRunningAnalysis] = useState<string | null>(null)
+  const [rerunning, setRerunning] = useState(false)
+
+  const handleRerun = async () => {
+    if (!backtest) return
+    setRerunning(true)
+    try {
+      const newBacktest = await createBacktest({
+        strategy_id: backtest.strategy_id,
+        ticker: backtest.ticker,
+        asset_class: backtest.asset_class,
+        start_date: backtest.start_date,
+        end_date: backtest.end_date,
+        bar_resolution: backtest.bar_resolution,
+        initial_capital: backtest.initial_capital,
+      })
+      navigate(`/backtests/${newBacktest.id}`)
+    } catch (err) {
+      console.error('Failed to rerun backtest:', err)
+    } finally {
+      setRerunning(false)
+    }
+  }
 
   if (isLoading) {
     return (
@@ -130,12 +166,29 @@ export function BacktestReportPage() {
   return (
     <>
       <Header title="Backtest Report">
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/backtests">
-            <ArrowLeft className="h-4 w-4" />
-            Back
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          {(isComplete || backtest.status === 'FAILED') && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRerun}
+              disabled={rerunning}
+            >
+              {rerunning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Run Again
+            </Button>
+          )}
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/backtests">
+              <ArrowLeft className="h-4 w-4" />
+              Back
+            </Link>
+          </Button>
+        </div>
       </Header>
 
       <div className="p-6 space-y-6">
@@ -236,9 +289,9 @@ export function BacktestReportPage() {
               />
               <MetricCard
                 label="Win Rate"
-                value={results.win_rate ? `${(results.win_rate * 100).toFixed(1)}%` : '—'}
+                value={results.win_rate ? `${results.win_rate.toFixed(1)}%` : '—'}
                 icon={Target}
-                trend={results.win_rate && results.win_rate >= 0.5 ? 'up' : 'down'}
+                trend={results.win_rate && results.win_rate >= 50 ? 'up' : 'down'}
               />
             </div>
 
@@ -423,6 +476,176 @@ export function BacktestReportPage() {
                     No trades recorded
                   </p>
                 )}
+              </CardContent>
+            </Card>
+
+            {/* Robustness Analysis Quick Launch */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Shield className="h-4 w-4" />
+                      Robustness Analysis
+                    </CardTitle>
+                    <CardDescription>
+                      Test your strategy's stability across different conditions
+                    </CardDescription>
+                  </div>
+                  <Button asChild variant="outline" size="sm">
+                    <Link to="/robustness">
+                      View All
+                      <ArrowRight className="ml-1 h-3 w-3" />
+                    </Link>
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {/* Parameter Sensitivity */}
+                  <button
+                    onClick={async () => {
+                      if (!backtest?.strategy_id) return
+                      setRunningAnalysis('parameter_sensitivity')
+                      try {
+                        const result = await startParameterSensitivity({
+                          strategy_id: backtest.strategy_id,
+                          ticker: backtest.ticker,
+                          asset_class: backtest.asset_class,
+                          start_date: backtest.start_date,
+                          end_date: backtest.end_date,
+                          initial_capital: backtest.initial_capital,
+                          bar_resolution: backtest.bar_resolution,
+                        })
+                        navigate(`/robustness/${result.id}`)
+                      } catch (err) {
+                        console.error('Failed to start analysis:', err)
+                        setRunningAnalysis(null)
+                      }
+                    }}
+                    disabled={runningAnalysis !== null}
+                    className="p-4 border rounded-lg text-left hover:border-primary hover:bg-primary/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <BarChart3 className="h-4 w-4 text-primary" />
+                      {runningAnalysis === 'parameter_sensitivity' && (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      )}
+                    </div>
+                    <div className="font-medium text-sm">Param Sensitivity</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Test ±20% variations
+                    </div>
+                  </button>
+
+                  {/* Walk-Forward */}
+                  <button
+                    onClick={async () => {
+                      if (!backtest?.strategy_id) return
+                      setRunningAnalysis('walk_forward')
+                      try {
+                        const result = await startWalkForward({
+                          strategy_id: backtest.strategy_id,
+                          ticker: backtest.ticker,
+                          asset_class: backtest.asset_class,
+                          start_date: backtest.start_date,
+                          end_date: backtest.end_date,
+                          initial_capital: backtest.initial_capital,
+                          bar_resolution: backtest.bar_resolution,
+                        })
+                        navigate(`/robustness/${result.id}`)
+                      } catch (err) {
+                        console.error('Failed to start analysis:', err)
+                        setRunningAnalysis(null)
+                      }
+                    }}
+                    disabled={runningAnalysis !== null}
+                    className="p-4 border rounded-lg text-left hover:border-primary hover:bg-primary/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <TrendingUp className="h-4 w-4 text-primary" />
+                      {runningAnalysis === 'walk_forward' && (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      )}
+                    </div>
+                    <div className="font-medium text-sm">Walk-Forward</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Time period consistency
+                    </div>
+                  </button>
+
+                  {/* Regime Detection */}
+                  <button
+                    onClick={async () => {
+                      if (!backtest?.strategy_id) return
+                      setRunningAnalysis('regime_detection')
+                      try {
+                        const result = await startRegimeDetection({
+                          strategy_id: backtest.strategy_id,
+                          ticker: backtest.ticker,
+                          asset_class: backtest.asset_class,
+                          start_date: backtest.start_date,
+                          end_date: backtest.end_date,
+                          initial_capital: backtest.initial_capital,
+                          bar_resolution: backtest.bar_resolution,
+                        })
+                        navigate(`/robustness/${result.id}`)
+                      } catch (err) {
+                        console.error('Failed to start analysis:', err)
+                        setRunningAnalysis(null)
+                      }
+                    }}
+                    disabled={runningAnalysis !== null}
+                    className="p-4 border rounded-lg text-left hover:border-primary hover:bg-primary/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <Activity className="h-4 w-4 text-primary" />
+                      {runningAnalysis === 'regime_detection' && (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      )}
+                    </div>
+                    <div className="font-medium text-sm">Regime Detection</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Market condition analysis
+                    </div>
+                  </button>
+
+                  {/* Feature Conditioning */}
+                  <button
+                    onClick={async () => {
+                      if (!backtest?.strategy_id) return
+                      setRunningAnalysis('feature_conditioning')
+                      try {
+                        const result = await startFeatureConditioning({
+                          strategy_id: backtest.strategy_id,
+                          ticker: backtest.ticker,
+                          asset_class: backtest.asset_class,
+                          start_date: backtest.start_date,
+                          end_date: backtest.end_date,
+                          initial_capital: backtest.initial_capital,
+                          bar_resolution: backtest.bar_resolution,
+                        })
+                        navigate(`/robustness/${result.id}`)
+                      } catch (err) {
+                        console.error('Failed to start analysis:', err)
+                        setRunningAnalysis(null)
+                      }
+                    }}
+                    disabled={runningAnalysis !== null}
+                    className="p-4 border rounded-lg text-left hover:border-primary hover:bg-primary/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <Layers className="h-4 w-4 text-primary" />
+                      {runningAnalysis === 'feature_conditioning' && (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      )}
+                    </div>
+                    <div className="font-medium text-sm">Feature Conditioning</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Identify favorable conditions
+                    </div>
+                  </button>
+                </div>
               </CardContent>
             </Card>
           </>

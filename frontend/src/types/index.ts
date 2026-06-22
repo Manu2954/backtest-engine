@@ -152,6 +152,7 @@ export type OperandType = string;
 
 // Input types for creating/editing
 export interface IndicatorInput {
+  id?: string; // Unique ID for visual builder
   indicator_type: string;
   alias: string;
   params: Record<string, number | string>;
@@ -159,6 +160,7 @@ export interface IndicatorInput {
 }
 
 export interface ConditionInput {
+  id?: string; // Unique ID for visual builder
   left_operand_type: string;
   left_operand_value: string;
   operator: string;

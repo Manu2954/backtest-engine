@@ -8,6 +8,7 @@ import {
   StrategyBuilderPage,
   BacktestsPage,
   BacktestReportPage,
+  BacktestTradesPage,
   ComparePage,
   ChartPage,
   RobustnessPage,
@@ -37,7 +38,7 @@ function App() {
             <Route path="/strategies/:id/edit" element={<StrategyBuilderPage />} />
             <Route path="/backtests" element={<BacktestsPage />} />
             <Route path="/backtests/:id" element={<BacktestReportPage />} />
-            <Route path="/backtests/:id/trades" element={<BacktestReportPage />} />
+            <Route path="/backtests/:id/trades" element={<BacktestTradesPage />} />
             <Route path="/compare" element={<ComparePage />} />
             <Route path="/chart" element={<ChartPage />} />
             <Route path="/chart/:ticker" element={<ChartPage />} />

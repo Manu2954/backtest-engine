@@ -70,12 +70,16 @@ async def create_backtest(
 async def list_backtests(
     user_id: str | None = Query(None, description="Filter by user ID"),
     strategy_id: str | None = Query(None, description="Filter by strategy ID"),
+    include_internal: bool = Query(False, description="Include internal robustness runs"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     session: AsyncSession = Depends(get_session),
 ) -> list[BacktestRun]:
     """Retrieve all backtests with optional filtering by user or strategy."""
     query = select(BacktestRun)
+    # Filter out internal robustness runs by default
+    if not include_internal:
+        query = query.where(BacktestRun.is_internal == False)
     if strategy_id:
         query = query.where(BacktestRun.strategy_id == strategy_id)
     if user_id:

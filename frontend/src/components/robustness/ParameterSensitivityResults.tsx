@@ -23,7 +23,12 @@ function formatMetricName(name: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function formatMetricValue(name: string, value: number): string {
+function formatMetricValue(name: string, value: unknown): string {
+  // Handle non-numeric values
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'string') return value;
+  if (typeof value !== 'number' || isNaN(value)) return String(value);
+
   if (name.includes("pct") || name.includes("return") || name.includes("rate") || name.includes("drawdown")) {
     return `${(value * 100).toFixed(2)}%`;
   }
@@ -39,17 +44,37 @@ function formatMetricValue(name: string, value: number): string {
 export default function ParameterSensitivityResults({
   report,
 }: ParameterSensitivityResultsProps) {
-  const { baseline, variants, stability_metrics, assessment } = report;
-  const stabilityScore = stability_metrics.stability_score;
+  // Handle various API response formats with safe fallbacks
+  const reportAny = report as unknown as Record<string, unknown>;
+  const baseline = (reportAny?.baseline ?? {}) as Record<string, unknown>;
+  const variants = (reportAny?.variants ?? []) as Array<{
+    indicator_alias: string;
+    param_name: string;
+    original_value: number;
+    variant_value: number;
+    direction: string;
+    deltas: Record<string, number>;
+  }>;
+
+  const stabilityMetrics = reportAny?.stability_metrics as Record<string, unknown> | undefined;
+  const stabilityScore = (stabilityMetrics?.stability_score ?? stabilityMetrics?.overall_stability_score ?? 0) as number;
+  const metricCvs = (stabilityMetrics?.metric_cvs ?? stabilityMetrics?.per_metric_cv ?? {}) as Record<string, number>;
+
+  const assessment = reportAny?.assessment as Record<string, unknown> | undefined;
+  const level = ((assessment?.level ?? assessment?.robustness_level ?? 'UNKNOWN') as string);
+  const flags = (assessment?.flags ?? assessment?.risk_flags ?? []) as string[];
+  const recommendation = (assessment?.recommendation ?? '') as string;
+
   const scorePercent = Math.min(100, Math.max(0, stabilityScore * 100));
 
   // Group variants by indicator
   const variantsByIndicator = variants.reduce(
     (acc, v) => {
-      if (!acc[v.indicator_alias]) {
-        acc[v.indicator_alias] = [];
+      const alias = v.indicator_alias || 'unknown';
+      if (!acc[alias]) {
+        acc[alias] = [];
       }
-      acc[v.indicator_alias].push(v);
+      acc[alias].push(v);
       return acc;
     },
     {} as Record<string, typeof variants>
@@ -66,7 +91,7 @@ export default function ParameterSensitivityResults({
               style={{
                 fontSize: "2.5rem",
                 fontWeight: 700,
-                color: getLevelColor(assessment.level),
+                color: getLevelColor(level),
               }}
             >
               {(stabilityScore * 100).toFixed(0)}%
@@ -75,11 +100,11 @@ export default function ParameterSensitivityResults({
               className="tag"
               style={{
                 marginTop: "8px",
-                background: getLevelColor(assessment.level),
+                background: getLevelColor(level),
                 color: "white",
               }}
             >
-              {assessment.level}
+              {level}
             </div>
           </div>
           <div style={{ flex: 2 }}>
@@ -95,24 +120,24 @@ export default function ParameterSensitivityResults({
                 style={{
                   width: `${scorePercent}%`,
                   height: "100%",
-                  background: getLevelColor(assessment.level),
+                  background: getLevelColor(level),
                   transition: "width 0.5s ease",
                 }}
               />
             </div>
             <p style={{ marginTop: "12px", color: "var(--muted)", fontSize: "0.9rem" }}>
-              {assessment.recommendation}
+              {recommendation}
             </p>
           </div>
         </div>
       </div>
 
       {/* Assessment Flags */}
-      {assessment.flags.length > 0 && (
+      {flags.length > 0 && (
         <div className="notice" style={{ marginBottom: "16px" }}>
           <strong>Analysis Notes:</strong>
           <ul style={{ margin: "8px 0 0 20px", padding: 0 }}>
-            {assessment.flags.map((flag, i) => (
+            {flags.map((flag, i) => (
               <li key={i}>{flag}</li>
             ))}
           </ul>
@@ -143,9 +168,10 @@ export default function ParameterSensitivityResults({
           Lower CV indicates more stable metrics across parameter variations.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          {Object.entries(stability_metrics.metric_cvs).map(([metric, cv]) => {
-            const cvPercent = Math.min(100, cv * 100);
-            const isHigh = cv > 0.3;
+          {Object.entries(metricCvs).map(([metric, cv]) => {
+            const cvValue = typeof cv === 'number' ? cv : 0;
+            const cvPercent = Math.min(100, cvValue * 100);
+            const isHigh = cvValue > 0.3;
             return (
               <div key={metric} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                 <div style={{ width: "140px", fontSize: "0.85rem" }}>
@@ -169,7 +195,7 @@ export default function ParameterSensitivityResults({
                   />
                 </div>
                 <div style={{ width: "50px", fontSize: "0.85rem", textAlign: "right" }}>
-                  {(cv * 100).toFixed(1)}%
+                  {(cvValue * 100).toFixed(1)}%
                 </div>
               </div>
             );
@@ -203,25 +229,26 @@ export default function ParameterSensitivityResults({
               </thead>
               <tbody>
                 {indicatorVariants.map((v, i) => {
-                  const returnDelta = v.deltas.total_return || v.deltas.total_pnl_pct || 0;
-                  const sharpeDelta = v.deltas.sharpe_ratio || 0;
+                  const deltas = v.deltas || {};
+                  const returnDelta = deltas.total_return ?? deltas.total_pnl_pct ?? deltas.total_return_pct ?? 0;
+                  const sharpeDelta = deltas.sharpe_ratio ?? deltas.sharpe ?? 0;
                   return (
                     <tr key={i}>
                       <td>
-                        {v.param_name}{" "}
+                        {v.param_name || 'unknown'}{" "}
                         <span style={{ color: v.direction === "up" ? "#1b7f6b" : "#b42318" }}>
                           ({v.direction === "up" ? "+" : "-"}20%)
                         </span>
                       </td>
-                      <td>{v.original_value}</td>
-                      <td>{v.variant_value}</td>
+                      <td>{v.original_value ?? '—'}</td>
+                      <td>{v.variant_value ?? '—'}</td>
                       <td
                         style={{
                           color: returnDelta >= 0 ? "#1b7f6b" : "#b42318",
                         }}
                       >
                         {returnDelta >= 0 ? "+" : ""}
-                        {(returnDelta * 100).toFixed(2)}%
+                        {typeof returnDelta === 'number' ? (returnDelta * 100).toFixed(2) : '0.00'}%
                       </td>
                       <td
                         style={{
@@ -229,7 +256,7 @@ export default function ParameterSensitivityResults({
                         }}
                       >
                         {sharpeDelta >= 0 ? "+" : ""}
-                        {sharpeDelta.toFixed(2)}
+                        {typeof sharpeDelta === 'number' ? sharpeDelta.toFixed(2) : '0.00'}
                       </td>
                     </tr>
                   );

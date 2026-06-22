@@ -1,23 +1,38 @@
 import { useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { Header } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { BacktestCard } from '@/components/backtest/BacktestCard'
 import { useBacktests, useDeleteBacktest } from '@/api/hooks'
-import { Plus, Search, LineChart } from 'lucide-react'
+import { createBacktest } from '@/api'
+import type { Backtest } from '@/types'
+import { Plus, Search, LineChart, AlertTriangle } from 'lucide-react'
 
 const STATUS_FILTERS = ['ALL', 'PENDING', 'RUNNING', 'COMPLETE', 'FAILED'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
 
 export function BacktestsPage() {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const strategyId = searchParams.get('strategy') || undefined
 
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
+  const [deleteTarget, setDeleteTarget] = useState<Backtest | null>(null)
+  const [_rerunning, setRerunning] = useState<string | null>(null)
 
   const { data: backtests, isLoading, error } = useBacktests({
     strategy_id: strategyId,
@@ -40,9 +55,34 @@ export function BacktestsPage() {
     return matchesSearch && matchesStatus
   })
 
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this backtest?')) {
-      deleteBacktest.mutate(id)
+  const handleDeleteClick = (backtest: Backtest) => {
+    setDeleteTarget(backtest)
+  }
+
+  const handleDeleteConfirm = () => {
+    if (deleteTarget) {
+      deleteBacktest.mutate(deleteTarget.id)
+      setDeleteTarget(null)
+    }
+  }
+
+  const handleRerun = async (backtest: Backtest) => {
+    setRerunning(backtest.id)
+    try {
+      const newBacktest = await createBacktest({
+        strategy_id: backtest.strategy_id,
+        ticker: backtest.ticker,
+        asset_class: backtest.asset_class,
+        start_date: backtest.start_date,
+        end_date: backtest.end_date,
+        bar_resolution: backtest.bar_resolution,
+        initial_capital: backtest.initial_capital,
+      })
+      navigate(`/backtests/${newBacktest.id}`)
+    } catch (err) {
+      console.error('Failed to rerun backtest:', err)
+    } finally {
+      setRerunning(null)
     }
   }
 
@@ -170,12 +210,51 @@ export function BacktestsPage() {
               <BacktestCard
                 key={backtest.id}
                 backtest={backtest}
-                onDelete={handleDelete}
+                onDelete={() => handleDeleteClick(backtest)}
+                onRerun={() => handleRerun(backtest)}
               />
             ))}
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Delete Backtest
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this backtest?
+              {deleteTarget && (
+                <div className="mt-3 p-3 bg-surface-1 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{deleteTarget.ticker}</Badge>
+                    <Badge variant="secondary">{deleteTarget.asset_class}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {deleteTarget.start_date} → {deleteTarget.end_date}
+                  </p>
+                </div>
+              )}
+              <p className="mt-3 text-destructive font-medium">
+                This action cannot be undone.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

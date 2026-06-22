@@ -254,6 +254,21 @@
     @apply text-muted-foreground/60;
   }
 
+  /* Date input calendar icon fix for dark mode */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    cursor: pointer;
+    opacity: 0.7;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
+
+  .light input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: none;
+  }
+
   select {
     @apply cursor-pointer;
   }

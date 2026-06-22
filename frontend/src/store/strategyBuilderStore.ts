@@ -4,7 +4,13 @@ import type {
   ConditionGroupInput,
   ConditionInput,
 } from "../types";
-import { getDefaultParams } from "../lib/constants";
+import { getDefaultParams, getIndicatorOutputs } from "../lib/constants";
+
+// Generate unique IDs
+let idCounter = 0;
+const generateId = () => `block_${Date.now()}_${++idCounter}`;
+
+export type BlockType = 'indicator' | 'condition' | 'group' | null;
 
 export interface StrategyState {
   // Strategy metadata
@@ -22,8 +28,10 @@ export interface StrategyState {
   history: StrategySnapshot[];
   historyIndex: number;
 
-  // UI state
-  selectedIndicatorIndex: number | null;
+  // UI state - Visual Builder
+  selectedBlockId: string | null;
+  selectedBlockType: BlockType;
+  selectedIndicatorIndex: number | null; // Legacy support
   isDirty: boolean;
 }
 
@@ -42,9 +50,17 @@ interface StrategyActions {
 
   // Indicator actions
   addIndicator: (type: string) => void;
+  addIndicatorWithId: (type: string) => string; // Returns the new ID
   removeIndicator: (index: number) => void;
+  removeIndicatorById: (id: string) => void;
   updateIndicator: (index: number, patch: Partial<IndicatorInput>) => void;
+  updateIndicatorById: (id: string, patch: Partial<IndicatorInput>) => void;
   selectIndicator: (index: number | null) => void;
+
+  // Block selection (Visual Builder)
+  selectBlock: (id: string | null, type: BlockType) => void;
+  getSelectedIndicator: () => IndicatorInput | null;
+  getSelectedCondition: () => { condition: ConditionInput; target: 'entry' | 'exit'; index: number } | null;
 
   // Condition group actions
   setEntryLogic: (logic: "AND" | "OR") => void;
@@ -52,8 +68,11 @@ interface StrategyActions {
 
   // Condition actions
   addCondition: (target: "entry" | "exit") => void;
+  addConditionWithId: (target: "entry" | "exit") => string; // Returns the new ID
   removeCondition: (target: "entry" | "exit", index: number) => void;
+  removeConditionById: (id: string) => void;
   updateCondition: (target: "entry" | "exit", index: number, patch: Partial<ConditionInput>) => void;
+  updateConditionById: (id: string, patch: Partial<ConditionInput>) => void;
 
   // History actions
   undo: () => void;
@@ -72,6 +91,8 @@ interface StrategyActions {
 
   // Computed helpers
   getIndicatorAliases: () => string[];
+  findIndicatorById: (id: string) => { indicator: IndicatorInput; index: number } | null;
+  findConditionById: (id: string) => { condition: ConditionInput; target: 'entry' | 'exit'; index: number } | null;
 }
 
 const emptyConditionGroup = (): ConditionGroupInput => ({
@@ -80,8 +101,9 @@ const emptyConditionGroup = (): ConditionGroupInput => ({
 });
 
 const createEmptyCondition = (): ConditionInput => ({
-  left_operand_type: "INDICATOR",
-  left_operand_value: "",
+  id: generateId(),
+  left_operand_type: "OHLCV",
+  left_operand_value: "close",
   operator: "GT",
   right_operand_type: "SCALAR",
   right_operand_value: "0",
@@ -96,6 +118,8 @@ const initialState: StrategyState = {
   exit: emptyConditionGroup(),
   history: [],
   historyIndex: -1,
+  selectedBlockId: null,
+  selectedBlockType: null,
   selectedIndicatorIndex: null,
   isDirty: false,
 };
@@ -115,7 +139,9 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     const state = get();
     const nextIndex = state.indicators.length + 1;
     const alias = `${type.toLowerCase()}_${nextIndex}`;
+    const id = generateId();
     const newIndicator: IndicatorInput = {
+      id,
       indicator_type: type,
       alias,
       params: getDefaultParams(type),
@@ -125,8 +151,33 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     set({
       indicators: [...state.indicators, newIndicator],
       selectedIndicatorIndex: state.indicators.length,
+      selectedBlockId: id,
+      selectedBlockType: 'indicator',
       isDirty: true,
     });
+  },
+
+  addIndicatorWithId: (type) => {
+    const state = get();
+    const nextIndex = state.indicators.length + 1;
+    const alias = `${type.toLowerCase()}_${nextIndex}`;
+    const id = generateId();
+    const newIndicator: IndicatorInput = {
+      id,
+      indicator_type: type,
+      alias,
+      params: getDefaultParams(type),
+      display_order: state.indicators.length,
+    };
+    get().saveToHistory();
+    set({
+      indicators: [...state.indicators, newIndicator],
+      selectedIndicatorIndex: state.indicators.length,
+      selectedBlockId: id,
+      selectedBlockType: 'indicator',
+      isDirty: true,
+    });
+    return id;
   },
 
   removeIndicator: (index) => {
@@ -135,6 +186,20 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     set({
       indicators: state.indicators.filter((_, i) => i !== index),
       selectedIndicatorIndex: null,
+      selectedBlockId: null,
+      selectedBlockType: null,
+      isDirty: true,
+    });
+  },
+
+  removeIndicatorById: (id) => {
+    const state = get();
+    get().saveToHistory();
+    set({
+      indicators: state.indicators.filter((ind) => ind.id !== id),
+      selectedIndicatorIndex: null,
+      selectedBlockId: state.selectedBlockId === id ? null : state.selectedBlockId,
+      selectedBlockType: state.selectedBlockId === id ? null : state.selectedBlockType,
       isDirty: true,
     });
   },
@@ -148,8 +213,56 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     });
   },
 
+  updateIndicatorById: (id, patch) => {
+    const state = get();
+    get().saveToHistory();
+    set({
+      indicators: state.indicators.map((ind) => (ind.id === id ? { ...ind, ...patch } : ind)),
+      isDirty: true,
+    });
+  },
+
   selectIndicator: (index) => {
-    set({ selectedIndicatorIndex: index });
+    const state = get();
+    const indicator = index !== null ? state.indicators[index] : null;
+    set({
+      selectedIndicatorIndex: index,
+      selectedBlockId: indicator?.id || null,
+      selectedBlockType: indicator ? 'indicator' : null,
+    });
+  },
+
+  selectBlock: (id, type) => {
+    set({
+      selectedBlockId: id,
+      selectedBlockType: type,
+      selectedIndicatorIndex: null, // Clear legacy selection
+    });
+  },
+
+  getSelectedIndicator: () => {
+    const state = get();
+    if (state.selectedBlockType !== 'indicator' || !state.selectedBlockId) return null;
+    return state.indicators.find((ind) => ind.id === state.selectedBlockId) || null;
+  },
+
+  getSelectedCondition: () => {
+    const state = get();
+    if (state.selectedBlockType !== 'condition' || !state.selectedBlockId) return null;
+
+    // Search in entry conditions
+    const entryIdx = state.entry.conditions.findIndex((c) => c.id === state.selectedBlockId);
+    if (entryIdx !== -1) {
+      return { condition: state.entry.conditions[entryIdx], target: 'entry' as const, index: entryIdx };
+    }
+
+    // Search in exit conditions
+    const exitIdx = state.exit.conditions.findIndex((c) => c.id === state.selectedBlockId);
+    if (exitIdx !== -1) {
+      return { condition: state.exit.conditions[exitIdx], target: 'exit' as const, index: exitIdx };
+    }
+
+    return null;
   },
 
   setEntryLogic: (logic) => {
@@ -180,6 +293,27 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     });
   },
 
+  addConditionWithId: (target) => {
+    const state = get();
+    get().saveToHistory();
+    const group = target === "entry" ? state.entry : state.exit;
+    const newCondition: ConditionInput = {
+      ...createEmptyCondition(),
+      display_order: group.conditions.length,
+    };
+    const updated = {
+      ...group,
+      conditions: [...group.conditions, newCondition],
+    };
+    set({
+      [target]: updated,
+      selectedBlockId: newCondition.id,
+      selectedBlockType: 'condition',
+      isDirty: true,
+    });
+    return newCondition.id!;
+  },
+
   removeCondition: (target, index) => {
     const state = get();
     get().saveToHistory();
@@ -194,6 +328,38 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     });
   },
 
+  removeConditionById: (id) => {
+    const state = get();
+    get().saveToHistory();
+
+    // Check entry conditions
+    if (state.entry.conditions.some((c) => c.id === id)) {
+      set({
+        entry: {
+          ...state.entry,
+          conditions: state.entry.conditions.filter((c) => c.id !== id),
+        },
+        selectedBlockId: state.selectedBlockId === id ? null : state.selectedBlockId,
+        selectedBlockType: state.selectedBlockId === id ? null : state.selectedBlockType,
+        isDirty: true,
+      });
+      return;
+    }
+
+    // Check exit conditions
+    if (state.exit.conditions.some((c) => c.id === id)) {
+      set({
+        exit: {
+          ...state.exit,
+          conditions: state.exit.conditions.filter((c) => c.id !== id),
+        },
+        selectedBlockId: state.selectedBlockId === id ? null : state.selectedBlockId,
+        selectedBlockType: state.selectedBlockId === id ? null : state.selectedBlockType,
+        isDirty: true,
+      });
+    }
+  },
+
   updateCondition: (target, index, patch) => {
     const state = get();
     const group = target === "entry" ? state.entry : state.exit;
@@ -205,6 +371,39 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       [target]: updated,
       isDirty: true,
     });
+  },
+
+  updateConditionById: (id, patch) => {
+    const state = get();
+
+    // Check entry conditions
+    const entryIdx = state.entry.conditions.findIndex((c) => c.id === id);
+    if (entryIdx !== -1) {
+      set({
+        entry: {
+          ...state.entry,
+          conditions: state.entry.conditions.map((c, i) =>
+            i === entryIdx ? { ...c, ...patch } : c
+          ),
+        },
+        isDirty: true,
+      });
+      return;
+    }
+
+    // Check exit conditions
+    const exitIdx = state.exit.conditions.findIndex((c) => c.id === id);
+    if (exitIdx !== -1) {
+      set({
+        exit: {
+          ...state.exit,
+          conditions: state.exit.conditions.map((c, i) =>
+            i === exitIdx ? { ...c, ...patch } : c
+          ),
+        },
+        isDirty: true,
+      });
+    }
   },
 
   saveToHistory: () => {
@@ -281,24 +480,31 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
 
   getIndicatorAliases: () => {
     const state = get();
-    const aliases: string[] = [];
-    state.indicators.forEach((ind) => {
-      const type = ind.indicator_type;
-      const alias = ind.alias;
-      aliases.push(alias);
-      // Add sub-columns for multi-output indicators
-      if (type === "MACD") {
-        aliases.push(`${alias}_macd`, `${alias}_signal`, `${alias}_hist`);
-      } else if (type === "BB") {
-        aliases.push(`${alias}_upper`, `${alias}_mid`, `${alias}_lower`);
-      } else if (type === "STOCH") {
-        aliases.push(`${alias}_k`, `${alias}_d`);
-      } else if (type === "ADX") {
-        aliases.push(`${alias}_adx`, `${alias}_dmp`, `${alias}_dmn`);
-      } else if (type === "ICHIMOKU") {
-        aliases.push(`${alias}_tenkan`, `${alias}_kijun`, `${alias}_span_a`, `${alias}_span_b`, `${alias}_chikou`);
-      }
-    });
-    return aliases;
+    return state.indicators.flatMap((ind) =>
+      getIndicatorOutputs(ind.indicator_type, ind.alias)
+    );
+  },
+
+  findIndicatorById: (id) => {
+    const state = get();
+    const index = state.indicators.findIndex((ind) => ind.id === id);
+    if (index === -1) return null;
+    return { indicator: state.indicators[index], index };
+  },
+
+  findConditionById: (id) => {
+    const state = get();
+
+    const entryIdx = state.entry.conditions.findIndex((c) => c.id === id);
+    if (entryIdx !== -1) {
+      return { condition: state.entry.conditions[entryIdx], target: 'entry' as const, index: entryIdx };
+    }
+
+    const exitIdx = state.exit.conditions.findIndex((c) => c.id === id);
+    if (exitIdx !== -1) {
+      return { condition: state.exit.conditions[exitIdx], target: 'exit' as const, index: exitIdx };
+    }
+
+    return null;
   },
 }));

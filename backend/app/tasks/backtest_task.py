@@ -203,6 +203,20 @@ async def _run_backtest_async(run_id: str) -> None:
                     f"Requested: {requested_start_date}, Actual: {actual_start_date}"
                 )
 
+            # Add equity curve for frontend charting
+            # Format: [{"date": "YYYY-MM-DD", "equity": float, "benchmark": float}, ...]
+            equity_curve_list = []
+            for idx, val in equity_curve.items():
+                entry = {
+                    "date": str(idx.date()) if hasattr(idx, 'date') else str(idx),
+                    "equity": float(val) if val is not None else 0.0,
+                }
+                # Add benchmark if available
+                if benchmark_equity is not None and idx in benchmark_equity.index:
+                    entry["benchmark"] = float(benchmark_equity.loc[idx])
+                equity_curve_list.append(entry)
+            report["equity_curve"] = equity_curve_list
+
             # Generate attribution report if enabled
             if run.enable_attribution:
                 logger.info("Generating attribution report")

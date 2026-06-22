@@ -35,7 +35,7 @@ def test_next_bar_fills_and_pnl() -> None:
     assert trade["exit_price"] == 14.0
     assert trade["shares"] == 8.0  # floor(100/12)
     assert trade["pnl"] == 16.0
-    assert abs(trade["pnl_pct"] - 0.1667) < 0.001  # 16.67% return
+    assert abs(trade["pnl_pct"] - 16.67) < 0.1  # 16.67% return
     assert trade["trade_duration_days"] == 2
 
     assert equity.iloc[-1] == 116.0
@@ -1175,7 +1175,7 @@ def test_dynamic_tp_pct_column_basic() -> None:
 
     assert len(trades) == 1
     assert trades[0]["exit_reason"] == "take_profit"
-    assert trades[0]["pnl_pct"] >= 0.029  # ~3% profit (stored as fraction)
+    assert trades[0]["pnl_pct"] >= 2.9  # ~3% profit
 
 
 def test_dynamic_tp_pct_varies_per_trade() -> None:
@@ -1208,9 +1208,9 @@ def test_dynamic_tp_pct_varies_per_trade() -> None:
 
     assert len(trades) == 2
     assert trades[0]["exit_reason"] == "take_profit"
-    assert trades[0]["pnl_pct"] >= 0.019  # ~2%
+    assert trades[0]["pnl_pct"] >= 1.9  # ~2%
     assert trades[1]["exit_reason"] == "take_profit"
-    assert trades[1]["pnl_pct"] >= 0.049  # ~5%
+    assert trades[1]["pnl_pct"] >= 4.9  # ~5%
 
 
 def test_dynamic_tp_pct_nan_falls_back_to_fixed() -> None:
@@ -1237,7 +1237,7 @@ def test_dynamic_tp_pct_nan_falls_back_to_fixed() -> None:
     # NaN in column → dynamic_tp_pct stays None → falls back to fixed 10%
     assert len(trades) == 1
     assert trades[0]["exit_reason"] == "take_profit"
-    assert trades[0]["pnl_pct"] >= 0.099  # ~10%
+    assert trades[0]["pnl_pct"] >= 9.9  # ~10%
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1271,10 +1271,10 @@ def test_leverage_long_profit() -> None:
     # Entry at 100, shares = (1000 * 3) / 100 = 30 shares
     # Margin = 30 * 100 / 3 = 1000
     # PnL = (105 - 100) * 30 = 150
-    # pnl_pct = 150 / 1000 = 0.15 (15% return on margin)
+    # pnl_pct = 150 / 1000 * 100 = 15% return on margin
     assert t["shares"] == 30.0
     assert abs(t["pnl"] - 150.0) < 0.01
-    assert abs(t["pnl_pct"] - 0.15) < 0.001
+    assert abs(t["pnl_pct"] - 15.0) < 0.1
 
 
 def test_leverage_long_liquidation() -> None:
@@ -1343,7 +1343,7 @@ def test_leverage_short_profit() -> None:
     # PnL = (100 - 95) * 30 = 150
     assert t["shares"] == 30.0
     assert abs(t["pnl"] - 150.0) < 0.01
-    assert abs(t["pnl_pct"] - 0.15) < 0.001
+    assert abs(t["pnl_pct"] - 15.0) < 0.1
 
 
 def test_leverage_short_liquidation() -> None:
@@ -1624,8 +1624,8 @@ def test_counter_trade_uses_dynamic_tp():
     )
 
     assert len(trades) == 2
-    # LONG loss: pnl_pct is stored as decimal, -0.1 = -10%
-    assert abs(trades[0]["pnl_pct"] + 0.1) < 0.01  # -10% stored as -0.1
+    # LONG loss: pnl_pct stored as percentage, -10%
+    assert abs(trades[0]["pnl_pct"] + 10.0) < 0.1  # -10%
     assert trades[0]["exit_reason"] == "signal"
 
     # SHORT counter: should hit TP

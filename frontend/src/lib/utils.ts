@@ -50,6 +50,17 @@ export function formatDateTime(date: string | Date): string {
   }).format(new Date(date))
 }
 
+export function formatDateTimeFull(date: string | Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(date))
+}
+
 export function formatDuration(days: number): string {
   if (days < 1) return '< 1 day'
   if (days === 1) return '1 day'
@@ -57,6 +68,22 @@ export function formatDuration(days: number): string {
   if (days < 30) return `${Math.round(days / 7)} weeks`
   if (days < 365) return `${Math.round(days / 30)} months`
   return `${(days / 365).toFixed(1)} years`
+}
+
+export function formatDurationDetailed(days: number): string {
+  const totalSeconds = Math.round(days * 24 * 60 * 60)
+  const d = Math.floor(totalSeconds / 86400)
+  const h = Math.floor((totalSeconds % 86400) / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  const s = totalSeconds % 60
+
+  const parts: string[] = []
+  if (d > 0) parts.push(`${d}d`)
+  if (h > 0) parts.push(`${h}h`)
+  if (m > 0) parts.push(`${m}m`)
+  if (s > 0 || parts.length === 0) parts.push(`${s}s`)
+
+  return parts.join(' ')
 }
 
 export function getPnLColor(value: number): string {

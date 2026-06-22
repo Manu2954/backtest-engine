@@ -177,6 +177,7 @@ async def _create_backtest_run(
         commission_pct=backtest_params.get("commission_pct", 0.0),
         slippage_pct=backtest_params.get("slippage_pct", 0.0),
         enable_attribution=backtest_params.get("enable_attribution", False),
+        is_internal=True,  # Mark as internal robustness run
     )
 
     async with session_maker() as session:

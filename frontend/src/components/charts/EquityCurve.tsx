@@ -29,10 +29,19 @@ export function EquityCurve({
       theme,
     })
 
-    // Convert data to LineDataPoint format
-    const equityData: LineDataPoint[] = data.map((d) => ({
-      time: d.date,
-      value: d.equity,
+    // Deduplicate and sort data by date (keep last value for each date)
+    const dateMap = new Map<string, { equity: number; benchmark?: number }>()
+    for (const d of data) {
+      // Normalize date to YYYY-MM-DD format
+      const dateStr = d.date.split('T')[0].split(' ')[0]
+      dateMap.set(dateStr, { equity: d.equity, benchmark: d.benchmark })
+    }
+
+    // Convert to sorted array
+    const sortedDates = Array.from(dateMap.keys()).sort()
+    const equityData: LineDataPoint[] = sortedDates.map((date) => ({
+      time: date,
+      value: dateMap.get(date)!.equity,
     }))
 
     // Add equity curve as area series
@@ -44,11 +53,11 @@ export function EquityCurve({
 
     // Add benchmark if available
     if (showBenchmark) {
-      const benchmarkData: LineDataPoint[] = data
-        .filter((d) => d.benchmark !== undefined)
-        .map((d) => ({
-          time: d.date,
-          value: d.benchmark!,
+      const benchmarkData: LineDataPoint[] = sortedDates
+        .filter((date) => dateMap.get(date)!.benchmark !== undefined)
+        .map((date) => ({
+          time: date,
+          value: dateMap.get(date)!.benchmark!,
         }))
 
       if (benchmarkData.length > 0) {

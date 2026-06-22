@@ -16,17 +16,20 @@ import {
   TrendingUp,
   TrendingDown,
   Loader2,
+  RefreshCw,
 } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
 interface BacktestCardProps {
   backtest: Backtest
-  onDelete?: (id: string) => void
+  onDelete?: () => void
+  onRerun?: () => void
 }
 
 function getStatusBadgeVariant(status: string): 'pending' | 'running' | 'complete' | 'failed' {
@@ -45,7 +48,7 @@ function getStatusBadgeVariant(status: string): 'pending' | 'running' | 'complet
   }
 }
 
-export function BacktestCard({ backtest, onDelete }: BacktestCardProps) {
+export function BacktestCard({ backtest, onDelete, onRerun }: BacktestCardProps) {
   const results = backtest.results || backtest.report
   const isComplete = backtest.status === 'COMPLETE' || backtest.status === 'COMPLETED'
   const isRunning = backtest.status === 'RUNNING' || backtest.status === 'PENDING'
@@ -93,9 +96,16 @@ export function BacktestCard({ backtest, onDelete }: BacktestCardProps) {
                     View Details
                   </Link>
                 </DropdownMenuItem>
+                {(isComplete || backtest.status === 'FAILED') && (
+                  <DropdownMenuItem onClick={() => onRerun?.()}>
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Run Again
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className="text-destructive focus:text-destructive"
-                  onClick={() => onDelete?.(backtest.id)}
+                  onClick={() => onDelete?.()}
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
                   Delete
