@@ -152,3 +152,123 @@
     @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 }
+
+/* Strategy Builder utility classes */
+@layer components {
+  .container {
+    @apply max-w-7xl mx-auto px-6 py-6 space-y-6;
+  }
+
+  .card {
+    @apply bg-card text-card-foreground rounded-lg border border-border p-6;
+  }
+
+  .row {
+    @apply flex flex-wrap gap-4 items-end;
+  }
+
+  .row > div {
+    @apply flex-1 min-w-[150px];
+  }
+
+  .grid-2 {
+    @apply grid grid-cols-1 md:grid-cols-2 gap-6;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-md font-medium transition-colors;
+    @apply bg-primary text-primary-foreground hover:bg-primary/90;
+    @apply disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn.secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-secondary/80;
+  }
+
+  .notice {
+    @apply p-4 rounded-md bg-muted text-muted-foreground text-sm;
+  }
+
+  .tag {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+    @apply bg-secondary text-secondary-foreground;
+  }
+
+  .stepper {
+    @apply flex gap-2 mt-4;
+  }
+
+  .step {
+    @apply px-4 py-2 rounded-md text-sm font-medium transition-colors;
+    @apply bg-secondary/50 text-muted-foreground;
+  }
+
+  .step.active {
+    @apply bg-primary text-primary-foreground;
+  }
+
+  .table {
+    @apply w-full text-sm;
+  }
+
+  .table thead {
+    @apply border-b border-border;
+  }
+
+  .table th {
+    @apply px-4 py-3 text-left font-medium text-muted-foreground;
+  }
+
+  .table td {
+    @apply px-4 py-3 border-b border-border/50;
+  }
+
+  .metrics {
+    @apply flex flex-wrap gap-6;
+  }
+
+  .metric {
+    @apply flex flex-col gap-1;
+  }
+
+  .fade-in {
+    animation: fadeIn 0.2s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Form controls */
+  label {
+    @apply block text-sm font-medium text-muted-foreground mb-1.5;
+  }
+
+  input, select, textarea {
+    @apply w-full px-3 py-2 rounded-md border border-input bg-background text-foreground;
+    @apply focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background;
+  }
+
+  input::placeholder {
+    @apply text-muted-foreground/60;
+  }
+
+  select {
+    @apply cursor-pointer;
+  }
+
+  /* Spinner */
+  .spinner {
+    @apply w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin;
+  }
+
+  /* Modal */
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4;
+  }
+
+  .modal {
+    @apply bg-card text-card-foreground rounded-lg border border-border p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto;
+  }
+}
