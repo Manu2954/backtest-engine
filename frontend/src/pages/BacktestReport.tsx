@@ -1,5 +1,6 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Header } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -97,10 +98,20 @@ function MetricCard({
 export function BacktestReportPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { data: backtest, isLoading, error } = useBacktest(id!)
   const { data: trades } = useBacktestTrades(id!, { limit: 10 })
   const [runningAnalysis, setRunningAnalysis] = useState<string | null>(null)
   const [rerunning, setRerunning] = useState(false)
+  const prevStatusRef = useRef<string | undefined>(undefined)
+
+  // Refetch trades when backtest completes
+  useEffect(() => {
+    if (backtest && prevStatusRef.current !== 'COMPLETED' && backtest.status === 'COMPLETED') {
+      queryClient.invalidateQueries({ queryKey: ['backtests', id, 'trades'] })
+    }
+    prevStatusRef.current = backtest?.status
+  }, [backtest, id, queryClient])
 
   const handleRerun = async () => {
     if (!backtest) return
