@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { EquityCurve } from '@/components/charts'
-import { useBacktest, useBacktestTrades } from '@/api/hooks'
+import { useBacktest, useBacktestTrades, backtestKeys } from '@/api/hooks'
 import { createBacktest } from '@/api'
 import {
   startParameterSensitivity,
@@ -100,7 +100,11 @@ export function BacktestReportPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { data: backtest, isLoading, error } = useBacktest(id!)
-  const { data: trades } = useBacktestTrades(id!, { limit: 10 })
+  const { data: trades } = useBacktestTrades(
+    id!,
+    { limit: 10 },
+    { enabled: backtest?.status === 'COMPLETED' }
+  )
   const [runningAnalysis, setRunningAnalysis] = useState<string | null>(null)
   const [rerunning, setRerunning] = useState(false)
   const prevStatusRef = useRef<string | undefined>(undefined)
@@ -108,7 +112,7 @@ export function BacktestReportPage() {
   // Refetch trades when backtest completes
   useEffect(() => {
     if (backtest && prevStatusRef.current !== 'COMPLETED' && backtest.status === 'COMPLETED') {
-      queryClient.invalidateQueries({ queryKey: ['backtests', id, 'trades'] })
+      queryClient.invalidateQueries({ queryKey: backtestKeys.trades(id!) })
     }
     prevStatusRef.current = backtest?.status
   }, [backtest, id, queryClient])

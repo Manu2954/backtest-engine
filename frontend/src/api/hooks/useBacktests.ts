@@ -48,12 +48,13 @@ export function useBacktest(id: string) {
 
 export function useBacktestTrades(
   runId: string,
-  params?: { limit?: number; offset?: number }
+  params?: { limit?: number; offset?: number },
+  options?: { enabled?: boolean }
 ) {
   return useQuery({
     queryKey: [...backtestKeys.trades(runId), params],
     queryFn: () => getBacktestTrades(runId, params),
-    enabled: !!runId,
+    enabled: !!runId && (options?.enabled ?? true),
     staleTime: 5 * 60 * 1000, // 5 minutes - trades don't change
   })
 }
