@@ -18,7 +18,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Undo2, Redo2, Save } from 'lucide-react'
-import type { Strategy, IndicatorInput, ConditionGroupInput } from '@/types'
+import type { Strategy, IndicatorInput, ConditionGroupInput, StrategyCreate } from '@/types'
 
 interface DragData {
   type: 'palette-indicator' | 'canvas-indicator' | 'condition'
@@ -39,6 +39,8 @@ export function StrategyBuilderVisual() {
   const indicators = useStrategyBuilderStore((s) => s.indicators)
   const entry = useStrategyBuilderStore((s) => s.entry)
   const exit = useStrategyBuilderStore((s) => s.exit)
+  const shortEntry = useStrategyBuilderStore((s) => s.shortEntry)
+  const shortExit = useStrategyBuilderStore((s) => s.shortExit)
   const historyIndex = useStrategyBuilderStore((s) => s.historyIndex)
   const historyLength = useStrategyBuilderStore((s) => s.history.length)
 
@@ -71,6 +73,8 @@ export function StrategyBuilderVisual() {
       .then((strategy: Strategy) => {
         const entryGroup = strategy.condition_groups.find((g) => g.group_type === 'ENTRY')
         const exitGroup = strategy.condition_groups.find((g) => g.group_type === 'EXIT')
+        const shortEntryGroup = strategy.condition_groups.find((g) => g.group_type === 'SHORT_ENTRY')
+        const shortExitGroup = strategy.condition_groups.find((g) => g.group_type === 'SHORT_EXIT')
         loadStrategy({
           name: strategy.name,
           description: strategy.description || '',
@@ -96,6 +100,24 @@ export function StrategyBuilderVisual() {
                 conditions: exitGroup.conditions.map((c, idx) => ({
                   ...c,
                   id: `exit_${idx}`,
+                })),
+              }
+            : { logic: 'AND', conditions: [] },
+          shortEntry: shortEntryGroup
+            ? {
+                logic: shortEntryGroup.logic as 'AND' | 'OR',
+                conditions: shortEntryGroup.conditions.map((c, idx) => ({
+                  ...c,
+                  id: `short_entry_${idx}`,
+                })),
+              }
+            : { logic: 'AND', conditions: [] },
+          shortExit: shortExitGroup
+            ? {
+                logic: shortExitGroup.logic as 'AND' | 'OR',
+                conditions: shortExitGroup.conditions.map((c, idx) => ({
+                  ...c,
+                  id: `short_exit_${idx}`,
                 })),
               }
             : { logic: 'AND', conditions: [] },
@@ -138,7 +160,7 @@ export function StrategyBuilderVisual() {
     setLoading(true)
     setError(null)
     try {
-      const payload = {
+      const payload: StrategyCreate = {
         name,
         description,
         indicators: indicators.map(({ id: _id, ...rest }) => rest), // Remove client-side IDs
@@ -150,6 +172,21 @@ export function StrategyBuilderVisual() {
           logic: exit.logic,
           conditions: exit.conditions.map(({ id: _id, ...rest }) => rest),
         } as ConditionGroupInput,
+      }
+
+      // Only include short conditions if they have any conditions defined
+      if (shortEntry.conditions.length > 0) {
+        payload.short_entry = {
+          logic: shortEntry.logic,
+          conditions: shortEntry.conditions.map(({ id: _id, ...rest }) => rest),
+        }
+      }
+
+      if (shortExit.conditions.length > 0) {
+        payload.short_exit = {
+          logic: shortExit.logic,
+          conditions: shortExit.conditions.map(({ id: _id, ...rest }) => rest),
+        }
       }
 
       const strategy = id ? await updateStrategy(id, payload) : await createStrategy(payload)

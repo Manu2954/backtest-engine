@@ -47,8 +47,12 @@ export interface StrategyCreate {
   short_exit?: Omit<ConditionGroup, "id" | "group_type">;
   entry_groups?: Record<string, Omit<ConditionGroup, "id" | "group_type">>;
   exit_groups?: Record<string, Omit<ConditionGroup, "id" | "group_type">>;
+  short_entry_groups?: Record<string, Omit<ConditionGroup, "id" | "group_type">>;
+  short_exit_groups?: Record<string, Omit<ConditionGroup, "id" | "group_type">>;
   entry_expression?: string;
   exit_expression?: string;
+  short_entry_expression?: string;
+  short_exit_expression?: string;
 }
 
 // Backtest Types
@@ -76,6 +80,7 @@ export interface BacktestConfig {
     interval_days?: number;
     include_start?: boolean;
   };
+  leverage?: number;
 }
 
 export interface BacktestResults {

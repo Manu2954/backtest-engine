@@ -1,14 +1,14 @@
-import { useStrategyBuilderStore } from '@/store/strategyBuilderStore'
+import { useStrategyBuilderStore, type ConditionTarget } from '@/store/strategyBuilderStore'
 import { ConditionBlock } from './ConditionBlock'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Plus, ArrowRightToLine, ArrowLeftFromLine } from 'lucide-react'
+import { Plus, ArrowRightToLine, ArrowLeftFromLine, TrendingDown, TrendingUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ConditionInput } from '@/types'
 
 interface ConditionGroupBlockProps {
-  type: 'entry' | 'exit'
+  type: ConditionTarget
   title: string
   conditions: ConditionInput[]
   logic: 'AND' | 'OR'
@@ -20,39 +20,58 @@ export function ConditionGroupBlock({
   conditions,
   logic,
 }: ConditionGroupBlockProps) {
-  const setEntryLogic = useStrategyBuilderStore((s) => s.setEntryLogic)
-  const setExitLogic = useStrategyBuilderStore((s) => s.setExitLogic)
+  const setConditionLogic = useStrategyBuilderStore((s) => s.setConditionLogic)
   const addConditionWithId = useStrategyBuilderStore((s) => s.addConditionWithId)
 
   const handleToggleLogic = () => {
     const newLogic = logic === 'AND' ? 'OR' : 'AND'
-    if (type === 'entry') {
-      setEntryLogic(newLogic)
-    } else {
-      setExitLogic(newLogic)
-    }
+    setConditionLogic(type, newLogic)
   }
 
   const handleAddCondition = () => {
     addConditionWithId(type)
   }
 
-  const isEntry = type === 'entry'
-  const Icon = isEntry ? ArrowRightToLine : ArrowLeftFromLine
+  // Determine styling based on type
+  const isShort = type === 'shortEntry' || type === 'shortExit'
+
+  // Choose icon based on type
+  const getIcon = () => {
+    if (type === 'entry') return ArrowRightToLine
+    if (type === 'exit') return ArrowLeftFromLine
+    if (type === 'shortEntry') return TrendingDown
+    return TrendingUp // shortExit
+  }
+  const Icon = getIcon()
+
+  // Border color: entry/shortEntry = profit (green), exit/shortExit = loss (red)
+  // But for shorts, we can use orange to differentiate
+  const getBorderClass = () => {
+    if (type === 'entry') return 'border-profit/30'
+    if (type === 'exit') return 'border-loss/30'
+    if (type === 'shortEntry') return 'border-orange-500/30'
+    return 'border-purple-500/30' // shortExit
+  }
+
+  const getIconClass = () => {
+    if (type === 'entry') return 'text-profit'
+    if (type === 'exit') return 'text-loss'
+    if (type === 'shortEntry') return 'text-orange-500'
+    return 'text-purple-500' // shortExit
+  }
 
   return (
-    <Card className={cn(
-      'border-2',
-      isEntry ? 'border-profit/30' : 'border-loss/30'
-    )}>
+    <Card className={cn('border-2', getBorderClass())}>
       <CardHeader className="py-3 px-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Icon className={cn(
-              'h-4 w-4',
-              isEntry ? 'text-profit' : 'text-loss'
-            )} />
+            <Icon className={cn('h-4 w-4', getIconClass())} />
             <CardTitle className="text-sm font-semibold">{title}</CardTitle>
+            {isShort && (
+              <Badge variant="outline" className="text-xs bg-muted">
+                Short
+              </Badge>
+            )}
             <Badge variant="outline" className="text-xs">
               {conditions.length}
             </Badge>

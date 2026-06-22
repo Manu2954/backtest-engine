@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useStrategyBuilderStore } from '@/store/strategyBuilderStore'
+import { useStrategyBuilderStore, type ConditionTarget } from '@/store/strategyBuilderStore'
 import { IndicatorInspector } from './IndicatorInspector'
 import { ConditionInspector } from './ConditionInspector'
 import { Settings2 } from 'lucide-react'
@@ -10,6 +10,8 @@ export function BlockInspector() {
   const indicators = useStrategyBuilderStore((s) => s.indicators)
   const entry = useStrategyBuilderStore((s) => s.entry)
   const exit = useStrategyBuilderStore((s) => s.exit)
+  const shortEntry = useStrategyBuilderStore((s) => s.shortEntry)
+  const shortExit = useStrategyBuilderStore((s) => s.shortExit)
 
   // Compute selected indicator
   const selectedIndicator = useMemo(() => {
@@ -18,21 +20,31 @@ export function BlockInspector() {
   }, [selectedBlockType, selectedBlockId, indicators])
 
   // Compute selected condition
-  const selectedConditionData = useMemo(() => {
+  const selectedConditionData = useMemo((): { condition: typeof entry.conditions[0]; target: ConditionTarget; index: number } | null => {
     if (selectedBlockType !== 'condition' || !selectedBlockId) return null
 
     const entryIdx = entry.conditions.findIndex((c) => c.id === selectedBlockId)
     if (entryIdx !== -1) {
-      return { condition: entry.conditions[entryIdx], target: 'entry' as const, index: entryIdx }
+      return { condition: entry.conditions[entryIdx], target: 'entry', index: entryIdx }
     }
 
     const exitIdx = exit.conditions.findIndex((c) => c.id === selectedBlockId)
     if (exitIdx !== -1) {
-      return { condition: exit.conditions[exitIdx], target: 'exit' as const, index: exitIdx }
+      return { condition: exit.conditions[exitIdx], target: 'exit', index: exitIdx }
+    }
+
+    const shortEntryIdx = shortEntry.conditions.findIndex((c) => c.id === selectedBlockId)
+    if (shortEntryIdx !== -1) {
+      return { condition: shortEntry.conditions[shortEntryIdx], target: 'shortEntry', index: shortEntryIdx }
+    }
+
+    const shortExitIdx = shortExit.conditions.findIndex((c) => c.id === selectedBlockId)
+    if (shortExitIdx !== -1) {
+      return { condition: shortExit.conditions[shortExitIdx], target: 'shortExit', index: shortExitIdx }
     }
 
     return null
-  }, [selectedBlockType, selectedBlockId, entry.conditions, exit.conditions])
+  }, [selectedBlockType, selectedBlockId, entry.conditions, exit.conditions, shortEntry.conditions, shortExit.conditions])
 
   // No selection
   if (!selectedBlockId || !selectedBlockType) {

@@ -30,6 +30,7 @@ import {
   Shield,
   Settings2,
   AlertCircle,
+  Repeat,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BacktestConfig } from '@/types'
@@ -62,6 +63,13 @@ const POSITION_SIZE_TYPES = [
   { value: 'full_capital', label: 'Full Capital', description: 'Use all available capital' },
   { value: 'percent_capital', label: 'Percent of Capital', description: 'Use a percentage of capital' },
   { value: 'fixed_amount', label: 'Fixed Amount', description: 'Use a fixed dollar amount' },
+]
+
+const DCA_FREQUENCIES = [
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'interval_days', label: 'Custom Interval' },
 ]
 
 // Get default dates (1 year back from today)
@@ -108,6 +116,16 @@ export function NewBacktestModal({
   const [commissionPerTrade, setCommissionPerTrade] = useState('')
   const [commissionPct, setCommissionPct] = useState('')
   const [slippagePct, setSlippagePct] = useState('')
+
+  // Optional: Dollar Cost Averaging
+  const [dcaEnabled, setDcaEnabled] = useState(false)
+  const [dcaAmount, setDcaAmount] = useState('')
+  const [dcaFrequency, setDcaFrequency] = useState('monthly')
+  const [dcaIntervalDays, setDcaIntervalDays] = useState('')
+  const [dcaIncludeStart, setDcaIncludeStart] = useState(false)
+
+  // Optional: Leverage
+  const [leverage, setLeverage] = useState('1')
 
   // UI state
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -219,6 +237,32 @@ export function NewBacktestModal({
     if (slippagePct) {
       const slip = Number(slippagePct)
       if (!isNaN(slip) && slip >= 0) config.slippage_pct = slip
+    }
+
+    // Add leverage if > 1
+    const lev = Number(leverage)
+    if (!isNaN(lev) && lev > 1) {
+      config.leverage = lev
+    }
+
+    // Add periodic contribution (DCA) if enabled with valid amount
+    if (dcaEnabled) {
+      const amount = Number(dcaAmount)
+      if (!isNaN(amount) && amount > 0) {
+        const contribution: BacktestConfig['periodic_contribution'] = {
+          amount,
+          frequency: dcaFrequency,
+          include_start: dcaIncludeStart,
+        }
+        // Add interval_days only when frequency is interval_days
+        if (dcaFrequency === 'interval_days') {
+          const intervalDays = Number(dcaIntervalDays)
+          if (!isNaN(intervalDays) && intervalDays > 0) {
+            contribution.interval_days = intervalDays
+          }
+        }
+        config.periodic_contribution = contribution
+      }
     }
 
     try {
@@ -446,7 +490,7 @@ export function NewBacktestModal({
           >
             {showAdvanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             Advanced Settings
-            {(stopLossPct || takeProfitPct || commissionPerTrade || commissionPct || slippagePct) && (
+            {(stopLossPct || takeProfitPct || commissionPerTrade || commissionPct || slippagePct || dcaEnabled || Number(leverage) > 1) && (
               <Badge variant="secondary" className="ml-auto text-xs">Configured</Badge>
             )}
           </button>
@@ -478,6 +522,28 @@ export function NewBacktestModal({
                     placeholder={positionSizeType === 'percent_capital' ? '% of capital' : '$ amount'}
                     className="h-9"
                   />
+                </div>
+              </div>
+
+              {/* Leverage */}
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Leverage</Label>
+                <div className="space-y-1">
+                  <Input
+                    type="number"
+                    value={leverage}
+                    onChange={(e) => setLeverage(e.target.value)}
+                    min="1"
+                    max="125"
+                    step="1"
+                    placeholder="1"
+                    className="h-9 w-24"
+                  />
+                  {Number(leverage) > 1 && (
+                    <p className="text-xs text-amber-600">
+                      Leveraged positions can be liquidated if price moves against you
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -556,6 +622,96 @@ export function NewBacktestModal({
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Dollar Cost Averaging */}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setDcaEnabled(!dcaEnabled)}
+                  className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+                >
+                  <div className={cn(
+                    "w-4 h-4 rounded border flex items-center justify-center transition-colors",
+                    dcaEnabled ? "bg-primary border-primary" : "border-input"
+                  )}>
+                    {dcaEnabled && (
+                      <svg className="w-3 h-3 text-primary-foreground" viewBox="0 0 12 12" fill="none">
+                        <path d="M2 6L5 9L10 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                  </div>
+                  <Repeat className="h-3 w-3" />
+                  Dollar Cost Averaging (Periodic Contributions)
+                </button>
+
+                {dcaEnabled && (
+                  <div className="space-y-3 pt-2 pl-6">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <span className="text-xs text-muted-foreground">Contribution Amount ($)</span>
+                        <Input
+                          type="number"
+                          value={dcaAmount}
+                          onChange={(e) => setDcaAmount(e.target.value)}
+                          placeholder="e.g., 500"
+                          min="0"
+                          step="100"
+                          className="h-9"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-xs text-muted-foreground">Frequency</span>
+                        <select
+                          value={dcaFrequency}
+                          onChange={(e) => setDcaFrequency(e.target.value)}
+                          className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
+                        >
+                          {DCA_FREQUENCIES.map((f) => (
+                            <option key={f.value} value={f.value}>
+                              {f.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {dcaFrequency === 'interval_days' && (
+                      <div className="space-y-1">
+                        <span className="text-xs text-muted-foreground">Interval (days)</span>
+                        <Input
+                          type="number"
+                          value={dcaIntervalDays}
+                          onChange={(e) => setDcaIntervalDays(e.target.value)}
+                          placeholder="e.g., 14"
+                          min="1"
+                          step="1"
+                          className="h-9 w-32"
+                        />
+                      </div>
+                    )}
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <div className={cn(
+                        "w-4 h-4 rounded border flex items-center justify-center transition-colors",
+                        dcaIncludeStart ? "bg-primary border-primary" : "border-input"
+                      )}>
+                        {dcaIncludeStart && (
+                          <svg className="w-3 h-3 text-primary-foreground" viewBox="0 0 12 12" fill="none">
+                            <path d="M2 6L5 9L10 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={dcaIncludeStart}
+                        onChange={(e) => setDcaIncludeStart(e.target.checked)}
+                        className="sr-only"
+                      />
+                      <span className="text-xs text-muted-foreground">Include contribution at start date</span>
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
           )}

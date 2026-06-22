@@ -8,6 +8,8 @@ export function BuilderCanvas() {
   const indicators = useStrategyBuilderStore((s) => s.indicators)
   const entry = useStrategyBuilderStore((s) => s.entry)
   const exit = useStrategyBuilderStore((s) => s.exit)
+  const shortEntry = useStrategyBuilderStore((s) => s.shortEntry)
+  const shortExit = useStrategyBuilderStore((s) => s.shortExit)
 
   const { setNodeRef, isOver } = useDroppable({
     id: 'builder-canvas',
@@ -42,24 +44,46 @@ export function BuilderCanvas() {
         )}
       </section>
 
-      {/* Entry Conditions Section */}
+      {/* Long Conditions */}
       <section>
-        <ConditionGroupBlock
-          type="entry"
-          title="Entry Conditions"
-          conditions={entry.conditions}
-          logic={entry.logic}
-        />
+        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
+          Long Positions
+        </h3>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <ConditionGroupBlock
+            type="entry"
+            title="Entry Conditions"
+            conditions={entry.conditions}
+            logic={entry.logic}
+          />
+          <ConditionGroupBlock
+            type="exit"
+            title="Exit Conditions"
+            conditions={exit.conditions}
+            logic={exit.logic}
+          />
+        </div>
       </section>
 
-      {/* Exit Conditions Section */}
+      {/* Short Conditions */}
       <section>
-        <ConditionGroupBlock
-          type="exit"
-          title="Exit Conditions"
-          conditions={exit.conditions}
-          logic={exit.logic}
-        />
+        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
+          Short Positions
+        </h3>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <ConditionGroupBlock
+            type="shortEntry"
+            title="Short Entry Conditions"
+            conditions={shortEntry.conditions}
+            logic={shortEntry.logic}
+          />
+          <ConditionGroupBlock
+            type="shortExit"
+            title="Short Exit Conditions"
+            conditions={shortExit.conditions}
+            logic={shortExit.logic}
+          />
+        </div>
       </section>
     </div>
   )

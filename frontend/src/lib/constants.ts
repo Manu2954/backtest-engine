@@ -108,6 +108,16 @@ export const INDICATOR_CONFIGS = {
     params: [],
     outputs: (alias: string) => [alias],
   },
+  ICHIMOKU: {
+    name: "Ichimoku Cloud",
+    description: "Ichimoku Kinko Hyo - comprehensive trend indicator",
+    params: [
+      { key: "tenkan", label: "Tenkan Period", type: "number", default: 9 },
+      { key: "kijun", label: "Kijun Period", type: "number", default: 26 },
+      { key: "senkou", label: "Senkou Span B Period", type: "number", default: 52 },
+    ],
+    outputs: (alias: string) => [`${alias}_tenkan`, `${alias}_kijun`, `${alias}_span_a`, `${alias}_span_b`, `${alias}_chikou`],
+  },
 } as const;
 
 export type IndicatorType = keyof typeof INDICATOR_CONFIGS;

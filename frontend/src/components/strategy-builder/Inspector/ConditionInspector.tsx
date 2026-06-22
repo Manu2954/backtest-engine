@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useStrategyBuilderStore } from '@/store/strategyBuilderStore'
+import { useStrategyBuilderStore, type ConditionTarget } from '@/store/strategyBuilderStore'
 import { OPERATORS, OPERAND_TYPES, OHLCV_COLUMNS, isUnaryOperator, getIndicatorOutputs } from '@/lib/constants'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -7,7 +7,7 @@ import type { ConditionInput } from '@/types'
 
 interface ConditionInspectorProps {
   condition: ConditionInput
-  target: 'entry' | 'exit'
+  target: ConditionTarget
   index: number
 }
 
@@ -93,14 +93,34 @@ export function ConditionInspector({ condition, target }: ConditionInspectorProp
     )
   }
 
+  // Get display label for the target
+  const getTargetLabel = () => {
+    switch (target) {
+      case 'entry': return 'ENTRY'
+      case 'exit': return 'EXIT'
+      case 'shortEntry': return 'SHORT ENTRY'
+      case 'shortExit': return 'SHORT EXIT'
+    }
+  }
+
+  // Get badge variant based on target
+  const getBadgeVariant = (): 'default' | 'secondary' | 'destructive' | 'outline' => {
+    switch (target) {
+      case 'entry': return 'default'
+      case 'exit': return 'secondary'
+      case 'shortEntry': return 'outline'
+      case 'shortExit': return 'destructive'
+    }
+  }
+
   return (
     <div className="p-4 space-y-6">
       <div>
         <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
           Condition Properties
         </h3>
-        <Badge variant={target === 'entry' ? 'default' : 'secondary'}>
-          {target.toUpperCase()}
+        <Badge variant={getBadgeVariant()}>
+          {getTargetLabel()}
         </Badge>
       </div>
 
