@@ -4,8 +4,10 @@ import { AppShell } from '@/components/layout'
 import {
   Dashboard,
   StrategiesPage,
+  StrategyDetailPage,
   StrategyBuilderPage,
   BacktestsPage,
+  BacktestReportPage,
   ComparePage,
   ChartPage,
   RobustnessPage,
@@ -31,11 +33,11 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/strategies" element={<StrategiesPage />} />
             <Route path="/strategies/new" element={<StrategyBuilderPage />} />
-            <Route path="/strategies/:id" element={<StrategiesPage />} />
+            <Route path="/strategies/:id" element={<StrategyDetailPage />} />
             <Route path="/strategies/:id/edit" element={<StrategyBuilderPage />} />
             <Route path="/backtests" element={<BacktestsPage />} />
-            <Route path="/backtests/:id" element={<BacktestsPage />} />
-            <Route path="/backtests/:id/trades" element={<BacktestsPage />} />
+            <Route path="/backtests/:id" element={<BacktestReportPage />} />
+            <Route path="/backtests/:id/trades" element={<BacktestReportPage />} />
             <Route path="/compare" element={<ComparePage />} />
             <Route path="/chart" element={<ChartPage />} />
             <Route path="/chart/:ticker" element={<ChartPage />} />
