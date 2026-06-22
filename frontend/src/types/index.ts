@@ -61,14 +61,14 @@ export interface BacktestConfig {
   bar_resolution: string;
   initial_capital: number;
   provider?: string;
-  position_size_type: string;
-  position_size_value: number;
+  position_size_type?: string;
+  position_size_value?: number;
   stop_loss_pct?: number | null;
   take_profit_pct?: number | null;
   dynamic_stop_column?: string | null;
-  commission_per_trade: number;
-  commission_pct: number;
-  slippage_pct: number;
+  commission_per_trade?: number;
+  commission_pct?: number;
+  slippage_pct?: number;
   enable_attribution?: boolean;
   periodic_contribution?: {
     amount: number;
@@ -226,17 +226,155 @@ export interface Trade {
   alpha?: number;
 }
 
-// Robustness Types
+// Robustness Types - flexible to handle various backend response shapes
+export type AnalysisType =
+  | "parameter_sensitivity"
+  | "walk_forward"
+  | "regime_detection"
+  | "feature_conditioning";
+
+export type RegimeStrategy = "l1_trend" | "pelt_directional" | "pelt_volatility";
+
 export interface RobustnessAnalysis {
   id: string;
   strategy_id: string;
-  analysis_type: string;
-  status: "PENDING" | "RUNNING" | "COMPLETE" | "FAILED";
+  analysis_type: AnalysisType;
+  status: "PENDING" | "RUNNING" | "COMPLETE" | "COMPLETED" | "FAILED";
   params: Record<string, unknown>;
   report?: Record<string, unknown>;
   created_at: string;
   completed_at?: string;
   error_message?: string;
+}
+
+// Parameter Sensitivity Report
+export interface ParameterSensitivityReport {
+  baseline: Record<string, number>;
+  variants: Array<{
+    indicator_alias: string;
+    param_name: string;
+    original_value: number;
+    variant_value: number;
+    direction: "up" | "down";
+    deltas: Record<string, number>;
+  }>;
+  stability_metrics: {
+    stability_score: number;
+    metric_cvs: Record<string, number>;
+  };
+  assessment: {
+    level: "ROBUST" | "MODERATE" | "FRAGILE";
+    recommendation: string;
+    flags: string[];
+  };
+}
+
+// Walk-Forward Report - flexible shape
+export interface WalkForwardWindow {
+  window_id?: number;
+  window_index?: number;
+  start_date: string;
+  end_date: string;
+  total_return?: number;
+  total_return_pct?: number;
+  sharpe_ratio: number;
+  max_drawdown?: number;
+  max_drawdown_pct?: number;
+  total_trades: number;
+  win_rate: number;
+}
+
+export interface WalkForwardReport {
+  windows: WalkForwardWindow[];
+  summary?: {
+    consistency_score: number;
+    profitable_windows: number;
+    total_windows: number;
+    avg_return: number;
+    avg_sharpe: number;
+    avg_trades: number;
+  };
+  consistency_metrics?: {
+    consistency_score: number;
+    profitable_windows: number;
+    metric_cvs: Record<string, number>;
+  };
+  assessment: {
+    level: "ROBUST" | "MODERATE" | "FRAGILE";
+    recommendation: string;
+    flags: string[];
+  };
+}
+
+// Regime Detection Report - flexible shape
+export interface RegimeStats {
+  regime: string;
+  bar_count: number;
+  trade_count: number;
+  avg_return_pct: number;
+  win_rate: number;
+  sharpe_ratio?: number;
+  start_date?: string;
+  end_date?: string;
+}
+
+export interface RegimeDetectionReport {
+  regimes?: RegimeStats[];
+  regime_performance?: RegimeStats[];
+  summary?: {
+    dependency_level: string;
+    cv_return: number;
+  };
+  regime_dependency?: {
+    dependency_level: "INDEPENDENT" | "MODERATE" | "DEPENDENT";
+    cv_return: number;
+  };
+  assessment: {
+    level: "ROBUST" | "MODERATE" | "FRAGILE";
+    recommendation: string;
+    flags: string[];
+  };
+}
+
+// Feature Conditioning Report - flexible shape
+export interface FeatureQuartile {
+  quartile: number;
+  min_value: number;
+  max_value: number;
+  trade_count: number;
+  win_rate: number;
+  avg_return_pct: number;
+}
+
+export interface FeatureAnalysis {
+  feature_name: string;
+  importance: number;
+  quartiles: FeatureQuartile[];
+  best_quartile: number;
+  worst_quartile: number;
+}
+
+export interface FeatureConditioningReport {
+  features?: FeatureAnalysis[];
+  winning_conditions?: Array<{
+    feature: string;
+    condition: string;
+    win_rate: number;
+  }>;
+  losing_conditions?: Array<{
+    feature: string;
+    condition: string;
+    win_rate: number;
+  }>;
+  summary?: {
+    total_features: number;
+    most_important: string;
+  };
+  assessment: {
+    level: "ROBUST" | "MODERATE" | "FRAGILE";
+    recommendation: string;
+    flags: string[];
+  };
 }
 
 // API Response Types

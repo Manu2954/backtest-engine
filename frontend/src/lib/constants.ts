@@ -172,3 +172,39 @@ export const BACKTEST_STATUSES = {
   COMPLETE: { label: "Complete", color: "bg-green-500" },
   FAILED: { label: "Failed", color: "bg-red-500" },
 } as const;
+
+// Helper functions for indicator configuration
+export function getIndicatorConfig(type: string) {
+  return INDICATOR_CONFIGS[type as IndicatorType] || null;
+}
+
+export function getIndicatorOutputs(type: string, alias: string): string[] {
+  const config = getIndicatorConfig(type);
+  if (!config) return [alias];
+  return config.outputs(alias);
+}
+
+export function getDefaultParams(type: string): Record<string, number | string> {
+  const config = getIndicatorConfig(type);
+  if (!config) return {};
+  const params: Record<string, number | string> = {};
+  config.params.forEach((p) => {
+    params[p.key] = p.default;
+  });
+  return params;
+}
+
+// Helper to get indicator configs as array for filtering
+export function getIndicatorConfigsArray() {
+  return Object.entries(INDICATOR_CONFIGS).map(([type, config]) => ({
+    type,
+    name: config.name,
+    description: config.description,
+    params: config.params,
+  }));
+}
+
+// Check if operator is unary
+export function isUnaryOperator(operator: string): boolean {
+  return operator === "IS_RISING" || operator === "IS_FALLING";
+}

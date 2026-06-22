@@ -1,7 +1,7 @@
 export { Dashboard } from './Dashboard'
 export { StrategiesPage } from './Strategies'
 export { StrategyDetailPage } from './StrategyDetail'
-export { StrategyBuilderPage } from './StrategyBuilder'
+export { default as StrategyBuilderPage } from './StrategyBuilder'
 export { BacktestsPage } from './Backtests'
 export { BacktestReportPage } from './BacktestReport'
 export { ComparePage } from './Compare'
