@@ -1,20 +1,25 @@
-import { Outlet } from "react-router-dom";
-import { Navbar } from "./Navbar";
+import { Outlet } from 'react-router-dom'
+import { Sidebar } from './Sidebar'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { useUIStore } from '@/store/uiStore'
+import { cn } from '@/lib/utils'
 
 export function AppShell() {
+  const { sidebarCollapsed } = useUIStore()
+
   return (
-    <div className="relative flex min-h-screen flex-col">
-      <Navbar />
-      <main className="flex-1">
-        <div className="container py-6">
+    <TooltipProvider>
+      <div className="min-h-screen bg-background">
+        <Sidebar />
+        <main
+          className={cn(
+            'min-h-screen transition-all duration-300',
+            sidebarCollapsed ? 'ml-16' : 'ml-56'
+          )}
+        >
           <Outlet />
-        </div>
-      </main>
-      <footer className="border-t py-4">
-        <div className="container flex items-center justify-center text-sm text-muted-foreground">
-          <p>Backtest Engine © {new Date().getFullYear()}</p>
-        </div>
-      </footer>
-    </div>
-  );
+        </main>
+      </div>
+    </TooltipProvider>
+  )
 }

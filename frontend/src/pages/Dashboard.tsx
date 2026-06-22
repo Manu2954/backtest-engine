@@ -1,152 +1,325 @@
-import { Link } from "react-router-dom";
+import { Link } from 'react-router-dom'
 import {
-  BarChart3,
-  LineChart,
   Plus,
+  LineChart,
+  FlaskConical,
+  ArrowRight,
   TrendingUp,
-  Zap,
-  Shield,
-  Target,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+  TrendingDown,
+  Activity,
+} from 'lucide-react'
+import { Header } from '@/components/layout'
+import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
+} from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { useStrategies } from '@/api/hooks'
+import { useBacktests } from '@/api/hooks'
+import { formatPercent, formatDate, cn } from '@/lib/utils'
 
-const features = [
-  {
-    icon: TrendingUp,
-    title: "Technical Indicators",
-    description:
-      "RSI, MACD, Bollinger Bands, ATR, and more. Build complex strategies with multiple indicators.",
-  },
-  {
-    icon: Target,
-    title: "Flexible Conditions",
-    description:
-      "Crossovers, comparisons, and boolean expressions. Define precise entry and exit rules.",
-  },
-  {
-    icon: LineChart,
-    title: "Realistic Simulation",
-    description:
-      "Commission, slippage, position sizing, and risk management. See true performance.",
-  },
-  {
-    icon: Shield,
-    title: "Risk Management",
-    description:
-      "Stop loss, take profit, and dynamic trailing stops. Protect your capital.",
-  },
-  {
-    icon: BarChart3,
-    title: "Performance Analytics",
-    description:
-      "Sharpe ratio, max drawdown, win rate, and more. Understand your strategy's edge.",
-  },
-  {
-    icon: Zap,
-    title: "Robustness Testing",
-    description:
-      "Parameter sensitivity, walk-forward validation, and regime analysis.",
-  },
-];
+export function Dashboard() {
+  const { data: strategies, isLoading: strategiesLoading } = useStrategies({
+    limit: 5,
+  })
+  const { data: backtests, isLoading: backtestsLoading } = useBacktests({
+    limit: 5,
+  })
 
-export default function Dashboard() {
+  const recentBacktests = backtests?.slice(0, 5) || []
+  const completedBacktests =
+    recentBacktests.filter((b) => b.status === 'COMPLETE' || b.status === 'COMPLETED') || []
+  const avgReturn =
+    completedBacktests.length > 0
+      ? completedBacktests.reduce(
+          (acc, b) => acc + (b.results?.total_return_pct || b.report?.total_return_pct || 0),
+          0
+        ) / completedBacktests.length
+      : 0
+
   return (
-    <div className="space-y-8">
-      {/* Hero Section */}
-      <div className="flex flex-col items-center text-center space-y-4 py-8">
-        <div className="inline-flex items-center rounded-full border px-3 py-1 text-sm">
-          <span className="text-primary">Professional Backtesting Platform</span>
-        </div>
-        <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-          Test Your Trading Strategies
-        </h1>
-        <p className="max-w-[600px] text-muted-foreground text-lg">
-          Build, backtest, and analyze trading strategies with realistic
-          simulation. Support for stocks and crypto with comprehensive
-          performance metrics.
-        </p>
-        <div className="flex gap-4">
-          <Link to="/strategies/new">
-            <Button size="lg" className="gap-2">
-              <Plus className="h-4 w-4" />
-              Create Strategy
-            </Button>
-          </Link>
-          <Link to="/strategies">
-            <Button size="lg" variant="outline">
-              View Strategies
-            </Button>
-          </Link>
-        </div>
-      </div>
+    <>
+      <Header title="Dashboard" />
 
-      {/* Features Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {features.map((feature) => {
-          const Icon = feature.icon;
-          return (
-            <Card key={feature.title}>
+      <div className="p-6 space-y-6">
+        {/* Quick Stats */}
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Total Strategies
+              </CardTitle>
+              <FlaskConical className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold numeric">
+                {strategiesLoading ? '—' : strategies?.length || 0}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Total Backtests
+              </CardTitle>
+              <LineChart className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold numeric">
+                {backtestsLoading ? '—' : backtests?.length || 0}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Avg Return
+              </CardTitle>
+              {avgReturn >= 0 ? (
+                <TrendingUp className="h-4 w-4 text-profit" />
+              ) : (
+                <TrendingDown className="h-4 w-4 text-loss" />
+              )}
+            </CardHeader>
+            <CardContent>
+              <div
+                className={cn(
+                  'text-2xl font-bold numeric',
+                  avgReturn >= 0 ? 'text-profit' : 'text-loss'
+                )}
+              >
+                {completedBacktests.length > 0 ? formatPercent(avgReturn) : '—'}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Running
+              </CardTitle>
+              <Activity className="h-4 w-4 text-blue-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold numeric">
+                {backtestsLoading
+                  ? '—'
+                  : backtests?.filter(
+                      (b) => b.status === 'PENDING' || b.status === 'RUNNING'
+                    ).length || 0}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Quick Actions */}
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card className="hover:border-primary/50 transition-colors cursor-pointer">
+            <Link to="/strategies/new">
               <CardHeader>
                 <div className="flex items-center gap-2">
-                  <div className="rounded-lg bg-primary/10 p-2">
-                    <Icon className="h-5 w-5 text-primary" />
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                    <Plus className="h-5 w-5 text-primary" />
                   </div>
-                  <CardTitle className="text-lg">{feature.title}</CardTitle>
+                  <div>
+                    <CardTitle className="text-base">New Strategy</CardTitle>
+                    <CardDescription>
+                      Create a trading strategy
+                    </CardDescription>
+                  </div>
                 </div>
               </CardHeader>
-              <CardContent>
-                <CardDescription>{feature.description}</CardDescription>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+            </Link>
+          </Card>
 
-      {/* Quick Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Quick Start</CardTitle>
-          <CardDescription>
-            Get started with a new strategy or view your existing work
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-3">
-          <Link to="/strategies/new" className="block">
-            <div className="rounded-lg border p-4 hover:bg-accent transition-colors">
-              <Plus className="h-8 w-8 text-primary mb-2" />
-              <h3 className="font-medium">New Strategy</h3>
-              <p className="text-sm text-muted-foreground">
-                Create a new trading strategy
-              </p>
-            </div>
-          </Link>
-          <Link to="/strategies" className="block">
-            <div className="rounded-lg border p-4 hover:bg-accent transition-colors">
-              <TrendingUp className="h-8 w-8 text-primary mb-2" />
-              <h3 className="font-medium">My Strategies</h3>
-              <p className="text-sm text-muted-foreground">
-                View and manage strategies
-              </p>
-            </div>
-          </Link>
-          <Link to="/backtests" className="block">
-            <div className="rounded-lg border p-4 hover:bg-accent transition-colors">
-              <BarChart3 className="h-8 w-8 text-primary mb-2" />
-              <h3 className="font-medium">Backtest Results</h3>
-              <p className="text-sm text-muted-foreground">
-                View backtest history
-              </p>
-            </div>
-          </Link>
-        </CardContent>
-      </Card>
-    </div>
-  );
+          <Card className="hover:border-primary/50 transition-colors cursor-pointer">
+            <Link to="/backtests">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-chart-3/10">
+                    <LineChart className="h-5 w-5 text-chart-3" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base">Run Backtest</CardTitle>
+                    <CardDescription>
+                      Test strategy on historical data
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+            </Link>
+          </Card>
+
+          <Card className="hover:border-primary/50 transition-colors cursor-pointer">
+            <Link to="/chart">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-chart-4/10">
+                    <Activity className="h-5 w-5 text-chart-4" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base">Live Chart</CardTitle>
+                    <CardDescription>
+                      View market data with indicators
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+            </Link>
+          </Card>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          {/* Recent Strategies */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Recent Strategies</CardTitle>
+                <CardDescription>Your latest trading strategies</CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" asChild>
+                <Link to="/strategies">
+                  View all <ArrowRight className="ml-1 h-4 w-4" />
+                </Link>
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {strategiesLoading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="h-12 animate-pulse rounded-lg bg-surface-2"
+                    />
+                  ))}
+                </div>
+              ) : strategies && strategies.length > 0 ? (
+                <div className="space-y-2">
+                  {strategies.slice(0, 5).map((strategy) => (
+                    <Link
+                      key={strategy.id}
+                      to={`/strategies/${strategy.id}`}
+                      className="flex items-center justify-between rounded-lg p-3 hover:bg-surface-2 transition-colors"
+                    >
+                      <div>
+                        <div className="font-medium">{strategy.name}</div>
+                        <div className="text-sm text-muted-foreground">
+                          {strategy.indicators.length} indicators
+                        </div>
+                      </div>
+                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <FlaskConical className="h-10 w-10 text-muted-foreground mb-3" />
+                  <p className="text-muted-foreground">No strategies yet</p>
+                  <Button variant="link" asChild className="mt-2">
+                    <Link to="/strategies/new">Create your first strategy</Link>
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Recent Backtests */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Recent Backtests</CardTitle>
+                <CardDescription>Latest backtest runs</CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" asChild>
+                <Link to="/backtests">
+                  View all <ArrowRight className="ml-1 h-4 w-4" />
+                </Link>
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {backtestsLoading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="h-12 animate-pulse rounded-lg bg-surface-2"
+                    />
+                  ))}
+                </div>
+              ) : backtests && backtests.length > 0 ? (
+                <div className="space-y-2">
+                  {backtests.slice(0, 5).map((backtest) => {
+                    const returnPct =
+                      backtest.results?.total_return_pct ||
+                      backtest.report?.total_return_pct
+                    return (
+                      <Link
+                        key={backtest.id}
+                        to={`/backtests/${backtest.id}`}
+                        className="flex items-center justify-between rounded-lg p-3 hover:bg-surface-2 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div>
+                            <div className="font-medium">{backtest.ticker}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {backtest.created_at
+                                ? formatDate(backtest.created_at)
+                                : '—'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {backtest.status === 'COMPLETE' ||
+                          backtest.status === 'COMPLETED' ? (
+                            <span
+                              className={cn(
+                                'numeric font-medium',
+                                returnPct && returnPct >= 0
+                                  ? 'text-profit'
+                                  : 'text-loss'
+                              )}
+                            >
+                              {returnPct !== undefined
+                                ? formatPercent(returnPct)
+                                : '—'}
+                            </span>
+                          ) : (
+                            <Badge
+                              variant={
+                                backtest.status === 'FAILED'
+                                  ? 'failed'
+                                  : backtest.status === 'RUNNING'
+                                  ? 'running'
+                                  : 'pending'
+                              }
+                            >
+                              {backtest.status}
+                            </Badge>
+                          )}
+                        </div>
+                      </Link>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <LineChart className="h-10 w-10 text-muted-foreground mb-3" />
+                  <p className="text-muted-foreground">No backtests yet</p>
+                  <Button variant="link" asChild className="mt-2">
+                    <Link to="/backtests">Run your first backtest</Link>
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </>
+  )
 }

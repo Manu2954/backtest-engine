@@ -1,0 +1,8 @@
+export { Dashboard } from './Dashboard'
+export { StrategiesPage } from './Strategies'
+export { StrategyBuilderPage } from './StrategyBuilder'
+export { BacktestsPage } from './Backtests'
+export { ComparePage } from './Compare'
+export { ChartPage } from './Chart'
+export { RobustnessPage } from './Robustness'
+export { SettingsPage } from './Settings'

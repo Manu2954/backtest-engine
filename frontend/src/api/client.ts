@@ -1,127 +1,56 @@
-import axios from "axios";
-import type {
-  Strategy,
-  StrategyCreate,
-  Backtest,
-  BacktestConfig,
-  TradeLog,
-} from "../types";
+import axios, { type AxiosError, type AxiosInstance } from 'axios'
 
-// Determine API base URL
-const getBaseUrl = () => {
-  // Check for environment variable first
-  if (import.meta.env.VITE_API_BASE_URL) {
-    return import.meta.env.VITE_API_BASE_URL;
-  }
-  // In development, use localhost
-  if (import.meta.env.DEV) {
-    return "http://localhost:8000/api/v1";
-  }
-  // In production, use relative URL (same origin)
-  return "/api/v1";
-};
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
-export const api = axios.create({
-  baseURL: getBaseUrl(),
+export const apiClient: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 30000,
   headers: {
-    "Content-Type": "application/json",
+    'Content-Type': 'application/json',
   },
-});
+})
 
 // Request interceptor for logging
-api.interceptors.request.use(
+apiClient.interceptors.request.use(
   (config) => {
-    console.debug(`[API] ${config.method?.toUpperCase()} ${config.url}`);
-    return config;
+    if (import.meta.env.DEV) {
+      console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`)
+    }
+    return config
   },
   (error) => {
-    return Promise.reject(error);
+    return Promise.reject(error)
   }
-);
+)
 
 // Response interceptor for error handling
-api.interceptors.response.use(
+apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    const message =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      "An unexpected error occurred";
+  (error: AxiosError) => {
+    if (error.response) {
+      // Server responded with error status
+      const status = error.response.status
+      const data = error.response.data as { detail?: string; message?: string }
 
-    console.error(`[API Error] ${message}`, error.response?.data);
+      if (status === 422) {
+        // Validation error
+        console.error('[API] Validation error:', data)
+      } else if (status === 404) {
+        console.error('[API] Resource not found:', error.config?.url)
+      } else if (status === 429) {
+        console.error('[API] Rate limit exceeded')
+      } else if (status >= 500) {
+        console.error('[API] Server error:', status, data)
+      }
+    } else if (error.request) {
+      // Request made but no response
+      console.error('[API] Network error - no response received')
+    } else {
+      console.error('[API] Request error:', error.message)
+    }
 
-    // Re-throw with a cleaner error message
-    return Promise.reject(new Error(message));
+    return Promise.reject(error)
   }
-);
+)
 
-// Strategy API functions
-export async function getStrategies(): Promise<Strategy[]> {
-  const response = await api.get<Strategy[]>("/strategies");
-  return response.data;
-}
-
-export async function getStrategy(id: string): Promise<Strategy> {
-  const response = await api.get<Strategy>(`/strategies/${id}`);
-  return response.data;
-}
-
-export async function createStrategy(data: StrategyCreate): Promise<Strategy> {
-  const response = await api.post<Strategy>("/strategies", data);
-  return response.data;
-}
-
-export async function updateStrategy(id: string, data: StrategyCreate): Promise<Strategy> {
-  const response = await api.put<Strategy>(`/strategies/${id}`, data);
-  return response.data;
-}
-
-export async function deleteStrategy(id: string): Promise<void> {
-  await api.delete(`/strategies/${id}`);
-}
-
-// Backtest API functions
-export async function getBacktests(): Promise<Backtest[]> {
-  const response = await api.get<Backtest[]>("/backtests");
-  return response.data;
-}
-
-export async function getBacktest(id: string): Promise<Backtest> {
-  const response = await api.get<Backtest>(`/backtests/${id}`);
-  return response.data;
-}
-
-export async function createBacktest(data: BacktestConfig): Promise<Backtest> {
-  const response = await api.post<Backtest>("/backtests", data);
-  return response.data;
-}
-
-export async function deleteBacktest(id: string): Promise<void> {
-  await api.delete(`/backtests/${id}`);
-}
-
-export async function getBacktestTrades(
-  id: string,
-  limit = 50,
-  offset = 0
-): Promise<TradeLog[]> {
-  const response = await api.get<TradeLog[]>(`/backtests/${id}/trades`, {
-    params: { limit, offset },
-  });
-  return response.data;
-}
-
-export async function validateTicker(
-  ticker: string,
-  assetClass: string
-): Promise<boolean> {
-  try {
-    const response = await api.get<{ valid: boolean }>("/tickers/validate", {
-      params: { ticker, asset_class: assetClass },
-    });
-    return response.data.valid;
-  } catch {
-    return false;
-  }
-}
+export default apiClient

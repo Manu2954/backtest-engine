@@ -1,40 +1,52 @@
-import { Link, Route, Routes } from "react-router-dom";
-import Dashboard from "./pages/Dashboard";
-import StrategyEditor from "./pages/StrategyEditor";
-import BacktestReport from "./pages/BacktestReport";
-import TradeLog from "./pages/TradeLog";
-import StrategyList from "./pages/StrategyList";
-import BacktestList from "./pages/BacktestList";
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { AppShell } from '@/components/layout'
+import {
+  Dashboard,
+  StrategiesPage,
+  StrategyBuilderPage,
+  BacktestsPage,
+  ComparePage,
+  ChartPage,
+  RobustnessPage,
+  SettingsPage,
+} from '@/pages'
 
-export default function App() {
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5 minutes
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+})
+
+function App() {
   return (
-    <div className="app-shell">
-      <header>
-        <div className="brand">
-          <div className="brand-badge" />
-          <div>
-            <div style={{ fontWeight: 700 }}>Backtest Engine</div>
-            <div className="tag">Indicator Strategies</div>
-          </div>
-        </div>
-        <nav>
-          <Link to="/">Dashboard</Link>
-          <Link to="/strategies">Strategy List</Link>
-          <Link to="/strategies/new">New Strategy</Link>
-          <Link to="/backtests">Backtest Jobs</Link>
-        </nav>
-      </header>
-      <main>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/strategies" element={<StrategyList />} />
-          <Route path="/strategies/new" element={<StrategyEditor />} />
-          <Route path="/strategies/:id" element={<StrategyEditor />} />
-          <Route path="/backtests" element={<BacktestList />} />
-          <Route path="/backtests/:id" element={<BacktestReport />} />
-          <Route path="/backtests/:id/trades" element={<TradeLog />} />
+          <Route element={<AppShell />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/strategies" element={<StrategiesPage />} />
+            <Route path="/strategies/new" element={<StrategyBuilderPage />} />
+            <Route path="/strategies/:id" element={<StrategiesPage />} />
+            <Route path="/strategies/:id/edit" element={<StrategyBuilderPage />} />
+            <Route path="/backtests" element={<BacktestsPage />} />
+            <Route path="/backtests/:id" element={<BacktestsPage />} />
+            <Route path="/backtests/:id/trades" element={<BacktestsPage />} />
+            <Route path="/compare" element={<ComparePage />} />
+            <Route path="/chart" element={<ChartPage />} />
+            <Route path="/chart/:ticker" element={<ChartPage />} />
+            <Route path="/robustness" element={<RobustnessPage />} />
+            <Route path="/robustness/:id" element={<RobustnessPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Route>
         </Routes>
-      </main>
-    </div>
-  );
+      </BrowserRouter>
+    </QueryClientProvider>
+  )
 }
+
+export default App

@@ -1,4 +1,5 @@
-export { api } from "./client";
-export * from "./strategies";
-export * from "./backtests";
-export * from "./hooks";
+export * from './endpoints/strategies'
+export * from './endpoints/backtests'
+export * from './endpoints/robustness'
+export * from './endpoints/tickers'
+export { default as apiClient } from './client'
