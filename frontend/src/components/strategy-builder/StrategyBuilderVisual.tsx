@@ -13,7 +13,6 @@ import { useStrategyBuilderStore } from '@/store/strategyBuilderStore'
 import { IndicatorPalette } from './IndicatorPalette'
 import { BuilderCanvas } from './Canvas/BuilderCanvas'
 import { BlockInspector } from './Inspector/BlockInspector'
-import { BacktestConfigPanel } from './BacktestConfigPanel'
 import { getStrategy, createStrategy, updateStrategy } from '@/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -239,9 +238,6 @@ export function StrategyBuilderVisual() {
             <BlockInspector />
           </div>
         </div>
-
-        {/* Footer: Backtest Config */}
-        <BacktestConfigPanel />
 
         {/* Drag Overlay */}
         <DragOverlay>

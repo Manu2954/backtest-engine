@@ -15,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { BacktestCard } from '@/components/backtest/BacktestCard'
+import { BacktestCard, NewBacktestModal } from '@/components/backtest'
 import { useBacktests, useDeleteBacktest } from '@/api/hooks'
 import { createBacktest } from '@/api'
 import type { Backtest } from '@/types'
@@ -33,6 +33,7 @@ export function BacktestsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
   const [deleteTarget, setDeleteTarget] = useState<Backtest | null>(null)
   const [_rerunning, setRerunning] = useState<string | null>(null)
+  const [newBacktestOpen, setNewBacktestOpen] = useState(false)
 
   const { data: backtests, isLoading, error } = useBacktests({
     strategy_id: strategyId,
@@ -98,11 +99,9 @@ export function BacktestsPage() {
   return (
     <>
       <Header title="Backtests">
-        <Button asChild>
-          <Link to="/strategies">
-            <Plus className="h-4 w-4" />
-            New Backtest
-          </Link>
+        <Button onClick={() => setNewBacktestOpen(true)}>
+          <Plus className="h-4 w-4" />
+          New Backtest
         </Button>
       </Header>
 
@@ -255,6 +254,13 @@ export function BacktestsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* New Backtest Modal */}
+      <NewBacktestModal
+        open={newBacktestOpen}
+        onOpenChange={setNewBacktestOpen}
+        defaultStrategyId={strategyId}
+      />
     </>
   )
 }
