@@ -1,4 +1,11 @@
 import axios from "axios";
+import type {
+  Strategy,
+  StrategyCreate,
+  Backtest,
+  BacktestConfig,
+  TradeLog,
+} from "../types";
 
 // Determine API base URL
 const getBaseUrl = () => {
@@ -48,3 +55,73 @@ api.interceptors.response.use(
     return Promise.reject(new Error(message));
   }
 );
+
+// Strategy API functions
+export async function getStrategies(): Promise<Strategy[]> {
+  const response = await api.get<Strategy[]>("/strategies");
+  return response.data;
+}
+
+export async function getStrategy(id: string): Promise<Strategy> {
+  const response = await api.get<Strategy>(`/strategies/${id}`);
+  return response.data;
+}
+
+export async function createStrategy(data: StrategyCreate): Promise<Strategy> {
+  const response = await api.post<Strategy>("/strategies", data);
+  return response.data;
+}
+
+export async function updateStrategy(id: string, data: StrategyCreate): Promise<Strategy> {
+  const response = await api.put<Strategy>(`/strategies/${id}`, data);
+  return response.data;
+}
+
+export async function deleteStrategy(id: string): Promise<void> {
+  await api.delete(`/strategies/${id}`);
+}
+
+// Backtest API functions
+export async function getBacktests(): Promise<Backtest[]> {
+  const response = await api.get<Backtest[]>("/backtests");
+  return response.data;
+}
+
+export async function getBacktest(id: string): Promise<Backtest> {
+  const response = await api.get<Backtest>(`/backtests/${id}`);
+  return response.data;
+}
+
+export async function createBacktest(data: BacktestConfig): Promise<Backtest> {
+  const response = await api.post<Backtest>("/backtests", data);
+  return response.data;
+}
+
+export async function deleteBacktest(id: string): Promise<void> {
+  await api.delete(`/backtests/${id}`);
+}
+
+export async function getBacktestTrades(
+  id: string,
+  limit = 50,
+  offset = 0
+): Promise<TradeLog[]> {
+  const response = await api.get<TradeLog[]>(`/backtests/${id}/trades`, {
+    params: { limit, offset },
+  });
+  return response.data;
+}
+
+export async function validateTicker(
+  ticker: string,
+  assetClass: string
+): Promise<boolean> {
+  try {
+    const response = await api.get<{ valid: boolean }>("/tickers/validate", {
+      params: { ticker, asset_class: assetClass },
+    });
+    return response.data.valid;
+  } catch {
+    return false;
+  }
+}
