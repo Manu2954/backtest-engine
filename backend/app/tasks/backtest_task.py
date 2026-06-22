@@ -341,9 +341,9 @@ def _persist_trades(
         session.add(
             TradeLog(
                 run_id=run_id,
-                entry_date=_to_date(trade["entry_date"]),
+                entry_date=_to_datetime(trade["entry_date"]),
                 entry_price=trade["entry_price"],
-                exit_date=_to_date(trade["exit_date"]),
+                exit_date=_to_datetime(trade["exit_date"]),
                 exit_price=trade["exit_price"],
                 shares=trade["shares"],
                 pnl=trade["pnl"],
@@ -363,7 +363,10 @@ def _persist_trades(
         )
 
 
-def _to_date(value) -> date:
-    if isinstance(value, date):
+def _to_datetime(value) -> datetime:
+    """Convert pandas Timestamp or datetime to datetime."""
+    if isinstance(value, datetime):
         return value
-    return value.date()
+    if hasattr(value, 'to_pydatetime'):
+        return value.to_pydatetime()
+    return pd.to_datetime(value).to_pydatetime()

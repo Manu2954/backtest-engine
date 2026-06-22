@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -57,9 +58,9 @@ class TradeLog(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("backtest_runs.id"), nullable=False)
-    entry_date: Mapped[str] = mapped_column(Date, nullable=False)
+    entry_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     entry_price: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
-    exit_date: Mapped[str] = mapped_column(Date, nullable=False)
+    exit_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     exit_price: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     shares: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     pnl: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
