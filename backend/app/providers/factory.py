@@ -12,7 +12,11 @@ class ProviderFactory:
     """Factory for creating data provider instances."""
 
     @staticmethod
-    def create_provider(provider_name: str, timezone: str = "Asia/Kolkata") -> DataProvider:
+    def create_provider(
+        provider_name: str,
+        timezone: str = "Asia/Kolkata",
+        market_type: str = "SPOT",
+    ) -> DataProvider:
         """
         Create a data provider instance.
 
@@ -22,6 +26,8 @@ class ProviderFactory:
                 - "binance": Binance (crypto only)
                 - Future: "polygon", "fmp"
             timezone: Timezone for date range interpretation (default: "Asia/Kolkata" = IST)
+            market_type: Market type for Binance - "SPOT" (default) or "FUTURES"
+                        Ignored for other providers.
 
         Returns:
             DataProvider instance
@@ -33,7 +39,7 @@ class ProviderFactory:
             return YFinanceProvider(timezone=timezone)
 
         if provider_name == "binance":
-            return BinanceProvider(timezone=timezone)
+            return BinanceProvider(timezone=timezone, market_type=market_type)
 
         raise ValueError(
             f"Unknown provider: '{provider_name}'. "

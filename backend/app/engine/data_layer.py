@@ -477,6 +477,7 @@ async def fetch_ohlcv_async(
     provider: str | None = None,
     timezone: str = "Asia/Kolkata",
     force_refresh: bool = False,
+    market_type: str = "SPOT",
 ) -> pd.DataFrame:
     """
     Fetch OHLCV data from cache, database, or external API.
@@ -508,6 +509,8 @@ async def fetch_ohlcv_async(
                    - "binance" for CRYPTO
         timezone: Timezone for date range interpretation (default: "Asia/Kolkata" = IST)
         force_refresh: Bypass cache and fetch fresh data (for split/dividend updates)
+        market_type: Market type for Binance - "SPOT" (default) or "FUTURES"
+                    Ignored for non-Binance providers.
 
     Returns:
         DataFrame with OHLCV data
@@ -625,7 +628,7 @@ async def fetch_ohlcv_async(
 
             from app.providers.factory import ProviderFactory
 
-            data_provider = ProviderFactory.create_provider(provider, timezone=timezone)
+            data_provider = ProviderFactory.create_provider(provider, timezone=timezone, market_type=market_type)
             start_dt = datetime.combine(start_date, datetime.min.time())
             end_dt = datetime.combine(end_date, datetime.min.time())
             df = await data_provider.fetch_ohlcv(
@@ -638,7 +641,7 @@ async def fetch_ohlcv_async(
 
             from app.providers.factory import ProviderFactory
 
-            data_provider = ProviderFactory.create_provider(provider, timezone=timezone)
+            data_provider = ProviderFactory.create_provider(provider, timezone=timezone, market_type=market_type)
             start_dt = datetime.combine(start_date, datetime.min.time())
             end_dt = datetime.combine(end_date, datetime.min.time())
             df = await data_provider.fetch_ohlcv(
@@ -670,6 +673,7 @@ def fetch_ohlcv(
     provider: str | None = None,
     timezone: str = "Asia/Kolkata",
     force_refresh: bool = False,
+    market_type: str = "SPOT",
 ) -> pd.DataFrame:
     """
     Synchronous wrapper for fetch_ohlcv_async.
@@ -683,6 +687,7 @@ def fetch_ohlcv(
         provider: Data provider to use (optional)
         timezone: Timezone for date range interpretation
         force_refresh: Bypass cache and fetch fresh data (for split/dividend updates)
+        market_type: Market type for Binance - "SPOT" (default) or "FUTURES"
 
     Returns:
         DataFrame with OHLCV data
@@ -702,6 +707,7 @@ def fetch_ohlcv(
                 provider=provider,
                 timezone=timezone,
                 force_refresh=force_refresh,
+                market_type=market_type,
             )
         )
     raise RuntimeError("fetch_ohlcv cannot be called from an active event loop; use fetch_ohlcv_async.")

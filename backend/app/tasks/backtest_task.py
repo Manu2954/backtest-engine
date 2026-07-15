@@ -59,6 +59,7 @@ async def _run_backtest_async(run_id: str) -> None:
                 run.asset_class,
                 session=session,
                 provider=run.provider,
+                market_type=run.market_type or "SPOT",
             )
 
             # Store original OHLCV data for benchmark calculation (before warmup trim)

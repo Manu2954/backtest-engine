@@ -42,6 +42,7 @@ async def create_backtest(
         ticker=payload.ticker,
         asset_class=payload.asset_class,
         provider=payload.provider,
+        market_type=payload.market_type,
         start_date=payload.start_date,
         end_date=payload.end_date,
         bar_resolution=payload.bar_resolution,

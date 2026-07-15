@@ -18,6 +18,7 @@ class BacktestCreate(BaseModel):
     bar_resolution: str = Field("1d", description="Bar interval: 1m, 5m, 15m, 1h, 1d")
     initial_capital: float = Field(..., description="Starting capital in dollars")
     provider: str | None = Field(None, description="Data provider: yfinance or binance (auto-selected if None)")
+    market_type: str = Field("SPOT", description="Market type for crypto: SPOT or FUTURES")
     periodic_contribution: dict[str, Any] | None = Field(None, description="Periodic cash contributions config")
 
     # Position sizing
@@ -58,6 +59,7 @@ class BacktestOut(BaseModel):
     ticker: str = Field(..., description="Ticker symbol")
     asset_class: str = Field(..., description="STOCK or CRYPTO")
     provider: str | None = Field(None, description="Data provider used")
+    market_type: str | None = Field(None, description="Market type: SPOT or FUTURES (crypto only)")
     start_date: date = Field(..., description="Backtest start date")
     end_date: date = Field(..., description="Backtest end date")
     bar_resolution: str = Field(..., description="Bar interval")

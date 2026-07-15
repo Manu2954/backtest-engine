@@ -14,9 +14,10 @@ import pandas as pd
 
 from app.providers.base import DataProvider
 
-# DATA-007 FIX: Use spot API (api.binance.com) not futures API (fapi.binance.com)
+# DATA-007 FIX: Use spot API by default, futures API when explicitly requested
 # Futures prices include funding rates and can diverge significantly from spot
-BINANCE_URL = "https://api.binance.com/api/v3"
+BINANCE_SPOT_URL = "https://api.binance.com/api/v3"
+BINANCE_FUTURES_URL = "https://fapi.binance.com/fapi/v1"
 BINANCE_INTERVAL_MS = {
     "1m": 1 * 60 * 1000,
     "3m": 3 * 60 * 1000,
@@ -39,15 +40,21 @@ BINANCE_INTERVAL_MS = {
 class BinanceProvider(DataProvider):
     """Binance cryptocurrency data provider."""
 
-    def __init__(self, timezone: str = "Asia/Kolkata"):
+    def __init__(self, timezone: str = "Asia/Kolkata", market_type: str = "SPOT"):
         """
         Initialize Binance provider.
 
         Args:
             timezone: Timezone for date range interpretation (default: "Asia/Kolkata" = IST)
                      Binance API operates in UTC, but dates will be converted from this timezone.
+            market_type: Market type - "SPOT" (default) or "FUTURES"
+                        SPOT uses api.binance.com, FUTURES uses fapi.binance.com
         """
         self.timezone = ZoneInfo(timezone)
+        self.market_type = market_type.upper()
+        if self.market_type not in ("SPOT", "FUTURES"):
+            raise ValueError(f"Invalid market_type: {market_type}. Must be SPOT or FUTURES.")
+        self.base_url = BINANCE_SPOT_URL if self.market_type == "SPOT" else BINANCE_FUTURES_URL
 
     def get_provider_name(self) -> str:
         """Return provider name."""
@@ -161,7 +168,7 @@ class BinanceProvider(DataProvider):
                         "endTime": end_ms,
                         "limit": 1000,
                     }
-                    response = client.get(f"{BINANCE_URL}/klines", params=params)
+                    response = client.get(f"{self.base_url}/klines", params=params)
                     response.raise_for_status()
                     data = response.json()
                     request_count += 1
