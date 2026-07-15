@@ -7,13 +7,32 @@ Status: Core features complete, strategic focus on Truth Engine (Phase 2)
 
 ## 1. POSITION MANAGEMENT
 
-### Single Position Only
-- Only supports ONE position at a time (all-in or all-out)
+### Single Position Only (All-In/All-Out Model)
+- Only supports ONE position at a time per direction (LONG/SHORT)
 - Cannot scale in/out of positions (e.g., 50% entry, then add 25% more later)
 - Cannot hold multiple positions across different assets simultaneously
 - No portfolio-level backtesting (single ticker only per backtest)
 - Cannot pyramid into winning positions
 - Cannot dollar-cost average into a single position over multiple signals
+
+**ta4j Comparison:**
+ta4j supports sophisticated lot matching via PositionBook:
+- Multiple open lots per position (scale-in)
+- Matching policies: FIFO, LIFO, SPECIFIC_ID, AVG_COST
+- Partial fills (exits can close fraction of a lot)
+- Position averaging: `mergedPrice = (p1×a1 + p2×a2) / (a1+a2)`
+
+**Our Model:**
+- Single `PositionState` per direction
+- All-in entry, all-out exit
+- No lot tracking, no partial fills
+- Simpler but sufficient for signal-based strategies
+
+**Why This Is Acceptable for V1:**
+- Most retail backtesting uses all-in/all-out
+- Signal-based strategies don't require scaling
+- Keeps engine logic simple and auditable
+- Lot matching is V2 feature if users need scaling
 
 Impact: Limits realistic trading simulation where traders often scale positions
 
@@ -39,21 +58,24 @@ Impact: Cannot model realistic order execution strategies
 
 ## 3. POSITION SIZING
 
-### Limited Sizing Methods
+### Sizing Methods
 Current methods:
   - full_capital: Use all available cash
-  - percent_capital: Use X% of available cash
+  - percent_capital: Use X% of total equity
   - fixed_amount: Use fixed dollar amount
   - risk_based: Size based on risk % and stop distance
+  - kelly: Kelly criterion optimal sizing (ta4j pattern)
 
 Missing methods:
-  - Kelly Criterion (optimal bet sizing)
-  - Volatility-adjusted sizing (ATR-based)
+  - Volatility-adjusted sizing (ATR-based separate from risk_based)
   - Maximum shares/dollar constraints combined with other methods
-  - Fixed fractional (risk fixed % of total equity, not just cash)
   - Optimal f (Ralph Vince)
 
-Impact: Cannot implement advanced professional risk management strategies
+**ta4j Comparison:**
+ta4j PositionSizer supports: fixed(), balance(), kelly()
+Our implementation matches ta4j patterns for Kelly criterion.
+
+Impact: Most professional sizing methods now available
 
 
 ---
@@ -172,12 +194,14 @@ Impact: Cannot implement sophisticated exit strategies
 
 ## 9. TRADING DIRECTION
 
-### Long Only
-- Only supports LONG positions (buy low, sell high)
-- No short selling (sell high, buy low)
-- No inverse strategies
+### Long and Short Supported ✓
+- Supports both LONG and SHORT positions
+- Independent entry/exit signals per direction
+- Direction-aware PnL, stops, and slippage
+- Leverage with liquidation price tracking
+- Counter-trade system (auto-reverse on loss)
 
-Impact: Cannot test bear market strategies or hedging
+**Resolved in V1.**
 
 
 ---
