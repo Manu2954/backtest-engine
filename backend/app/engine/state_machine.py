@@ -95,6 +95,8 @@ class PositionState:
     pending_exit_reason: str | None = None
     # DYN-002 FIX: Track high-water mark for actual trailing stop
     trailing_stop_high_water: float | None = None
+    # CT-NEW-005 FIX: Track counter-trade specific leverage (used at fill time)
+    pending_leverage: float | None = None
 
     @property
     def in_position(self) -> bool:
@@ -121,6 +123,7 @@ class PositionState:
         self.exit_rule_states = None
         self.pending_exit_reason = None
         self.trailing_stop_high_water = None
+        self.pending_leverage = None
 
 
 def _capture_entry_attribution(
@@ -1056,7 +1059,8 @@ def run_backtest(
     initial_capital: float,
     asset_class: str = "STOCK",
     shares: float = 0.0,
-    periodic_contribution: dict[str, Any] | None = None,
+    periodic_contribution: dict[str, Any] | None = None,  # Deprecated: use periodic_cash_injection
+    periodic_cash_injection: dict[str, Any] | None = None,  # DCA-001: Honest naming (does NOT add to positions)
     position_size_type: str = "full_capital",
     position_size_value: float = 100.0,
     stop_loss_pct: float | None = None,
@@ -1083,6 +1087,7 @@ def run_backtest(
     # Counter-trade parameters
     enable_counter_trades: bool = False,
     counter_tp_multiplier: float = 1.5,
+    counter_leverage: float | None = None,  # CT-NEW-005: Separate leverage for counter-trades (default: 1.0)
 ) -> tuple[list[dict[str, Any]], pd.Series]:
     if initial_capital <= 0:
         raise ValueError(f"initial_capital must be positive, got {initial_capital}")
@@ -1140,6 +1145,13 @@ def run_backtest(
     if counter_tp_multiplier <= 0:
         raise ValueError(f"counter_tp_multiplier must be positive, got {counter_tp_multiplier}")
 
+    # CT-NEW-005 FIX: Validate counter_leverage if provided (default to 1.0 for safety)
+    effective_counter_leverage = counter_leverage if counter_leverage is not None else 1.0
+    if effective_counter_leverage < 1.0 or effective_counter_leverage > 125.0:
+        raise ValueError(
+            f"counter_leverage must be between 1.0 and 125.0, got {effective_counter_leverage}"
+        )
+
     entry_signal = _ensure_series(entry_signal, df.index)
     exit_signal = _ensure_series(exit_signal, df.index)
 
@@ -1155,9 +1167,21 @@ def run_backtest(
     allow_fractional = asset_class.upper() != "STOCK"
 
     # Backward-compatible handling if periodic_contribution was passed positionally.
-    if isinstance(shares, dict) and periodic_contribution is None:
+    # DCA-001 FIX: Support both old and new parameter names with deprecation warning
+    if isinstance(shares, dict) and periodic_contribution is None and periodic_cash_injection is None:
         periodic_contribution = shares
         shares = 0.0
+
+    # Merge periodic_cash_injection (new) with periodic_contribution (deprecated)
+    effective_cash_injection = periodic_cash_injection or periodic_contribution
+    if periodic_contribution is not None and periodic_cash_injection is None:
+        import warnings
+        warnings.warn(
+            "periodic_contribution is deprecated, use periodic_cash_injection instead. "
+            "Note: This feature adds cash to your account, it does NOT add to existing positions (true DCA).",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
     cash = float(initial_capital)
 
@@ -1169,20 +1193,21 @@ def run_backtest(
     short_pos = PositionState(direction="SHORT")
 
     # Counter-trade state
-    counter_trade_pending: dict[str, Any] | None = None  # {"direction": str, "tp_pct": float, "bar_idx": int}
+    counter_trade_pending: dict[str, Any] | None = None  # {"direction": str, "tp_pct": float, "bar_idx": int, "leverage": float}
 
-    # Periodic contributions setup
+    # Periodic cash injection setup (formerly "contributions")
+    # NOTE: This adds cash to the account, it does NOT automatically add to existing positions
     contribution_amount = 0.0
     contribution_frequency = ""
     interval_days = 0
     include_start = False
-    if periodic_contribution:
-        contribution_amount = float(periodic_contribution.get("amount", 0.0))
+    if effective_cash_injection:
+        contribution_amount = float(effective_cash_injection.get("amount", 0.0))
         contribution_frequency = str(
-            periodic_contribution.get("frequency", "monthly")
+            effective_cash_injection.get("frequency", "monthly")
         ).lower()
-        interval_days = int(periodic_contribution.get("interval_days", 0))
-        include_start = bool(periodic_contribution.get("include_start", False))
+        interval_days = int(effective_cash_injection.get("interval_days", 0))
+        include_start = bool(effective_cash_injection.get("include_start", False))
 
         allowed = {"daily", "weekly", "monthly", "interval_days"}
         if contribution_frequency not in allowed:
@@ -1243,13 +1268,16 @@ def run_backtest(
                 stop_loss_pct=stop_loss_pct,
                 dynamic_stop_column=dynamic_stop_column,
                 ts=ts,
-                leverage=leverage,
+                # CT-NEW-005 FIX: Use pending_leverage for counter-trades, else global leverage
+                leverage=long_pos.pending_leverage if long_pos.pending_leverage is not None else leverage,
                 # SIZE-001: Pass positions for equity calculation
                 long_pos_for_equity=long_pos,
                 short_pos_for_equity=short_pos if has_short else None,
                 # ATTR-001: Pass fill bar index for accurate market return
                 fill_bar_idx=i,
             )
+            # Clear pending_leverage after fill
+            long_pos.pending_leverage = None
             if long_pos.in_position and dynamic_tp_pct_column:
                 if dynamic_tp_pct_column in df.columns and long_pos.entry_bar_idx is not None:
                     val = float(df.iloc[long_pos.entry_bar_idx][dynamic_tp_pct_column])
@@ -1286,13 +1314,16 @@ def run_backtest(
                 stop_loss_pct=stop_loss_pct,
                 dynamic_stop_column=dynamic_stop_column,
                 ts=ts,
-                leverage=leverage,
+                # CT-NEW-005 FIX: Use pending_leverage for counter-trades, else global leverage
+                leverage=short_pos.pending_leverage if short_pos.pending_leverage is not None else leverage,
                 # SIZE-001: Pass positions for equity calculation
                 long_pos_for_equity=long_pos,
                 short_pos_for_equity=short_pos,
                 # ATTR-001: Pass fill bar index for accurate market return
                 fill_bar_idx=i,
             )
+            # Clear pending_leverage after fill
+            short_pos.pending_leverage = None
             if short_pos.in_position and dynamic_tp_pct_column:
                 if dynamic_tp_pct_column in df.columns and short_pos.entry_bar_idx is not None:
                     val = float(df.iloc[short_pos.entry_bar_idx][dynamic_tp_pct_column])
@@ -1395,12 +1426,21 @@ def run_backtest(
                 pnl = trade.to_dict()["pnl"]
                 # Only trigger on signal exits with loss
                 if exit_reason == "signal" and pnl < 0:
-                    pnl_pct = trade.to_dict()["pnl_pct"]
-                    counter_tp_pct = abs(pnl_pct) * counter_tp_multiplier
+                    # CT-NEW-006 FIX: Use raw price-based loss %, not pnl_pct (which includes costs)
+                    # This makes the TP target achievable without needing to overcome transaction costs
+                    entry_price = trade.to_dict()["entry_price"]
+                    exit_price = trade.to_dict()["exit_price"]
+                    if entry_price > 0:
+                        price_loss_pct = abs((exit_price - entry_price) / entry_price * 100)
+                    else:
+                        price_loss_pct = abs(trade.to_dict()["pnl_pct"])
+                    counter_tp_pct = price_loss_pct * counter_tp_multiplier
                     counter_trade_pending = {
                         "direction": "SHORT",
                         "tp_pct": counter_tp_pct,
                         "bar_idx": i,
+                        # CT-NEW-005 FIX: Store counter_leverage for use at fill time
+                        "leverage": effective_counter_leverage,
                     }
 
             long_pos.reset()
@@ -1431,12 +1471,21 @@ def run_backtest(
                 pnl = trade.to_dict()["pnl"]
                 # Only trigger on signal exits with loss
                 if exit_reason == "signal" and pnl < 0:
-                    pnl_pct = trade.to_dict()["pnl_pct"]
-                    counter_tp_pct = abs(pnl_pct) * counter_tp_multiplier
+                    # CT-NEW-006 FIX: Use raw price-based loss %, not pnl_pct (which includes costs)
+                    entry_price = trade.to_dict()["entry_price"]
+                    exit_price = trade.to_dict()["exit_price"]
+                    if entry_price > 0:
+                        # For SHORT: loss = exit > entry, so price_loss_pct = (exit - entry) / entry
+                        price_loss_pct = abs((exit_price - entry_price) / entry_price * 100)
+                    else:
+                        price_loss_pct = abs(trade.to_dict()["pnl_pct"])
+                    counter_tp_pct = price_loss_pct * counter_tp_multiplier
                     counter_trade_pending = {
                         "direction": "LONG",
                         "tp_pct": counter_tp_pct,
                         "bar_idx": i,
+                        # CT-NEW-005 FIX: Store counter_leverage for use at fill time
+                        "leverage": effective_counter_leverage,
                     }
 
             short_pos.reset()
@@ -1504,6 +1553,8 @@ def run_backtest(
                 target_pos.entry_bar_idx = i
                 # Set dynamic TP for counter-trade
                 target_pos.dynamic_tp_pct = counter_trade_pending["tp_pct"]
+                # CT-NEW-005 FIX: Store counter-trade leverage for use at fill time
+                target_pos.pending_leverage = counter_trade_pending.get("leverage", 1.0)
                 # Mark direction to skip regular signals
                 counter_trade_armed_direction = target_direction
                 # Clear counter-trade
