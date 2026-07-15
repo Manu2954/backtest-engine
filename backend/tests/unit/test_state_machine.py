@@ -737,6 +737,7 @@ def test_dynamic_stop_already_below() -> None:
     # Entry at bar 2: open=$108, high-water=$108
     # Bar 2: hwm=max(108,112)=112, stop=112-10=102, low=105 > 102 (no exit)
     # Bar 3: hwm=max(112,105)=112 (unchanged), stop=102, low=95 <= 102 → EXIT
+    # GAP-THROUGH: open=$100 < stop=$102 → fill at $100 (not $102)
 
     assert len(trades) == 1
     trade = trades[0]
@@ -747,7 +748,8 @@ def test_dynamic_stop_already_below() -> None:
 
     # Exit at bar 3 when low crosses stop
     assert trade["exit_date"] == index[3]
-    assert trade["exit_price"] == 102.0  # Stop price
+    # GAP-THROUGH FIX: Open $100 < stop $102, so fill at open
+    assert trade["exit_price"] == 100.0  # Gap-through fills at open
     assert trade["exit_reason"] == "trailing_stop"
 
 
@@ -1902,19 +1904,20 @@ def test_counter_trade_dynamic_tp_pct_flow():
     # Critical verification: TP should be 15% (10% × 1.5)
     # For SHORT at 90, TP price = 90 * (1 - 0.15) = 76.5
     # Bar 10 low = 75 < 76.5 → should trigger TP
+    # GAP-THROUGH: Bar 10 open = 76 < TP = 76.5 → fill at 76 (better execution for SHORT TP)
     # ATTR-008: Counter-trade TP is dynamic, so exit_reason is "dynamic_take_profit"
     assert short_trade["exit_reason"] == "dynamic_take_profit", \
         f"Expected 'dynamic_take_profit' but got '{short_trade['exit_reason']}'"
 
-    # Verify TP price is correct: 90 * (1 - 0.15) = 76.5
-    expected_tp_price = 90.0 * (1.0 - 0.15)  # 76.5
-    assert abs(short_trade["exit_price"] - expected_tp_price) < 0.01, \
-        f"Expected exit at {expected_tp_price}, got {short_trade['exit_price']}"
+    # GAP-THROUGH: open $76 < TP $76.5 → fill at $76 (better for SHORT)
+    expected_fill_price = 76.0  # Gap-through fills at open
+    assert abs(short_trade["exit_price"] - expected_fill_price) < 0.01, \
+        f"Expected exit at {expected_fill_price} (gap-through at open), got {short_trade['exit_price']}"
 
-    # Verify profit is approximately 15%
-    # PnL% = (entry - exit) / entry * 100 = (90 - 76.5) / 90 * 100 = 15%
+    # Verify profit is approximately 15.5% (better due to gap-through)
+    # PnL% = (entry - exit) / entry * 100 = (90 - 76) / 90 * 100 = 15.56%
     assert short_trade["pnl_pct"] > 14.0, \
-        f"SHORT pnl_pct should be ~15%, got {short_trade['pnl_pct']}"
+        f"SHORT pnl_pct should be ~15.5%, got {short_trade['pnl_pct']}"
 
 
 def test_counter_trade_dynamic_tp_pct_not_overwritten():
@@ -2013,10 +2016,11 @@ def test_counter_trade_dynamic_tp_pct_with_column_override():
     # ATTR-008: Counter-trade TP is dynamic, so exit_reason is "dynamic_take_profit"
     assert short_trade["exit_reason"] == "dynamic_take_profit"
     # TP is overwritten by column value (5%), not counter-trade value (15%)
-    # Exit price should be 90 * (1 - 0.05) = 85.5
-    expected_tp_price = 90.0 * (1.0 - 0.05)  # 85.5
-    assert abs(short_trade["exit_price"] - expected_tp_price) < 0.01, \
-        f"Expected exit at {expected_tp_price} (5% TP from column), got {short_trade['exit_price']}"
+    # TP price = 90 * (1 - 0.05) = 85.5
+    # GAP-THROUGH: Bar 6 open = 85 < TP = 85.5 → fill at 85 (better execution)
+    expected_fill_price = 85.0  # Gap-through fills at open
+    assert abs(short_trade["exit_price"] - expected_fill_price) < 0.01, \
+        f"Expected exit at {expected_fill_price} (gap-through at open), got {short_trade['exit_price']}"
 
 
 
@@ -2273,3 +2277,214 @@ def test_kelly_sizing_validation_errors():
             kelly_win_rate=0.6,
             kelly_payoff_ratio=0.0,  # Can't be 0
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GAP-THROUGH STOP EXECUTION TESTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_gap_through_stop_loss_long_fills_at_open():
+    """
+    LONG position with SL at $95, bar gaps down and opens at $90.
+    Should fill at $90 (open), not $95 (stop price).
+    
+    This is more realistic - you can't get filled at a price that was skipped.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open":  [100, 100, 100, 90, 90],   # Bar 3 opens at $90, gaps past stop
+            "high":  [100, 101, 101, 92, 92],
+            "low":   [100, 99, 99, 88, 88],
+            "close": [100, 100, 100, 91, 91],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        initial_capital=1000.0,
+        asset_class="CRYPTO",
+        stop_loss_pct=5.0,  # SL at $95 (entry $100 - 5%)
+    )
+    
+    assert len(trades) == 1
+    trade = trades[0]
+    
+    # Entry at bar 1's open = $100
+    assert trade["entry_price"] == 100.0
+    assert trade["exit_reason"] == "stop_loss"
+    
+    # GAP-THROUGH: Open $90 < SL $95 → fill at $90, not $95
+    assert trade["exit_price"] == 90.0, \
+        f"Gap-through should fill at open ($90), not stop ($95), got {trade['exit_price']}"
+    
+    # PnL should reflect the worse fill
+    # Shares = 1000 / 100 = 10, PnL = (90 - 100) * 10 = -100
+    assert trade["pnl"] == -100.0, f"Expected PnL -100, got {trade['pnl']}"
+
+
+def test_gap_through_stop_loss_short_fills_at_open():
+    """
+    SHORT position with SL at $105, bar gaps up and opens at $110.
+    Should fill at $110 (open), not $105 (stop price).
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open":  [100, 100, 100, 110, 110],  # Bar 3 gaps up past stop
+            "high":  [100, 101, 101, 112, 112],
+            "low":   [100, 99, 99, 108, 108],
+            "close": [100, 100, 100, 109, 109],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([False] * 5, index=index)
+    exit_signal = pd.Series([False] * 5, index=index)
+    short_entry = pd.Series([True, False, False, False, False], index=index)
+    short_exit = pd.Series([False] * 5, index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        short_entry_signal=short_entry,
+        short_exit_signal=short_exit,
+        initial_capital=1000.0,
+        asset_class="CRYPTO",
+        stop_loss_pct=5.0,  # SL at $105 (entry $100 + 5%)
+    )
+    
+    assert len(trades) == 1
+    trade = trades[0]
+    
+    assert trade["direction"] == "SHORT"
+    assert trade["entry_price"] == 100.0
+    assert trade["exit_reason"] == "stop_loss"
+    
+    # GAP-THROUGH: Open $110 > SL $105 → fill at $110, not $105
+    assert trade["exit_price"] == 110.0, \
+        f"Gap-through should fill at open ($110), not stop ($105), got {trade['exit_price']}"
+
+
+def test_no_gap_stop_loss_fills_at_stop_price():
+    """
+    Normal stop (no gap) should still fill at stop price, not open.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open":  [100, 100, 100, 96, 96],   # Bar 3 opens at $96, above SL $95
+            "high":  [100, 101, 101, 97, 97],
+            "low":   [100, 99, 99, 94, 94],     # Low hits SL
+            "close": [100, 100, 100, 95, 95],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        initial_capital=1000.0,
+        asset_class="CRYPTO",
+        stop_loss_pct=5.0,  # SL at $95
+    )
+    
+    assert len(trades) == 1
+    trade = trades[0]
+    
+    # No gap: Open $96 > SL $95 → fill at stop price $95
+    assert trade["exit_price"] == 95.0, \
+        f"No gap should fill at stop ($95), got {trade['exit_price']}"
+
+
+def test_gap_through_take_profit_long_fills_at_open():
+    """
+    LONG with TP at $105, bar gaps up and opens at $110.
+    Should fill at $110 (better execution for TP gap-through!).
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open":  [100, 100, 100, 110, 110],  # Bar 3 gaps up past TP
+            "high":  [100, 101, 101, 112, 112],
+            "low":   [100, 99, 99, 108, 108],
+            "close": [100, 100, 100, 111, 111],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False], index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        initial_capital=1000.0,
+        asset_class="CRYPTO",
+        take_profit_pct=5.0,  # TP at $105
+    )
+    
+    assert len(trades) == 1
+    trade = trades[0]
+    
+    assert trade["exit_reason"] == "take_profit"
+    
+    # GAP-THROUGH TP: Open $110 > TP $105 → fill at $110 (BETTER execution)
+    assert trade["exit_price"] == 110.0, \
+        f"Gap-through TP should fill at open ($110), got {trade['exit_price']}"
+    
+    # Better fill = more profit
+    # Shares = 1000/100 = 10, PnL = (110 - 100) * 10 = 100
+    assert trade["pnl"] == 100.0
+
+
+def test_gap_through_trailing_stop_fills_at_open():
+    """
+    Trailing stop with gap-through should fill at open.
+    """
+    index = pd.date_range("2020-01-01", periods=6, freq="D")
+    df = pd.DataFrame(
+        {
+            "open":  [100, 100, 105, 110, 85, 85],   # Bar 4 gaps down past trail stop
+            "high":  [100, 101, 106, 111, 87, 87],
+            "low":   [100, 99, 104, 109, 83, 83],
+            "close": [100, 100, 105, 110, 86, 86],
+            # 10% trailing stop
+            "trail_pct": [0.10] * 6,
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, False, False, False], index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        initial_capital=1000.0,
+        asset_class="CRYPTO",
+        dynamic_stop_column="trail_pct",
+        dynamic_stop_type="percentage",  # ta4j style: 10% from high water
+    )
+    
+    assert len(trades) == 1
+    trade = trades[0]
+    
+    # Entry at bar 1 open = $100
+    # High water reaches $111 (bar 3 high)
+    # Trail stop = $111 * (1 - 0.10) = $99.9
+    # Bar 4 opens at $85, gaps through $99.9
+    
+    assert trade["exit_reason"] == "trailing_stop"
+    
+    # GAP-THROUGH: Open $85 < stop ~$99.9 → fill at $85
+    assert trade["exit_price"] == 85.0, \
+        f"Gap-through trailing stop should fill at open ($85), got {trade['exit_price']}"

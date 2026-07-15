@@ -951,9 +951,19 @@ def _check_stops(
                             should_exit = True
 
         if should_exit and stop_price is not None:
+            # GAP-THROUGH FIX: If bar opens beyond the stop, fill at open (worse execution)
+            # This is more realistic - you can't get filled at a price that was skipped
+            bar_open = float(df.iloc[i]["open"]) if "open" in df.columns else current_price
+            if direction == "LONG":
+                # LONG stop: if open gaps below stop, fill at open (worse)
+                fill_price = min(stop_price, bar_open) if bar_open < stop_price else stop_price
+            else:
+                # SHORT stop: if open gaps above stop, fill at open (worse)
+                fill_price = max(stop_price, bar_open) if bar_open > stop_price else stop_price
+
             trade, cash = _execute_exit(
                 pos=pos,
-                exit_price_raw=stop_price,  # Use calculated stop price, not current_price
+                exit_price_raw=fill_price,  # Use gap-adjusted fill price
                 exit_date=ts,
                 exit_reason="trailing_stop",
                 cash=cash,
@@ -1008,10 +1018,19 @@ def _check_stops(
             if tp_price is not None and bar_low <= tp_price:
                 tp_hit = True
 
+        # Get bar open for gap-through detection
+        bar_open = float(df.iloc[i]["open"]) if "open" in df.columns else current_price
+
         if sl_hit:
+            # GAP-THROUGH FIX: If bar opens beyond the stop, fill at open (worse execution)
+            if direction == "LONG":
+                sl_fill_price = min(sl_price, bar_open) if bar_open < sl_price else sl_price
+            else:
+                sl_fill_price = max(sl_price, bar_open) if bar_open > sl_price else sl_price
+
             trade, cash = _execute_exit(
                 pos=pos,
-                exit_price_raw=sl_price,
+                exit_price_raw=sl_fill_price,
                 exit_date=ts,
                 exit_reason="stop_loss",
                 cash=cash,
@@ -1031,11 +1050,18 @@ def _check_stops(
             return cash
 
         if tp_hit:
+            # GAP-THROUGH FIX: If bar opens beyond TP, fill at open (better execution!)
+            # Note: For TP, gap-through is FAVORABLE - you get a better price
+            if direction == "LONG":
+                tp_fill_price = max(tp_price, bar_open) if bar_open > tp_price else tp_price
+            else:
+                tp_fill_price = min(tp_price, bar_open) if bar_open < tp_price else tp_price
+
             # ATTR-008: Distinguish dynamic TP from static TP in exit_reason
             tp_exit_reason = "dynamic_take_profit" if dynamic_tp_pct is not None else "take_profit"
             trade, cash = _execute_exit(
                 pos=pos,
-                exit_price_raw=tp_price,
+                exit_price_raw=tp_fill_price,
                 exit_date=ts,
                 exit_reason=tp_exit_reason,
                 cash=cash,
