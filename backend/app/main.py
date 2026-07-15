@@ -22,6 +22,7 @@ from app.api.routes.backtests import router as backtests_router
 from app.api.routes.robustness import router as robustness_router
 from app.api.routes.strategies import router as strategies_router
 from app.api.routes.tickers import router as tickers_router
+from app.api.routes.charts import router as charts_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 
@@ -173,6 +174,7 @@ api_v1_router.include_router(strategies_router)
 api_v1_router.include_router(backtests_router)
 api_v1_router.include_router(robustness_router)
 api_v1_router.include_router(tickers_router)
+api_v1_router.include_router(charts_router)
 
 # Mount the versioned router
 app.include_router(api_v1_router)

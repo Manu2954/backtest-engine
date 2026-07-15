@@ -5,48 +5,25 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Spinner } from '@/components/ui/spinner'
 import { TradingChart } from '@/components/charts'
 import { type CandleData, type LineDataPoint } from '@/features/live-chart'
-import { Search, RefreshCw } from 'lucide-react'
+import { useChartData } from '@/api/hooks'
+import { Search, RefreshCw, AlertCircle } from 'lucide-react'
 
-// Demo data generator for chart testing
-function generateDemoData(days: number = 100): CandleData[] {
-  const data: CandleData[] = []
-  let price = 100 + Math.random() * 50
-  const now = new Date()
-  now.setDate(now.getDate() - days)
-
-  for (let i = 0; i < days; i++) {
-    const date = new Date(now)
-    date.setDate(date.getDate() + i)
-
-    const volatility = 0.02
-    const change = (Math.random() - 0.5) * 2 * volatility * price
-    const open = price
-    const close = price + change
-    const high = Math.max(open, close) + Math.random() * volatility * price
-    const low = Math.min(open, close) - Math.random() * volatility * price
-
-    data.push({
-      time: date.toISOString().split('T')[0],
-      open: parseFloat(open.toFixed(2)),
-      high: parseFloat(high.toFixed(2)),
-      low: parseFloat(low.toFixed(2)),
-      close: parseFloat(close.toFixed(2)),
-    })
-
-    price = close
-  }
-
-  return data
-}
-
-// Generate SMA indicator data
+// Generate SMA indicator data from candles (client-side overlay)
 function calculateSMA(data: CandleData[], period: number): LineDataPoint[] {
   const result: LineDataPoint[] = []
   for (let i = period - 1; i < data.length; i++) {
@@ -71,41 +48,34 @@ interface IndicatorData {
 
 export function ChartPage() {
   const { ticker: paramTicker } = useParams<{ ticker?: string }>()
-  const [ticker, setTicker] = useState(paramTicker || 'DEMO')
-  const [searchInput, setSearchInput] = useState(paramTicker || '')
-  const [candleData, setCandleData] = useState<CandleData[]>([])
+  const [ticker, setTicker] = useState(paramTicker || 'AAPL')
+  const [searchInput, setSearchInput] = useState(paramTicker || 'AAPL')
+  const [assetClass, setAssetClass] = useState<'STOCK' | 'CRYPTO'>('STOCK')
+
+  const { data, isLoading, isError, error, refetch, isFetching } = useChartData({
+    ticker,
+    assetClass,
+    resolution: '1d',
+  })
+
+  const candleData: CandleData[] = data?.candles ?? []
+
+  // Compute SMA overlays from real candles
   const [indicators, setIndicators] = useState<IndicatorData[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-
-  // Load demo data on mount
   useEffect(() => {
-    loadDemoData()
-  }, [])
-
-  const loadDemoData = () => {
-    setIsLoading(true)
-    // Simulate API delay
-    setTimeout(() => {
-      const data = generateDemoData(200)
-      setCandleData(data)
-
-      // Calculate indicators
-      const sma20 = calculateSMA(data, 20)
-      const sma50 = calculateSMA(data, 50)
-
+    if (candleData.length > 0) {
       setIndicators([
-        { id: 'sma20', data: sma20, color: '#1f6feb', title: 'SMA 20' },
-        { id: 'sma50', data: sma50, color: '#d29922', title: 'SMA 50' },
+        { id: 'sma20', data: calculateSMA(candleData, 20), color: 'hsl(var(--chart-1))', title: 'SMA 20' },
+        { id: 'sma50', data: calculateSMA(candleData, 50), color: 'hsl(var(--chart-3))', title: 'SMA 50' },
       ])
-
-      setIsLoading(false)
-    }, 300)
-  }
+    } else {
+      setIndicators([])
+    }
+  }, [candleData])
 
   const handleSearch = () => {
     if (searchInput.trim()) {
       setTicker(searchInput.trim().toUpperCase())
-      loadDemoData() // In real app, would fetch actual data
     }
   }
 
@@ -113,10 +83,19 @@ export function ChartPage() {
     <>
       <Header title="Chart">
         <div className="flex items-center gap-2">
+          <Select value={assetClass} onValueChange={(v) => setAssetClass(v as 'STOCK' | 'CRYPTO')}>
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="STOCK">Stock</SelectItem>
+              <SelectItem value="CRYPTO">Crypto</SelectItem>
+            </SelectContent>
+          </Select>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Enter ticker..."
+              placeholder={assetClass === 'CRYPTO' ? 'BTCUSDT...' : 'AAPL...'}
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value.toUpperCase())}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -134,7 +113,7 @@ export function ChartPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h2 className="text-2xl font-bold">{ticker}</h2>
-            <Badge variant="outline">Demo Data</Badge>
+            <Badge variant="outline">{assetClass}</Badge>
             {candleData.length > 0 && (
               <span className="text-sm text-muted-foreground">
                 {candleData.length} bars
@@ -144,10 +123,10 @@ export function ChartPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={loadDemoData}
-            disabled={isLoading}
+            onClick={() => refetch()}
+            disabled={isFetching}
           >
-            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         </div>
@@ -155,15 +134,37 @@ export function ChartPage() {
         {/* Main Chart */}
         <Card>
           <CardContent className="p-0">
-            {candleData.length > 0 ? (
+            {isLoading ? (
+              <div className="flex h-[500px] items-center justify-center">
+                <div className="flex flex-col items-center gap-3 text-muted-foreground">
+                  <Spinner size="lg" />
+                  <p>Loading chart data...</p>
+                </div>
+              </div>
+            ) : isError ? (
+              <div className="flex h-[500px] items-center justify-center">
+                <div className="flex max-w-md flex-col items-center gap-3 text-center">
+                  <AlertCircle className="h-10 w-10 text-loss" />
+                  <p className="font-medium">Failed to load chart data</p>
+                  <p className="text-sm text-muted-foreground">
+                    {error instanceof Error ? error.message : `No data found for ${ticker}.`}{' '}
+                    Check the ticker symbol and asset class.
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => refetch()}>
+                    <RefreshCw className="h-4 w-4" />
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            ) : candleData.length > 0 ? (
               <TradingChart
                 candleData={candleData}
                 indicators={indicators}
                 height={500}
               />
             ) : (
-              <div className="flex items-center justify-center h-[500px]">
-                <p className="text-muted-foreground">Loading chart data...</p>
+              <div className="flex h-[500px] items-center justify-center">
+                <p className="text-muted-foreground">No data available for {ticker}.</p>
               </div>
             )}
           </CardContent>
@@ -177,13 +178,9 @@ export function ChartPage() {
           <CardContent className="py-2">
             <div className="flex flex-wrap gap-2">
               {indicators.map((ind) => (
-                <Badge
-                  key={ind.id}
-                  variant="secondary"
-                  className="gap-2"
-                >
+                <Badge key={ind.id} variant="secondary" className="gap-2">
                   <span
-                    className="w-2 h-2 rounded-full"
+                    className="h-2 w-2 rounded-full"
                     style={{ backgroundColor: ind.color }}
                   />
                   {ind.title}
@@ -195,17 +192,6 @@ export function ChartPage() {
                 </span>
               )}
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Info */}
-        <Card>
-          <CardContent className="py-4">
-            <p className="text-sm text-muted-foreground">
-              This is a demo chart using generated data. In production, this would connect
-              to real market data via the backend API. The chart supports candlesticks,
-              line indicators, and trade markers.
-            </p>
           </CardContent>
         </Card>
       </div>
