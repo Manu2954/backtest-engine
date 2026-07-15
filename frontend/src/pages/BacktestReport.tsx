@@ -39,6 +39,34 @@ import {
   RefreshCw,
 } from 'lucide-react'
 
+type MetricGrade = { label: string; className: string }
+
+// Interpretive grading for key performance metrics against common industry benchmarks.
+function gradeMetric(metric: 'sharpe' | 'maxDrawdown' | 'winRate' | 'profitFactor', value: number | undefined): MetricGrade | null {
+  if (value === undefined || value === null || Number.isNaN(value)) return null
+
+  const good: MetricGrade = { label: 'Good', className: 'bg-profit/15 text-profit' }
+  const fair: MetricGrade = { label: 'Fair', className: 'bg-warning/15 text-warning' }
+  const poor: MetricGrade = { label: 'Poor', className: 'bg-loss/15 text-loss' }
+
+  switch (metric) {
+    case 'sharpe':
+      // >2 excellent, 1-2 good, <1 poor
+      return value >= 2 ? good : value >= 1 ? fair : poor
+    case 'maxDrawdown':
+      // drawdown is negative or magnitude; use absolute magnitude in %
+      { const dd = Math.abs(value)
+        return dd <= 10 ? good : dd <= 25 ? fair : poor }
+    case 'winRate':
+      // win rate stored as percentage 0-100
+      return value >= 55 ? good : value >= 45 ? fair : poor
+    case 'profitFactor':
+      return value >= 2 ? good : value >= 1.2 ? fair : poor
+    default:
+      return null
+  }
+}
+
 function MetricCard({
   label,
   value,
@@ -46,6 +74,7 @@ function MetricCard({
   icon: Icon,
   trend,
   tooltip,
+  grade,
 }: {
   label: string
   value: string
@@ -53,6 +82,7 @@ function MetricCard({
   icon?: React.ComponentType<{ className?: string }>
   trend?: 'up' | 'down' | 'neutral'
   tooltip?: string
+  grade?: MetricGrade | null
 }) {
   return (
     <Card>
@@ -62,6 +92,11 @@ function MetricCard({
             <div className="flex items-center gap-1">
               <p className="text-sm text-muted-foreground">{label}</p>
               {tooltip && <HelpTooltip text={tooltip} />}
+              {grade && (
+                <span className={cn('ml-1 rounded px-1.5 py-0.5 text-[10px] font-medium', grade.className)}>
+                  {grade.label}
+                </span>
+              )}
             </div>
             <p
               className={cn(
@@ -303,6 +338,7 @@ export function BacktestReportPage() {
                 subValue="Risk-adjusted return"
                 icon={BarChart3}
                 trend="neutral"
+                grade={gradeMetric('sharpe', results.sharpe_ratio)}
                 tooltip="Risk-adjusted return. Higher is better. >1 is good, >2 is excellent. Calculated as (Return - Risk-Free Rate) / Volatility"
               />
               <MetricCard
@@ -310,6 +346,7 @@ export function BacktestReportPage() {
                 value={`${results.max_drawdown_pct?.toFixed(1) || 0}%`}
                 icon={TrendingDown}
                 trend="down"
+                grade={gradeMetric('maxDrawdown', results.max_drawdown_pct)}
                 tooltip="Largest peak-to-trough decline during the backtest period. Lower is better."
               />
               <MetricCard
@@ -317,6 +354,7 @@ export function BacktestReportPage() {
                 value={results.win_rate ? `${results.win_rate.toFixed(1)}%` : '—'}
                 icon={Target}
                 trend={results.win_rate && results.win_rate >= 50 ? 'up' : 'down'}
+                grade={gradeMetric('winRate', results.win_rate)}
                 tooltip="Percentage of trades that were profitable. Note: A low win rate can still be profitable with good risk/reward."
               />
             </div>
@@ -335,6 +373,7 @@ export function BacktestReportPage() {
                 value={results.profit_factor?.toFixed(2) || '—'}
                 icon={DollarSign}
                 trend={results.profit_factor && results.profit_factor > 1 ? 'up' : 'down'}
+                grade={gradeMetric('profitFactor', results.profit_factor)}
                 tooltip="Gross profits divided by gross losses. >1 means profitable, >2 is good."
               />
               <MetricCard
