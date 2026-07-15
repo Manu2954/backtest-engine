@@ -164,19 +164,30 @@ def calculate_market_return(
     df: pd.DataFrame,
     entry_idx: int,
     exit_idx: int,
-    direction: str
+    direction: str,
+    use_open_prices: bool = False,
 ) -> float:
     """
-    Calculate close-to-close market return during trade period.
+    Calculate market return during trade period.
 
     This represents what you would have made just buying and holding
     (or shorting and holding) during the trade period.
 
+    ATTR-001/ATTR-002 FIX:
+    - When use_open_prices=True (default for fill bars), uses open prices to match
+      actual execution prices (fills happen at bar open, not close)
+    - When use_open_prices=False (signal bars), uses close prices for historical
+      analysis
+
     Args:
-        df: DataFrame with 'close' column
+        df: DataFrame with 'open' and 'close' columns
         entry_idx: Entry bar index (integer position, not datetime)
+                   Should be the FILL bar (bar after signal), not signal bar
         exit_idx: Exit bar index (integer position, not datetime)
+                  Should be the FILL bar (bar after signal), not signal bar
         direction: 'LONG' or 'SHORT'
+        use_open_prices: If True, use open prices (matches actual fills).
+                        If False, use close prices (legacy behavior).
 
     Returns:
         float: Market return as percentage (5.0 = 5%)
@@ -186,18 +197,24 @@ def calculate_market_return(
     if exit_idx < 0 or exit_idx >= len(df):
         return 0.0
 
-    entry_close = df.iloc[entry_idx]['close']
-    exit_close = df.iloc[exit_idx]['close']
+    price_col = 'open' if use_open_prices else 'close'
 
-    if entry_close <= 0:
+    # Fallback to close if open not available
+    if price_col not in df.columns:
+        price_col = 'close'
+
+    entry_price = float(df.iloc[entry_idx][price_col])
+    exit_price = float(df.iloc[exit_idx][price_col])
+
+    if entry_price <= 0:
         return 0.0
 
     if direction == 'LONG':
         # Long: profit when price goes up
-        return ((exit_close - entry_close) / entry_close) * 100.0
+        return ((exit_price - entry_price) / entry_price) * 100.0
     elif direction == 'SHORT':
         # Short: profit when price goes down
-        return ((entry_close - exit_close) / entry_close) * 100.0
+        return ((entry_price - exit_price) / entry_price) * 100.0
     else:
         # Default to LONG if invalid direction
-        return ((exit_close - entry_close) / entry_close) * 100.0
+        return ((exit_price - entry_price) / entry_price) * 100.0

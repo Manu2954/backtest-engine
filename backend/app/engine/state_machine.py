@@ -79,8 +79,11 @@ class PositionState:
     entry_commission: float = 0.0
     pending_entry: bool = False
     pending_exit: bool = False
-    entry_bar_idx: int | None = None
-    exit_bar_idx: int | None = None
+    entry_bar_idx: int | None = None  # Signal bar index (when signal fired)
+    exit_bar_idx: int | None = None   # Signal bar index (when signal fired)
+    # ATTR-001 FIX: Track fill bar indices separately from signal bar indices
+    entry_fill_bar_idx: int | None = None  # Actual fill bar index (bar after signal)
+    exit_fill_bar_idx: int | None = None   # Actual fill bar index (bar after signal)
     entry_attribution_data: dict[str, Any] | None = None
     exit_attribution_data: dict[str, Any] | None = None
     dynamic_tp_pct: float | None = None
@@ -106,6 +109,8 @@ class PositionState:
         self.pending_exit = False
         self.entry_bar_idx = None
         self.exit_bar_idx = None
+        self.entry_fill_bar_idx = None
+        self.exit_fill_bar_idx = None
         self.entry_attribution_data = None
         self.exit_attribution_data = None
         self.dynamic_tp_pct = None
@@ -191,13 +196,39 @@ def _calculate_trade_attribution(
     entry_bar_idx: int,
     exit_bar_idx: int,
     pnl_pct: float,
-    direction: str = "LONG"
+    direction: str = "LONG",
+    entry_fill_bar_idx: int | None = None,
+    exit_fill_bar_idx: int | None = None,
 ) -> tuple[float | None, float | None]:
+    """
+    Calculate market return and alpha for a trade.
+
+    ATTR-001/ATTR-002 FIX:
+    - Uses fill bar indices (when available) instead of signal bar indices
+    - Uses open prices to match actual execution (fills happen at bar open)
+
+    Args:
+        df: DataFrame with OHLCV data
+        entry_bar_idx: Signal bar index (legacy, used if fill idx not provided)
+        exit_bar_idx: Signal bar index (legacy, used if fill idx not provided)
+        pnl_pct: Trade PnL percentage
+        direction: 'LONG' or 'SHORT'
+        entry_fill_bar_idx: Actual fill bar index (preferred)
+        exit_fill_bar_idx: Actual fill bar index (preferred)
+
+    Returns:
+        Tuple of (market_return, alpha) or (None, None) on error
+    """
     try:
         from app.engine.attribution import calculate_market_return
 
+        # ATTR-001 FIX: Prefer fill bar indices over signal bar indices
+        actual_entry_idx = entry_fill_bar_idx if entry_fill_bar_idx is not None else entry_bar_idx
+        actual_exit_idx = exit_fill_bar_idx if exit_fill_bar_idx is not None else exit_bar_idx
+
+        # ATTR-002 FIX: Use open prices to match actual execution
         market_return = calculate_market_return(
-            df, entry_bar_idx, exit_bar_idx, direction
+            df, actual_entry_idx, actual_exit_idx, direction, use_open_prices=True
         )
         alpha = pnl_pct - market_return
         return market_return, alpha
@@ -228,6 +259,8 @@ def _create_trade_record_with_attribution(
     exit_bar_idx: int | None = None,
     entry_attribution_data: dict[str, Any] | None = None,
     exit_attribution_data: dict[str, Any] | None = None,
+    entry_fill_bar_idx: int | None = None,
+    exit_fill_bar_idx: int | None = None,
 ) -> TradeRecord:
     market_return = None
     alpha = None
@@ -239,8 +272,11 @@ def _create_trade_record_with_attribution(
 
     if enable_attribution:
         if df is not None and entry_bar_idx is not None and exit_bar_idx is not None:
+            # ATTR-001/ATTR-002 FIX: Pass fill bar indices for accurate market return
             market_return, alpha = _calculate_trade_attribution(
-                df, entry_bar_idx, exit_bar_idx, pnl_pct, direction=direction
+                df, entry_bar_idx, exit_bar_idx, pnl_pct, direction=direction,
+                entry_fill_bar_idx=entry_fill_bar_idx,
+                exit_fill_bar_idx=exit_fill_bar_idx,
             )
 
         if entry_attribution_data:
@@ -428,11 +464,14 @@ def _execute_exit(
     df: pd.DataFrame,
     exit_bar_idx: int,
     exit_attribution_data: dict[str, Any] | None = None,
+    exit_fill_bar_idx: int | None = None,
 ) -> tuple[TradeRecord, float]:
     """
     Execute an exit for a position. Returns (trade_record, new_cash).
 
     Handles direction-aware PnL, slippage, commission.
+
+    ATTR-001 FIX: Added exit_fill_bar_idx parameter for accurate market return calculation.
     """
     direction = pos.direction
 
@@ -491,6 +530,7 @@ def _execute_exit(
         (exit_date - pos.entry_date).days if pos.entry_date is not None else 0
     )
 
+    # ATTR-001 FIX: Pass fill bar indices for accurate market return
     trade = _create_trade_record_with_attribution(
         entry_date=pos.entry_date or exit_date,
         entry_price=entry_price,
@@ -510,6 +550,8 @@ def _execute_exit(
         exit_bar_idx=exit_bar_idx,
         entry_attribution_data=pos.entry_attribution_data,
         exit_attribution_data=exit_attribution_data,
+        entry_fill_bar_idx=pos.entry_fill_bar_idx,
+        exit_fill_bar_idx=exit_fill_bar_idx,
     )
 
     # For SHORT: proceeds = entry_notional + pnl - commissions (already deducted)
@@ -547,12 +589,15 @@ def _fill_entry(
     leverage: float = 1.0,
     long_pos_for_equity: "PositionState | None" = None,
     short_pos_for_equity: "PositionState | None" = None,
+    fill_bar_idx: int | None = None,
 ) -> float:
     """
     Fill a pending entry for a position. Modifies pos in place, returns new cash.
 
     SIZE-001 FIX: Pass long_pos_for_equity and short_pos_for_equity to calculate
     equity (cash + position MTM) for percent_capital and risk_based sizing.
+
+    ATTR-001 FIX: Added fill_bar_idx to track actual fill bar for attribution.
     """
     direction = pos.direction
 
@@ -660,6 +705,8 @@ def _fill_entry(
     pos.pending_entry = False
     pos.leverage = leverage
     pos.margin = margin
+    # ATTR-001 FIX: Track fill bar index for accurate market return calculation
+    pos.entry_fill_bar_idx = fill_bar_idx
 
     # Calculate liquidation price for leveraged positions
     if leverage > 1.0:
@@ -718,7 +765,8 @@ def _check_stops(
                 (ts - pos.entry_date).days if pos.entry_date is not None else 0
             )
 
-            trade = TradeRecord(
+            # ATTR-004 FIX: Use _create_trade_record_with_attribution for liquidation
+            trade = _create_trade_record_with_attribution(
                 entry_date=pos.entry_date or ts,
                 entry_price=entry_price,
                 exit_date=ts,
@@ -730,8 +778,13 @@ def _check_stops(
                 exit_reason="liquidation",
                 entry_commission=pos.entry_commission,
                 exit_commission=0.0,
-                total_commission=pos.entry_commission,
                 direction=direction,
+                enable_attribution=enable_attribution,
+                df=df,
+                entry_bar_idx=pos.entry_bar_idx,
+                exit_bar_idx=i,
+                entry_attribution_data=pos.entry_attribution_data,
+                exit_attribution_data=None,  # Liquidation has no exit signal
             )
             trade_log.append(trade)
             pos.reset()
@@ -785,6 +838,8 @@ def _check_stops(
                 enable_attribution=enable_attribution,
                 df=df,
                 exit_bar_idx=i,
+                # ATTR-001: For stop exits, fill happens on same bar as trigger
+                exit_fill_bar_idx=i,
             )
             trade_log.append(trade)
             pos.reset()
@@ -839,6 +894,8 @@ def _check_stops(
                 enable_attribution=enable_attribution,
                 df=df,
                 exit_bar_idx=i,
+                # ATTR-001: For stop exits, fill happens on same bar as trigger
+                exit_fill_bar_idx=i,
             )
             trade_log.append(trade)
             pos.reset()
@@ -857,6 +914,8 @@ def _check_stops(
                 enable_attribution=enable_attribution,
                 df=df,
                 exit_bar_idx=i,
+                # ATTR-001: For TP exits, fill happens on same bar as trigger
+                exit_fill_bar_idx=i,
             )
             trade_log.append(trade)
             pos.reset()
@@ -900,9 +959,25 @@ def _capture_exit_rule_states(exit_rules: list, df: pd.DataFrame, entry_bar_idx:
     states = []
     for rule in exit_rules:
         if rule.fixed_threshold is not None:
-            states.append({"ref_value": rule.fixed_threshold, "active": True})
+            # EXIT-005 FIX: Validate monitor_col exists before marking active
+            if rule.monitor_col not in df.columns:
+                logger.warning(
+                    "ExitRule '%s': monitor_col '%s' not found in DataFrame, rule inactive",
+                    rule.name, rule.monitor_col
+                )
+                states.append({"ref_value": rule.fixed_threshold, "active": False})
+            else:
+                states.append({"ref_value": rule.fixed_threshold, "active": True})
             continue
         if rule.ref_col not in df.columns or entry_bar_idx is None:
+            states.append({"ref_value": None, "active": False})
+            continue
+        # EXIT-005 FIX: Validate monitor_col exists
+        if rule.monitor_col not in df.columns:
+            logger.warning(
+                "ExitRule '%s': monitor_col '%s' not found in DataFrame, rule inactive",
+                rule.name, rule.monitor_col
+            )
             states.append({"ref_value": None, "active": False})
             continue
         val = float(df.iloc[entry_bar_idx][rule.ref_col])
@@ -911,8 +986,15 @@ def _capture_exit_rule_states(exit_rules: list, df: pd.DataFrame, entry_bar_idx:
             continue
         active = True
         if rule.activation_threshold is not None:
+            # EXIT-001 FIX: Use GTE/LTE for activation threshold (not strict inequality)
             if rule.activation_operator == "LT":
                 active = val < rule.activation_threshold
+            elif rule.activation_operator == "LTE":
+                active = val <= rule.activation_threshold
+            elif rule.activation_operator == "GT":
+                active = val > rule.activation_threshold
+            elif rule.activation_operator == "GTE":
+                active = val >= rule.activation_threshold
             else:
                 active = val > rule.activation_threshold
         states.append({"ref_value": val, "active": active})
@@ -933,14 +1015,23 @@ def _check_exit_rules(
             continue
         if rule.monitor_col not in df.columns:
             continue
+        # EXIT-003 FIX: Check pd.notna() before bool() - NaN should not skip
         if rule.skip_col and rule.skip_col in df.columns:
-            if bool(df.iloc[i][rule.skip_col]):
+            skip_val = df.iloc[i][rule.skip_col]
+            if pd.notna(skip_val) and bool(skip_val):
                 continue
         monitor_val = float(df.iloc[i][rule.monitor_col])
         if pd.isna(monitor_val):
             continue
+        # EXIT-007 FIX: Support GTE/LTE operators
         if rule.operator == "LT":
             triggered = monitor_val < state["ref_value"]
+        elif rule.operator == "LTE":
+            triggered = monitor_val <= state["ref_value"]
+        elif rule.operator == "GT":
+            triggered = monitor_val > state["ref_value"]
+        elif rule.operator == "GTE":
+            triggered = monitor_val >= state["ref_value"]
         else:
             triggered = monitor_val > state["ref_value"]
         if not triggered:
@@ -1156,6 +1247,8 @@ def run_backtest(
                 # SIZE-001: Pass positions for equity calculation
                 long_pos_for_equity=long_pos,
                 short_pos_for_equity=short_pos if has_short else None,
+                # ATTR-001: Pass fill bar index for accurate market return
+                fill_bar_idx=i,
             )
             if long_pos.in_position and dynamic_tp_pct_column:
                 if dynamic_tp_pct_column in df.columns and long_pos.entry_bar_idx is not None:
@@ -1197,6 +1290,8 @@ def run_backtest(
                 # SIZE-001: Pass positions for equity calculation
                 long_pos_for_equity=long_pos,
                 short_pos_for_equity=short_pos,
+                # ATTR-001: Pass fill bar index for accurate market return
+                fill_bar_idx=i,
             )
             if short_pos.in_position and dynamic_tp_pct_column:
                 if dynamic_tp_pct_column in df.columns and short_pos.entry_bar_idx is not None:
@@ -1289,6 +1384,8 @@ def run_backtest(
                 df=df,
                 exit_bar_idx=long_pos.exit_bar_idx or i,
                 exit_attribution_data=long_pos.exit_attribution_data,
+                # ATTR-001: Signal fired on previous bar, fill on current bar
+                exit_fill_bar_idx=i,
             )
             trade_log.append(trade)
 
@@ -1323,6 +1420,8 @@ def run_backtest(
                 df=df,
                 exit_bar_idx=short_pos.exit_bar_idx or i,
                 exit_attribution_data=short_pos.exit_attribution_data,
+                # ATTR-001: Signal fired on previous bar, fill on current bar
+                exit_fill_bar_idx=i,
             )
             trade_log.append(trade)
 
@@ -1478,6 +1577,8 @@ def run_backtest(
                 # SIZE-001: Pass positions for equity calculation
                 long_pos_for_equity=long_pos,
                 short_pos_for_equity=short_pos if has_short else None,
+                # ATTR-001: Pass fill bar index for accurate market return
+                fill_bar_idx=len(df) - 1,
             )
 
             if pos.in_position:
@@ -1494,6 +1595,8 @@ def run_backtest(
                     enable_attribution=enable_attribution,
                     df=df,
                     exit_bar_idx=len(df) - 1,
+                    # ATTR-001: Pass fill bar index
+                    exit_fill_bar_idx=len(df) - 1,
                 )
                 trade_log.append(trade)
                 pos.reset()
@@ -1519,6 +1622,8 @@ def run_backtest(
                 enable_attribution=enable_attribution,
                 df=df,
                 exit_bar_idx=len(df) - 1,
+                # ATTR-001: Force close happens on last bar
+                exit_fill_bar_idx=len(df) - 1,
             )
             trade_log.append(trade)
             pos.reset()

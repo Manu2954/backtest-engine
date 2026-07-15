@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-SUPPORTED_OPERATORS = {"LT", "GT"}
+SUPPORTED_OPERATORS = {"LT", "GT", "LTE", "GTE"}
 
 
 @dataclass
