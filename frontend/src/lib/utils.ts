@@ -5,6 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/**
+ * Normalizes the two backend "done" status values into a single check.
+ * The backend returns either 'COMPLETE' or 'COMPLETED' depending on the code path.
+ */
+export function isBacktestComplete(status: string | undefined | null): boolean {
+  return status === 'COMPLETE' || status === 'COMPLETED'
+}
+
 export function formatCurrency(value: number, currency = 'USD'): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',

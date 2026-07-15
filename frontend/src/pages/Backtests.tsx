@@ -18,6 +18,7 @@ import {
 import { BacktestCard, NewBacktestModal } from '@/components/backtest'
 import { useBacktests, useDeleteBacktest } from '@/api/hooks'
 import { createBacktest } from '@/api'
+import { isBacktestComplete } from '@/lib/utils'
 import type { Backtest } from '@/types'
 import { Plus, Search, LineChart, AlertTriangle } from 'lucide-react'
 
@@ -32,7 +33,6 @@ export function BacktestsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
   const [deleteTarget, setDeleteTarget] = useState<Backtest | null>(null)
-  const [_rerunning, setRerunning] = useState<string | null>(null)
   const [newBacktestOpen, setNewBacktestOpen] = useState(false)
 
   const { data: backtests, isLoading, error } = useBacktests({
@@ -51,7 +51,7 @@ export function BacktestsPage() {
     const matchesStatus =
       statusFilter === 'ALL' ||
       b.status === statusFilter ||
-      (statusFilter === 'COMPLETE' && b.status === 'COMPLETED')
+      (statusFilter === 'COMPLETE' && isBacktestComplete(b.status))
 
     return matchesSearch && matchesStatus
   })
@@ -68,7 +68,6 @@ export function BacktestsPage() {
   }
 
   const handleRerun = async (backtest: Backtest) => {
-    setRerunning(backtest.id)
     try {
       const newBacktest = await createBacktest({
         strategy_id: backtest.strategy_id,
@@ -82,8 +81,6 @@ export function BacktestsPage() {
       navigate(`/backtests/${newBacktest.id}`)
     } catch (err) {
       console.error('Failed to rerun backtest:', err)
-    } finally {
-      setRerunning(null)
     }
   }
 
@@ -92,7 +89,7 @@ export function BacktestsPage() {
     ALL: backtests?.length || 0,
     PENDING: backtests?.filter((b) => b.status === 'PENDING').length || 0,
     RUNNING: backtests?.filter((b) => b.status === 'RUNNING').length || 0,
-    COMPLETE: backtests?.filter((b) => b.status === 'COMPLETE' || b.status === 'COMPLETED').length || 0,
+    COMPLETE: backtests?.filter((b) => isBacktestComplete(b.status)).length || 0,
     FAILED: backtests?.filter((b) => b.status === 'FAILED').length || 0,
   }
 

@@ -110,5 +110,25 @@ export function EquityCurve({
     )
   }
 
-  return <div ref={containerRef} className={className} />
+  // Whether any benchmark data exists (for legend)
+  const hasBenchmark = showBenchmark && data.some((d) => d.benchmark !== undefined)
+
+  return (
+    <div className={className}>
+      {/* Legend */}
+      <div className="mb-2 flex items-center gap-4 px-1 text-xs">
+        <div className="flex items-center gap-1.5">
+          <span className="h-2 w-3 rounded-sm" style={{ background: 'hsl(var(--chart-1))' }} />
+          <span className="text-muted-foreground">Strategy</span>
+        </div>
+        {hasBenchmark && (
+          <div className="flex items-center gap-1.5">
+            <span className="h-2 w-3 rounded-sm" style={{ background: 'hsl(var(--muted-foreground))' }} />
+            <span className="text-muted-foreground">Buy &amp; Hold</span>
+          </div>
+        )}
+      </div>
+      <div ref={containerRef} />
+    </div>
+  )
 }
