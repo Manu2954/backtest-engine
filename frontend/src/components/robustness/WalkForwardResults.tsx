@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { WalkForwardReport, WalkForwardWindow } from "../../types";
 
 const COLORS = {
   robust: 'hsl(var(--profit))',
@@ -9,8 +9,10 @@ const COLORS = {
 };
 
 interface WalkForwardResultsProps {
-  report: Record<string, any>;
+  report: WalkForwardReport;
 }
+
+type WindowWithReturn = WalkForwardWindow & { returnValue: number };
 
 function getLevelColor(level: string): string {
   switch (level) {
@@ -27,18 +29,18 @@ function getLevelColor(level: string): string {
 
 export default function WalkForwardResults({ report }: WalkForwardResultsProps) {
   const windows = report.windows || [];
-  const summary = report.summary || {};
-  const consistencyMetrics = report.consistency_metrics || {};
-  const assessment = report.assessment || {};
+  const summary = report.summary;
+  const consistencyMetrics = report.consistency_metrics;
+  const assessment = report.assessment;
 
   // Handle both API response shapes
-  const consistencyScore = summary.consistency_score ?? consistencyMetrics.consistency_score ?? 0;
-  const profitableWindows = summary.profitable_windows ?? consistencyMetrics.profitable_windows ?? 0;
-  const totalWindows = summary.total_windows ?? windows.length;
+  const consistencyScore = summary?.consistency_score ?? consistencyMetrics?.consistency_score ?? 0;
+  const profitableWindows = summary?.profitable_windows ?? consistencyMetrics?.profitable_windows ?? 0;
+  const totalWindows = summary?.total_windows ?? windows.length;
   const scorePercent = Math.min(100, Math.max(0, consistencyScore * 100));
 
   // Find best and worst windows
-  const windowsWithReturns = windows.map((w: any) => ({
+  const windowsWithReturns: WindowWithReturn[] = windows.map((w: WalkForwardWindow) => ({
     ...w,
     returnValue: w.total_return ?? w.total_return_pct ?? 0,
   }));
@@ -114,7 +116,7 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
               {profitableWindows} / {totalWindows}
             </div>
           </div>
-          {summary.avg_return !== undefined && (
+          {summary?.avg_return !== undefined && (
             <div className="metric">
               <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>Average Return</div>
               <div
@@ -128,7 +130,7 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
               </div>
             </div>
           )}
-          {summary.avg_sharpe !== undefined && (
+          {summary?.avg_sharpe !== undefined && (
             <div className="metric">
               <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>Average Sharpe</div>
               <div style={{ fontSize: "1.2rem", fontWeight: 600 }}>
@@ -136,7 +138,7 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
               </div>
             </div>
           )}
-          {summary.avg_trades !== undefined && (
+          {summary?.avg_trades !== undefined && (
             <div className="metric">
               <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>Average Trades</div>
               <div style={{ fontSize: "1.2rem", fontWeight: 600 }}>
@@ -172,9 +174,9 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
               alignItems: "flex-end",
             }}
           >
-            {windowsWithReturns.map((w: any) => {
+            {windowsWithReturns.map((w: WindowWithReturn) => {
               const maxReturn = Math.max(
-                ...windowsWithReturns.map((x: any) => Math.abs(x.returnValue)),
+                ...windowsWithReturns.map((x: WindowWithReturn) => Math.abs(x.returnValue)),
                 0.01
               );
               const height = Math.max(10, (Math.abs(w.returnValue) / maxReturn) * 100);
@@ -253,7 +255,7 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
               </tr>
             </thead>
             <tbody>
-              {windowsWithReturns.map((w: any) => {
+              {windowsWithReturns.map((w: WindowWithReturn) => {
                 const windowIndex = w.window_index ?? w.window_id ?? 0;
                 return (
                   <tr key={windowIndex}>

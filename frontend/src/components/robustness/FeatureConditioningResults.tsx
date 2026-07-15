@@ -1,4 +1,8 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type {
+  FeatureConditioningReport,
+  FeatureAnalysis,
+  FeatureCondition,
+} from "../../types";
 
 const COLORS = {
   robust: 'hsl(var(--profit))',
@@ -11,7 +15,7 @@ const COLORS = {
 };
 
 interface FeatureConditioningResultsProps {
-  report: Record<string, any>;
+  report: FeatureConditioningReport;
 }
 
 function getLevelColor(level: string): string {
@@ -45,7 +49,7 @@ export default function FeatureConditioningResults({
   const assessment = report.assessment || {};
 
   const sortedFeatures = features.length > 0
-    ? [...features].sort((a: any, b: any) => (b.importance || 0) - (a.importance || 0))
+    ? [...features].sort((a: FeatureAnalysis, b: FeatureAnalysis) => (b.importance || 0) - (a.importance || 0))
     : [];
 
   return (
@@ -129,11 +133,11 @@ export default function FeatureConditioningResults({
       )}
 
       {/* Assessment Flags */}
-      {assessment.flags?.length > 0 && (
+      {(assessment.flags?.length ?? 0) > 0 && (
         <div className="notice" style={{ marginBottom: "16px" }}>
           <strong>Analysis Notes:</strong>
           <ul style={{ margin: "8px 0 0 20px", padding: 0 }}>
-            {assessment.flags.map((flag: string, i: number) => (
+            {assessment.flags?.map((flag: string, i: number) => (
               <li key={i}>{flag}</li>
             ))}
           </ul>
@@ -151,7 +155,7 @@ export default function FeatureConditioningResults({
               </p>
             ) : (
               <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {winningConditions.slice(0, 5).map((cond: any, i: number) => (
+                {winningConditions.slice(0, 5).map((cond: FeatureCondition, i: number) => (
                   <div
                     key={i}
                     style={{
@@ -185,7 +189,7 @@ export default function FeatureConditioningResults({
               </p>
             ) : (
               <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                {losingConditions.slice(0, 5).map((cond: any, i: number) => (
+                {losingConditions.slice(0, 5).map((cond: FeatureCondition, i: number) => (
                   <div
                     key={i}
                     style={{
@@ -221,7 +225,7 @@ export default function FeatureConditioningResults({
             Higher importance indicates more variation in win rates across quartiles.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {sortedFeatures.map((feature: any) => {
+            {sortedFeatures.map((feature: FeatureAnalysis) => {
               const importancePercent = (feature.importance || 0) * 100;
               return (
                 <div

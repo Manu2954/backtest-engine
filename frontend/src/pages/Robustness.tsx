@@ -13,6 +13,10 @@ import {
   startRegimeDetection,
   startFeatureConditioning,
   getRobustnessAnalysis,
+  type ParameterSensitivityCreate,
+  type WalkForwardCreate,
+  type RegimeDetectionCreate,
+  type FeatureConditioningCreate,
 } from '@/api/endpoints/robustness'
 import type {
   AnalysisType,
@@ -126,16 +130,16 @@ export function RobustnessPage() {
 
       switch (selectedType) {
         case 'parameter_sensitivity':
-          result = await startParameterSensitivity(params as never)
+          result = await startParameterSensitivity(params as unknown as ParameterSensitivityCreate)
           break
         case 'walk_forward':
-          result = await startWalkForward(params as never)
+          result = await startWalkForward(params as unknown as WalkForwardCreate)
           break
         case 'regime_detection':
-          result = await startRegimeDetection(params as never)
+          result = await startRegimeDetection(params as unknown as RegimeDetectionCreate)
           break
         case 'feature_conditioning':
-          result = await startFeatureConditioning(params as never)
+          result = await startFeatureConditioning(params as unknown as FeatureConditioningCreate)
           break
         default:
           throw new Error('Unknown analysis type')

@@ -1,4 +1,5 @@
 import type { BacktestOut } from "../../types";
+import { cn } from "@/lib/utils";
 
 interface ComparisonTableProps {
   backtests: BacktestOut[];
@@ -62,16 +63,8 @@ const METRICS: MetricConfig[] = [
   },
 ];
 
-const CHART_COLORS = [
-  "#1f6feb", // blue
-  "#8957e5", // purple
-  "#d29922", // amber
-  "#2ea043", // green
-  "#00b4d8", // cyan
-];
-
 export function getChartColor(index: number): string {
-  return CHART_COLORS[index % CHART_COLORS.length];
+  return `hsl(var(--chart-${(index % 5) + 1}))`;
 }
 
 export default function ComparisonTable({ backtests }: ComparisonTableProps) {
@@ -115,26 +108,21 @@ export default function ComparisonTable({ backtests }: ComparisonTableProps) {
   return (
     <div className="card">
       <h2>Performance Comparison</h2>
-      <div style={{ overflowX: "auto" }}>
+      <div className="overflow-x-auto">
         <table className="table">
           <thead>
             <tr>
-              <th style={{ minWidth: "140px" }}>Metric</th>
+              <th className="min-w-[140px]">Metric</th>
               {backtests.map((bt, index) => (
-                <th key={bt.id} style={{ minWidth: "120px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <th key={bt.id} className="min-w-[120px]">
+                  <div className="flex items-center gap-2">
                     <span
-                      style={{
-                        width: "12px",
-                        height: "12px",
-                        borderRadius: "50%",
-                        background: getChartColor(index),
-                        display: "inline-block",
-                      }}
+                      className="inline-block h-3 w-3 rounded-full"
+                      style={{ background: getChartColor(index) }}
                     />
                     <span>{bt.ticker}</span>
                   </div>
-                  <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                  <div className="text-xs text-muted-foreground">
                     {bt.start_date.slice(0, 7)} - {bt.end_date.slice(0, 7)}
                   </div>
                 </th>
@@ -151,7 +139,7 @@ export default function ComparisonTable({ backtests }: ComparisonTableProps) {
 
               return (
                 <tr key={metric.key}>
-                  <td style={{ fontWeight: 600 }}>{metric.label}</td>
+                  <td className="font-semibold">{metric.label}</td>
                   {values.map((value, index) => {
                     const isBest = bestIndex === index;
                     const isWorst = worstIndex === index;
@@ -159,19 +147,10 @@ export default function ComparisonTable({ backtests }: ComparisonTableProps) {
                     return (
                       <td
                         key={backtests[index].id}
-                        style={{
-                          fontWeight: isBest || isWorst ? 700 : 400,
-                          color: isBest
-                            ? "var(--accent)"
-                            : isWorst
-                            ? "var(--danger)"
-                            : "inherit",
-                          background: isBest
-                            ? "rgba(27, 127, 107, 0.1)"
-                            : isWorst
-                            ? "rgba(180, 35, 24, 0.1)"
-                            : undefined,
-                        }}
+                        className={cn(
+                          isBest && "font-bold text-profit bg-profit/10",
+                          isWorst && "font-bold text-loss bg-loss/10"
+                        )}
                       >
                         {value !== null ? metric.format(value) : "N/A"}
                       </td>
@@ -184,35 +163,15 @@ export default function ComparisonTable({ backtests }: ComparisonTableProps) {
         </table>
       </div>
 
-      <div style={{ marginTop: "16px" }}>
-        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <span
-              style={{
-                width: "12px",
-                height: "12px",
-                background: "rgba(27, 127, 107, 0.3)",
-                border: "1px solid var(--accent)",
-                borderRadius: "2px",
-              }}
-            />
-            <span style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
-              Best in row
-            </span>
+      <div className="mt-4">
+        <div className="flex flex-wrap gap-4">
+          <div className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-sm border border-profit bg-profit/30" />
+            <span className="text-sm text-muted-foreground">Best in row</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <span
-              style={{
-                width: "12px",
-                height: "12px",
-                background: "rgba(180, 35, 24, 0.3)",
-                border: "1px solid var(--danger)",
-                borderRadius: "2px",
-              }}
-            />
-            <span style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
-              Worst in row
-            </span>
+          <div className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-sm border border-loss bg-loss/30" />
+            <span className="text-sm text-muted-foreground">Worst in row</span>
           </div>
         </div>
       </div>

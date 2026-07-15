@@ -344,23 +344,30 @@ export interface RegimeStats {
   sharpe_ratio?: number;
   start_date?: string;
   end_date?: string;
+  // Alternate field names returned by some report shapes
+  total_trades?: number;
+  avg_return?: number;
 }
 
 export interface RegimeDetectionReport {
   regimes?: RegimeStats[];
   regime_performance?: RegimeStats[];
   summary?: {
-    dependency_level: string;
-    cv_return: number;
+    dependency_level?: string;
+    cv_return?: number;
+    dependency_score?: number;
+    total_regimes?: number;
+    best_regime?: string;
+    worst_regime?: string;
   };
   regime_dependency?: {
     dependency_level: "INDEPENDENT" | "MODERATE" | "DEPENDENT";
     cv_return: number;
   };
   assessment: {
-    level: "ROBUST" | "MODERATE" | "FRAGILE";
-    recommendation: string;
-    flags: string[];
+    level?: "ROBUST" | "MODERATE" | "FRAGILE";
+    recommendation?: string;
+    flags?: string[];
   };
 }
 
@@ -382,26 +389,29 @@ export interface FeatureAnalysis {
   worst_quartile: number;
 }
 
+export interface FeatureCondition {
+  feature: string;
+  condition?: string;
+  quartile?: string | number;
+  win_rate: number;
+  trade_count?: number;
+}
+
 export interface FeatureConditioningReport {
   features?: FeatureAnalysis[];
-  winning_conditions?: Array<{
-    feature: string;
-    condition: string;
-    win_rate: number;
-  }>;
-  losing_conditions?: Array<{
-    feature: string;
-    condition: string;
-    win_rate: number;
-  }>;
+  winning_conditions?: FeatureCondition[];
+  losing_conditions?: FeatureCondition[];
   summary?: {
-    total_features: number;
-    most_important: string;
+    total_features?: number;
+    most_important?: string;
+    most_important_feature?: string;
+    total_trades_analyzed?: number;
+    overall_win_rate?: number;
   };
   assessment: {
-    level: "ROBUST" | "MODERATE" | "FRAGILE";
-    recommendation: string;
-    flags: string[];
+    level?: "ROBUST" | "MODERATE" | "FRAGILE" | "PREDICTABLE" | "RANDOM";
+    recommendation?: string;
+    flags?: string[];
   };
 }
 

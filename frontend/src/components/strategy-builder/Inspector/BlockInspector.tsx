@@ -3,6 +3,7 @@ import { useStrategyBuilderStore, type ConditionTarget } from '@/store/strategyB
 import { IndicatorInspector } from './IndicatorInspector'
 import { ConditionInspector } from './ConditionInspector'
 import { Settings2, Box } from 'lucide-react'
+import type { ConditionGroupInput, ConditionInput } from '@/types'
 
 export function BlockInspector() {
   const selectedBlockId = useStrategyBuilderStore((s) => s.selectedBlockId)
@@ -29,9 +30,9 @@ export function BlockInspector() {
     if (selectedBlockType !== 'condition' || !selectedBlockId) return null
 
     // Helper to search in groups
-    const searchInGroups = (groups: Record<string, any>, target: ConditionTarget) => {
+    const searchInGroups = (groups: Record<string, ConditionGroupInput>, target: ConditionTarget) => {
       for (const [groupName, group] of Object.entries(groups)) {
-        const idx = group.conditions.findIndex((c: any) => c.id === selectedBlockId)
+        const idx = group.conditions.findIndex((c: ConditionInput) => c.id === selectedBlockId)
         if (idx !== -1) {
           return { condition: group.conditions[idx], target, groupName, index: idx }
         }

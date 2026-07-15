@@ -146,7 +146,7 @@ export default function OverlaidEquityCurve({ backtests }: OverlaidEquityCurvePr
     return (
       <div className="card">
         <h2>Overlaid Equity Curves</h2>
-        <div className="row" style={{ alignItems: "center", padding: "20px 0" }}>
+        <div className="row items-center py-5">
           <div className="spinner" />
           <span>Loading equity data...</span>
         </div>
@@ -175,36 +175,37 @@ export default function OverlaidEquityCurve({ backtests }: OverlaidEquityCurvePr
   return (
     <div className="card">
       <h2>Overlaid Equity Curves</h2>
-      <p style={{ color: "var(--muted)", marginBottom: "16px" }}>
+      <p className="text-muted-foreground mb-4">
         Normalized percentage return comparison. Each curve shows cumulative return
         from initial capital.
       </p>
-      <div style={{ width: "100%", height: 400 }}>
+      <div className="w-full h-[400px]">
         <ResponsiveContainer>
           <LineChart
             data={chartData}
             margin={{ top: 5, right: 20, left: 20, bottom: 5 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="#e0d7cc" />
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
             <XAxis
               dataKey="date"
-              stroke="#6a6157"
-              style={{ fontSize: "0.85rem" }}
+              stroke="hsl(var(--muted-foreground))"
+              className="text-sm"
               tickFormatter={(value: string) =>
                 value.length >= 7 ? value.slice(0, 7) : value
               }
             />
             <YAxis
-              stroke="#6a6157"
-              style={{ fontSize: "0.85rem" }}
+              stroke="hsl(var(--muted-foreground))"
+              className="text-sm"
               tickFormatter={(value: number) => `${value.toFixed(0)}%`}
             />
             <Tooltip
               contentStyle={{
-                background: "white",
-                border: "1px solid #e0d7cc",
+                background: "hsl(var(--popover))",
+                border: "1px solid hsl(var(--border))",
                 borderRadius: "8px",
                 padding: "8px",
+                color: "hsl(var(--popover-foreground))",
               }}
               formatter={(value: unknown, name: unknown) => {
                 const numValue = typeof value === "number" ? value : 0;
@@ -241,12 +242,12 @@ export default function OverlaidEquityCurve({ backtests }: OverlaidEquityCurvePr
         </ResponsiveContainer>
       </div>
 
-      <div style={{ marginTop: "16px" }}>
-        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+      <div className="mt-4">
+        <div className="flex gap-4 flex-wrap">
           {backtests.map((bt, index) => (
             <div
               key={bt.id}
-              style={{ display: "flex", alignItems: "center", gap: "6px" }}
+              className="flex items-center gap-1.5"
             >
               <span
                 style={{
@@ -257,7 +258,7 @@ export default function OverlaidEquityCurve({ backtests }: OverlaidEquityCurvePr
                   borderRadius: "2px",
                 }}
               />
-              <span style={{ fontSize: "0.85rem" }}>
+              <span className="text-sm">
                 {bt.ticker} ({bt.asset_class})
               </span>
             </div>

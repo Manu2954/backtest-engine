@@ -1,7 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { RegimeDetectionReport, RegimeStats } from "../../types";
 
 interface RegimeDetectionResultsProps {
-  report: Record<string, any>;
+  report: RegimeDetectionReport;
 }
 
 const COLORS = {
@@ -48,14 +48,14 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
   const regimes = report.regimes || [];
   const regimePerformance = report.regime_performance || [];
   const summary = report.summary || {};
-  const assessment = report.assessment || {};
-  const regimeDependency = report.regime_dependency || {};
+  const assessment = report.assessment || { level: undefined, recommendation: undefined, flags: undefined };
+  const regimeDependency = report.regime_dependency;
 
-  const dependencyScore = summary.dependency_score ?? regimeDependency.cv_return ?? 0;
+  const dependencyScore = summary.dependency_score ?? regimeDependency?.cv_return ?? 0;
   const scorePercent = Math.min(100, Math.max(0, (1 - dependencyScore) * 100));
 
   // Calculate total bars for timeline proportions
-  const totalBars = regimes.reduce((sum: number, r: any) => sum + (r.bar_count || 0), 0);
+  const totalBars = regimes.reduce((sum: number, r: RegimeStats) => sum + (r.bar_count || 0), 0);
 
   return (
     <div className="fade-in">
@@ -68,21 +68,21 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
               style={{
                 fontSize: "2.5rem",
                 fontWeight: 700,
-                color: getLevelColor(assessment.level || regimeDependency.dependency_level || ""),
+                color: getLevelColor(assessment.level || regimeDependency?.dependency_level || ""),
               }}
             >
               {((1 - dependencyScore) * 100).toFixed(0)}%
             </div>
-            {(assessment.level || regimeDependency.dependency_level) && (
+            {(assessment.level || regimeDependency?.dependency_level) && (
               <div
                 className="tag"
                 style={{
                   marginTop: "8px",
-                  background: getLevelColor(assessment.level || regimeDependency.dependency_level),
+                  background: getLevelColor(assessment.level || regimeDependency?.dependency_level || ""),
                   color: "white",
                 }}
               >
-                {assessment.level || regimeDependency.dependency_level}
+                {assessment.level || regimeDependency?.dependency_level}
               </div>
             )}
           </div>
@@ -99,7 +99,7 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
                 style={{
                   width: `${scorePercent}%`,
                   height: "100%",
-                  background: getLevelColor(assessment.level || regimeDependency.dependency_level || ""),
+                  background: getLevelColor(assessment.level || regimeDependency?.dependency_level || ""),
                   transition: "width 0.5s ease",
                 }}
               />
@@ -157,11 +157,11 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
       )}
 
       {/* Assessment Flags */}
-      {assessment.flags?.length > 0 && (
+      {(assessment.flags?.length ?? 0) > 0 && (
         <div className="notice" style={{ marginBottom: "16px" }}>
           <strong>Analysis Notes:</strong>
           <ul style={{ margin: "8px 0 0 20px", padding: 0 }}>
-            {assessment.flags.map((flag: string, i: number) => (
+            {assessment.flags?.map((flag: string, i: number) => (
               <li key={i}>{flag}</li>
             ))}
           </ul>
@@ -181,7 +181,7 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
               overflow: "hidden",
             }}
           >
-            {regimes.map((r: any, i: number) => {
+            {regimes.map((r: RegimeStats, i: number) => {
               const widthPercent = ((r.bar_count || 0) / totalBars) * 100;
               return (
                 <div
@@ -230,7 +230,7 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
               </tr>
             </thead>
             <tbody>
-              {regimePerformance.map((rp: any) => (
+              {regimePerformance.map((rp: RegimeStats) => (
                 <tr key={rp.regime}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -288,7 +288,7 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
               </tr>
             </thead>
             <tbody>
-              {regimes.map((r: any, i: number) => (
+              {regimes.map((r: RegimeStats, i: number) => (
                 <tr key={i}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
