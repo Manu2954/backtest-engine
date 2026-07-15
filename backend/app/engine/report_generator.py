@@ -293,7 +293,11 @@ def generate_report(
 
     gross_profit = sum(p for p in pnl_values if p > 0)
     gross_loss = abs(sum(p for p in pnl_values if p < 0))
-    profit_factor = _safe_div(gross_profit, gross_loss) if gross_loss != 0 else 0.0
+    # RPT-001 FIX: Return sentinel value for "perfect" strategies (all wins, no losses)
+    if gross_loss == 0:
+        profit_factor = 999999.0 if gross_profit > 0 else 0.0
+    else:
+        profit_factor = _safe_div(gross_profit, gross_loss)
 
     durations = [int(t.get("trade_duration_days", 0)) for t in trade_log]
     avg_trade_duration = sum(durations) / len(durations) if durations else 0.0

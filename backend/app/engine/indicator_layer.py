@@ -358,6 +358,8 @@ def compute_indicators(
         elif kind == "ROC":
             # Rate of Change: (price - price[n]) / price[n] * 100
             period = int(_require_param(params, "period"))
+            # IND-001 FIX: Validate period is positive
+            _validate_period(period, "ROC")
             series = _get_series(temp_df, source)
             df_out[alias] = ta.roc(series, length=period)
             indicator_columns.append(alias)
@@ -369,6 +371,8 @@ def compute_indicators(
         elif kind in {"DONCHIAN", "DC"}:
             # Donchian Channel: highest high and lowest low over period
             period = int(_require_param(params, "period"))
+            # IND-002 FIX: Validate period is positive
+            _validate_period(period, "Donchian Channel")
             dc_df = ta.donchian(
                 temp_df["high"],
                 temp_df["low"],
