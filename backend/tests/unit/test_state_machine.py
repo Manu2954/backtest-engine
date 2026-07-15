@@ -2019,3 +2019,257 @@ def test_counter_trade_dynamic_tp_pct_with_column_override():
         f"Expected exit at {expected_tp_price} (5% TP from column), got {short_trade['exit_price']}"
 
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# KELLY SIZING TESTS (ta4j pattern)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_kelly_sizing_basic():
+    """
+    Test Kelly criterion position sizing.
+    
+    Kelly formula: f* = W - (1-W)/R
+    where W = win_rate, R = payoff_ratio
+    
+    Example: W=0.6, R=2.0 → f* = 0.6 - 0.4/2 = 0.6 - 0.2 = 0.4 (40% of capital)
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 100, 100],
+            "close": [100, 100, 100, 100, 100],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, True, False], index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        initial_capital=1000.0,
+        position_size_type="kelly",
+        kelly_win_rate=0.6,
+        kelly_payoff_ratio=2.0,
+        asset_class="CRYPTO",  # Allow fractional
+    )
+    
+    assert len(trades) == 1
+    trade = trades[0]
+    
+    # Kelly fraction: 0.6 - 0.4/2.0 = 0.4
+    # Amount to invest: 0.4 * 1000 = 400
+    # Shares at $100: 400/100 = 4.0
+    expected_shares = 4.0
+    assert abs(trade["shares"] - expected_shares) < 0.01, \
+        f"Expected {expected_shares} shares (40% Kelly), got {trade['shares']}"
+
+
+def test_kelly_sizing_half_kelly():
+    """
+    Test half-Kelly (kelly_fraction=0.5) for more conservative sizing.
+    
+    Full Kelly: f* = 0.6 - 0.4/2.0 = 0.4 (40%)
+    Half Kelly: 0.4 * 0.5 = 0.2 (20%)
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 100, 100],
+            "close": [100, 100, 100, 100, 100],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, True, False], index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        initial_capital=1000.0,
+        position_size_type="kelly",
+        kelly_win_rate=0.6,
+        kelly_payoff_ratio=2.0,
+        kelly_fraction=0.5,  # Half-Kelly
+        asset_class="CRYPTO",
+    )
+    
+    assert len(trades) == 1
+    trade = trades[0]
+    
+    # Half-Kelly: 0.4 * 0.5 = 0.2 → 20% of capital
+    # Amount: 0.2 * 1000 = 200
+    # Shares at $100: 200/100 = 2.0
+    expected_shares = 2.0
+    assert abs(trade["shares"] - expected_shares) < 0.01, \
+        f"Expected {expected_shares} shares (half-Kelly), got {trade['shares']}"
+
+
+def test_kelly_sizing_negative_edge_no_trade():
+    """
+    Test Kelly with negative edge (don't bet).
+    
+    W=0.3, R=1.5 → f* = 0.3 - 0.7/1.5 = 0.3 - 0.467 = -0.167
+    Negative Kelly means don't trade.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 100, 100],
+            "close": [100, 100, 100, 100, 100],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, True, False], index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        initial_capital=1000.0,
+        position_size_type="kelly",
+        kelly_win_rate=0.3,
+        kelly_payoff_ratio=1.5,  # Negative edge
+        asset_class="CRYPTO",
+    )
+    
+    # No trade should be made (Kelly < 0)
+    assert len(trades) == 0, f"Expected no trades (negative Kelly), got {len(trades)}"
+
+
+def test_kelly_sizing_capped_at_100_percent():
+    """
+    Test that Kelly is capped at 100% of capital.
+    
+    W=0.9, R=10.0 → f* = 0.9 - 0.1/10 = 0.9 - 0.01 = 0.89 (89%)
+    This is already < 100%, but let's test with more extreme values.
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 100, 100],
+            "close": [100, 100, 100, 100, 100],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, True, False], index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        initial_capital=1000.0,
+        position_size_type="kelly",
+        kelly_win_rate=0.99,
+        kelly_payoff_ratio=100.0,  # Very high edge
+        kelly_fraction=2.0,  # 2x Kelly (aggressive)
+        asset_class="CRYPTO",
+    )
+    
+    assert len(trades) == 1
+    trade = trades[0]
+    
+    # Kelly * 2 would be > 100%, but capped at 100%
+    # Full capital: 1000 / 100 = 10 shares
+    max_shares = 10.0
+    assert trade["shares"] <= max_shares + 0.01, \
+        f"Kelly should be capped at 100%, got {trade['shares']} shares"
+
+
+def test_kelly_sizing_with_commission():
+    """
+    Test Kelly sizing accounts for commission correctly.
+    
+    Kelly: 0.6 - 0.4/2.0 = 0.4 (40%)
+    With 1% commission, effective price = 100 * (1 + 0.01) = 101
+    Amount: 0.4 * 1000 = 400
+    Shares: 400 / 101 ≈ 3.96
+    """
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {
+            "open": [100, 100, 100, 100, 100],
+            "close": [100, 100, 100, 100, 100],
+        },
+        index=index,
+    )
+    entry_signal = pd.Series([True, False, False, False, False], index=index)
+    exit_signal = pd.Series([False, False, False, True, False], index=index)
+    
+    trades, equity = run_backtest(
+        df,
+        entry_signal=entry_signal,
+        exit_signal=exit_signal,
+        initial_capital=1000.0,
+        position_size_type="kelly",
+        kelly_win_rate=0.6,
+        kelly_payoff_ratio=2.0,
+        commission_pct=1.0,  # 1% commission
+        asset_class="CRYPTO",
+    )
+    
+    assert len(trades) == 1
+    trade = trades[0]
+    
+    # 40% of capital = 400
+    # Effective price with 1% commission: 100 * 1.01 = 101
+    # Shares: 400 / 101 ≈ 3.96
+    expected_shares = 400.0 / 101.0
+    assert abs(trade["shares"] - expected_shares) < 0.1, \
+        f"Expected ~{expected_shares:.2f} shares with commission, got {trade['shares']}"
+
+
+def test_kelly_sizing_validation_errors():
+    """Test validation errors for Kelly sizing."""
+    import pytest
+    
+    index = pd.date_range("2020-01-01", periods=5, freq="D")
+    df = pd.DataFrame(
+        {"open": [100] * 5, "close": [100] * 5},
+        index=index,
+    )
+    entry_signal = pd.Series([True] + [False] * 4, index=index)
+    exit_signal = pd.Series([False] * 4 + [True], index=index)
+    
+    # Missing kelly_win_rate
+    with pytest.raises(ValueError, match="kelly_win_rate"):
+        run_backtest(
+            df, entry_signal, exit_signal,
+            initial_capital=1000.0,
+            position_size_type="kelly",
+            kelly_payoff_ratio=2.0,
+        )
+    
+    # Missing kelly_payoff_ratio
+    with pytest.raises(ValueError, match="kelly_payoff_ratio"):
+        run_backtest(
+            df, entry_signal, exit_signal,
+            initial_capital=1000.0,
+            position_size_type="kelly",
+            kelly_win_rate=0.6,
+        )
+    
+    # Invalid win_rate (must be 0 < W < 1)
+    with pytest.raises(ValueError, match="kelly_win_rate"):
+        run_backtest(
+            df, entry_signal, exit_signal,
+            initial_capital=1000.0,
+            position_size_type="kelly",
+            kelly_win_rate=1.0,  # Can't be 1.0
+            kelly_payoff_ratio=2.0,
+        )
+    
+    # Invalid payoff_ratio (must be > 0)
+    with pytest.raises(ValueError, match="kelly_payoff_ratio"):
+        run_backtest(
+            df, entry_signal, exit_signal,
+            initial_capital=1000.0,
+            position_size_type="kelly",
+            kelly_win_rate=0.6,
+            kelly_payoff_ratio=0.0,  # Can't be 0
+        )

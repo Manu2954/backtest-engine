@@ -357,7 +357,32 @@ def _calculate_position_size(
     commission_per_trade: float = 0.0,
     commission_pct: float = 0.0,
     leverage: float = 1.0,
+    kelly_win_rate: float | None = None,
+    kelly_payoff_ratio: float | None = None,
+    kelly_fraction: float = 1.0,
 ) -> float:
+    """
+    Calculate position size based on sizing type.
+
+    Sizing types:
+    - full_capital: Use all available cash
+    - percent_capital: Use position_size_value% of total capital
+    - fixed_amount: Use fixed dollar amount
+    - risk_based: Size based on stop distance and risk % (requires stop_price)
+    - kelly: Kelly criterion sizing (requires kelly_win_rate, kelly_payoff_ratio)
+
+    Kelly criterion formula (ta4j reference):
+        f* = W - (1-W)/R
+    where:
+        W = win probability (0-1)
+        R = payoff ratio (avg_win / avg_loss)
+        f* = optimal fraction of capital to bet
+
+    kelly_fraction (default 1.0) scales the result:
+        - 0.5 = half-Kelly (more conservative, commonly used)
+        - 1.0 = full Kelly
+        - Values > 1.0 allowed but risky
+    """
     if price <= 0:
         return 0.0
 
@@ -411,6 +436,33 @@ def _calculate_position_size(
             # Scale down to fit budget
             effective_price = price * (1.0 / leverage + commission_pct / 100.0)
             raw_shares = available_cash / effective_price
+    elif position_size_type == "kelly":
+        # Kelly criterion sizing (ta4j pattern)
+        # f* = W - (1-W)/R where W=win_rate, R=payoff_ratio
+        if kelly_win_rate is None or kelly_payoff_ratio is None:
+            raise ValueError("kelly position sizing requires kelly_win_rate and kelly_payoff_ratio")
+        if kelly_win_rate <= 0 or kelly_win_rate >= 1:
+            raise ValueError("kelly_win_rate must be between 0 and 1 (exclusive)")
+        if kelly_payoff_ratio <= 0:
+            raise ValueError("kelly_payoff_ratio must be positive")
+
+        # Kelly formula
+        kelly_f = kelly_win_rate - (1.0 - kelly_win_rate) / kelly_payoff_ratio
+
+        # Apply fraction (e.g., 0.5 for half-Kelly)
+        kelly_f = kelly_f * kelly_fraction
+
+        # Kelly can be negative (don't bet) or > 1 (bet more than capital)
+        # Clamp to [0, 1] for safety
+        if kelly_f <= 0:
+            return 0.0
+        kelly_f = min(kelly_f, 1.0)
+
+        # Invest kelly_f fraction of total capital
+        amount_to_invest = kelly_f * total_capital
+        amount_to_invest = min(amount_to_invest, available_cash)
+        effective_price = price * (1.0 / leverage + commission_pct / 100.0)
+        raw_shares = amount_to_invest / effective_price
     else:
         raise ValueError(f"Unsupported position_size_type: {position_size_type}")
 
@@ -618,6 +670,9 @@ def _fill_entry(
     long_pos_for_equity: "PositionState | None" = None,
     short_pos_for_equity: "PositionState | None" = None,
     fill_bar_idx: int | None = None,
+    kelly_win_rate: float | None = None,
+    kelly_payoff_ratio: float | None = None,
+    kelly_fraction: float = 1.0,
 ) -> float:
     """
     Fill a pending entry for a position. Modifies pos in place, returns new cash.
@@ -626,6 +681,9 @@ def _fill_entry(
     equity (cash + position MTM) for percent_capital and risk_based sizing.
 
     ATTR-001 FIX: Added fill_bar_idx to track actual fill bar for attribution.
+
+    Kelly sizing: Pass kelly_win_rate, kelly_payoff_ratio, kelly_fraction for
+    position_size_type="kelly".
     """
     direction = pos.direction
 
@@ -671,6 +729,9 @@ def _fill_entry(
         commission_per_trade=commission_per_trade,
         commission_pct=commission_pct,
         leverage=leverage,
+        kelly_win_rate=kelly_win_rate,
+        kelly_payoff_ratio=kelly_payoff_ratio,
+        kelly_fraction=kelly_fraction,
     )
 
     # SIZE-003 FIX: Don't multiply by leverage here anymore for risk_based
@@ -1158,6 +1219,10 @@ def run_backtest(
     enable_counter_trades: bool = False,
     counter_tp_multiplier: float = 1.5,
     counter_leverage: float | None = None,  # CT-NEW-005: Separate leverage for counter-trades (default: 1.0)
+    # Kelly sizing parameters (ta4j pattern)
+    kelly_win_rate: float | None = None,
+    kelly_payoff_ratio: float | None = None,
+    kelly_fraction: float = 1.0,
 ) -> tuple[list[dict[str, Any]], pd.Series]:
     if initial_capital <= 0:
         raise ValueError(f"initial_capital must be positive, got {initial_capital}")
@@ -1169,10 +1234,10 @@ def run_backtest(
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
 
-    if position_size_type not in {"full_capital", "percent_capital", "fixed_amount", "risk_based"}:
+    if position_size_type not in {"full_capital", "percent_capital", "fixed_amount", "risk_based", "kelly"}:
         raise ValueError(
             f"Invalid position_size_type: {position_size_type}. "
-            "Must be 'full_capital', 'percent_capital', 'fixed_amount', or 'risk_based'"
+            "Must be 'full_capital', 'percent_capital', 'fixed_amount', 'risk_based', or 'kelly'"
         )
     if position_size_type == "percent_capital":
         if position_size_value <= 0 or position_size_value > 100:
@@ -1192,6 +1257,23 @@ def run_backtest(
         if stop_loss_pct is None and dynamic_stop_column is None:
             raise ValueError(
                 "risk_based position sizing requires either stop_loss_pct or dynamic_stop_column to be configured"
+            )
+    if position_size_type == "kelly":
+        if kelly_win_rate is None or kelly_payoff_ratio is None:
+            raise ValueError(
+                "kelly position sizing requires kelly_win_rate and kelly_payoff_ratio"
+            )
+        if kelly_win_rate <= 0 or kelly_win_rate >= 1:
+            raise ValueError(
+                f"kelly_win_rate must be between 0 and 1 (exclusive), got {kelly_win_rate}"
+            )
+        if kelly_payoff_ratio <= 0:
+            raise ValueError(
+                f"kelly_payoff_ratio must be positive, got {kelly_payoff_ratio}"
+            )
+        if kelly_fraction <= 0:
+            raise ValueError(
+                f"kelly_fraction must be positive, got {kelly_fraction}"
             )
 
     if stop_loss_pct is not None and stop_loss_pct <= 0:
@@ -1352,6 +1434,10 @@ def run_backtest(
                 short_pos_for_equity=short_pos if has_short else None,
                 # ATTR-001: Pass fill bar index for accurate market return
                 fill_bar_idx=i,
+                # Kelly sizing params
+                kelly_win_rate=kelly_win_rate,
+                kelly_payoff_ratio=kelly_payoff_ratio,
+                kelly_fraction=kelly_fraction,
             )
             # Clear pending_leverage after fill
             long_pos.pending_leverage = None
@@ -1399,6 +1485,10 @@ def run_backtest(
                 short_pos_for_equity=short_pos,
                 # ATTR-001: Pass fill bar index for accurate market return
                 fill_bar_idx=i,
+                # Kelly sizing params
+                kelly_win_rate=kelly_win_rate,
+                kelly_payoff_ratio=kelly_payoff_ratio,
+                kelly_fraction=kelly_fraction,
             )
             # Clear pending_leverage after fill
             short_pos.pending_leverage = None
@@ -1712,6 +1802,10 @@ def run_backtest(
                 short_pos_for_equity=short_pos if has_short else None,
                 # ATTR-001: Pass fill bar index for accurate market return
                 fill_bar_idx=len(df) - 1,
+                # Kelly sizing params
+                kelly_win_rate=kelly_win_rate,
+                kelly_payoff_ratio=kelly_payoff_ratio,
+                kelly_fraction=kelly_fraction,
             )
 
             if pos.in_position:

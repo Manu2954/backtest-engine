@@ -4,7 +4,7 @@ This document explains all available position sizing methods in the backtest eng
 
 ## Overview
 
-Position sizing determines how many shares to buy when an entry signal triggers. The engine supports four methods, each with different risk/capital management characteristics.
+Position sizing determines how many shares to buy when an entry signal triggers. The engine supports five methods, each with different risk/capital management characteristics.
 
 ## Available Methods
 
@@ -421,7 +421,112 @@ Professional traders typically risk 0.5-2% per trade. 10% is the maximum allowed
 
 - **Simple strategies:** Use `percent_capital` (10-25%)
 - **Professional risk management:** Use `risk_based` (0.5-2% risk)
+- **Optimal bet sizing:** Use `kelly` with historical win rate/payoff (half-Kelly recommended)
 - **Single position only:** Use `full_capital`
 - **Testing/comparison:** Use `fixed_amount`
 
 Risk-based sizing is recommended for strategies with varying stop distances (ATR stops, volatility-based stops, etc.) where you want consistent dollar risk per trade.
+
+
+### 5. Kelly Criterion (`kelly`)
+
+**Description:** Uses the Kelly criterion formula to determine optimal bet size based on historical win rate and payoff ratio. This is a mathematically optimal approach for long-term capital growth.
+
+**Source:** ta4j reference implementation (PositionSizer.kelly)
+
+**Use Case:** Strategies with known historical win rate and average win/loss ratio where you want mathematically optimal position sizing.
+
+**Parameters:**
+- `position_size_type`: "kelly"
+- `kelly_win_rate`: Historical win probability (0 < W < 1)
+- `kelly_payoff_ratio`: Average win / Average loss (R > 0)
+- `kelly_fraction`: Scaling factor (default 1.0 for full Kelly, 0.5 for half-Kelly)
+
+**Kelly Formula:**
+```
+f* = W - (1-W)/R
+
+where:
+  W = win probability (e.g., 0.6 for 60% win rate)
+  R = payoff ratio (e.g., 2.0 if avg win = 2x avg loss)
+  f* = optimal fraction of capital to bet
+```
+
+**Example:**
+```python
+run_backtest(
+    df=df,
+    entry_signal=entry_signal,
+    exit_signal=exit_signal,
+    initial_capital=10000,
+    position_size_type="kelly",
+    kelly_win_rate=0.6,       # 60% win rate
+    kelly_payoff_ratio=2.0,   # Avg win is 2x avg loss
+    kelly_fraction=0.5,       # Half-Kelly (conservative)
+)
+```
+
+**Calculation Example:**
+```
+Win rate: 60% (W = 0.6)
+Payoff ratio: 2.0 (R = 2.0)
+
+Full Kelly: f* = 0.6 - (0.4/2.0) = 0.6 - 0.2 = 0.4 (40%)
+Half Kelly: f* × 0.5 = 0.4 × 0.5 = 0.2 (20%)
+
+Capital: $10,000
+Entry price: $100
+
+Half-Kelly position: $10,000 × 0.2 = $2,000
+Shares: $2,000 / $100 = 20 shares
+```
+
+**Key Behaviors:**
+- **Negative Kelly (f* < 0):** No trade (edge not positive)
+- **Kelly > 100%:** Capped at 100% (no leverage from Kelly alone)
+- **Commission aware:** Accounts for transaction costs in sizing
+
+**Common Values:**
+| Win Rate | Payoff | Kelly f* | Half-Kelly |
+|----------|--------|----------|------------|
+| 50% | 2.0 | 25% | 12.5% |
+| 60% | 1.5 | 33% | 16.5% |
+| 60% | 2.0 | 40% | 20% |
+| 70% | 1.5 | 50% | 25% |
+| 40% | 3.0 | 20% | 10% |
+
+**Half-Kelly Recommendation:**
+
+Full Kelly is mathematically optimal but assumes:
+- Perfect knowledge of true win rate and payoff ratio
+- No estimation error
+- No model drift
+
+In practice, use **half-Kelly (kelly_fraction=0.5)** for:
+- More conservative sizing
+- Protection against estimation errors
+- Smoother equity curves
+- Lower drawdowns
+
+**Pros:**
+- Mathematically optimal for long-term growth
+- Considers both win rate AND payoff ratio
+- Automatically sizes small when edge is weak
+- Scales with account size
+
+**Cons:**
+- Requires accurate historical statistics
+- Can produce large positions with high edge
+- Full Kelly has high variance
+- Doesn't adapt to market conditions dynamically
+
+
+## Comparison Table
+
+| Method | Position Size | Risk Per Trade | Scales with Account | Adapts to Volatility | Optimal Growth |
+|--------|--------------|----------------|---------------------|---------------------|----------------|
+| `full_capital` | 100% of cash | Varies (100% exposure) | No | No | No |
+| `percent_capital` | Fixed % of capital | Varies with stop distance | Yes | No | No |
+| `fixed_amount` | Fixed dollars | Varies with stop distance | No | No | No |
+| `risk_based` | Varies | **Fixed dollars** | Yes | **Yes** | No |
+| `kelly` | Varies by edge | Varies | Yes | No | **Yes** |
