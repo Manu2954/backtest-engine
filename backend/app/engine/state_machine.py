@@ -761,6 +761,7 @@ def _check_stops(
     stop_loss_pct: float | None,
     take_profit_pct: float | None,
     dynamic_stop_column: str | None,
+    dynamic_stop_type: str = "distance",  # "distance", "price", "percentage"
     dynamic_tp_pct: float | None = None,
 ) -> float:
     """
@@ -819,41 +820,76 @@ def _check_stops(
             return cash
 
     # DYN-002 FIX: Implement actual trailing stop with high-water mark
-    # The dynamic_stop_column provides the DISTANCE (e.g., ATR value), not the stop price
     # Trailing stop only moves in favorable direction (up for LONG, down for SHORT)
+    # dynamic_stop_type determines how to interpret the column value:
+    #   - "distance": Column is absolute distance (e.g., ATR value). Stop = high_water - distance
+    #   - "price": Column is the stop price directly (e.g., SMA). No trailing, just use the value.
+    #   - "percentage": Column is a percentage (e.g., 0.05 = 5%). Stop = high_water * (1 - pct) for LONG
     if dynamic_stop_column is not None:
         if dynamic_stop_column not in df.columns:
             raise ValueError(f"Dynamic stop column not found: {dynamic_stop_column}")
 
-        stop_distance = float(df.iloc[i][dynamic_stop_column])
+        col_value = float(df.iloc[i][dynamic_stop_column])
         bar_high = float(df.iloc[i]["high"]) if "high" in df.columns else current_price
         bar_low = float(df.iloc[i]["low"]) if "low" in df.columns else current_price
 
         should_exit = False
-        if not pd.isna(stop_distance) and stop_distance > 0:
-            # Initialize high-water mark if not set
-            if pos.trailing_stop_high_water is None:
-                pos.trailing_stop_high_water = pos.entry_price
+        stop_price = None
 
-            # Update high-water mark (only moves in favorable direction)
-            if direction == "LONG":
-                # LONG: track highest price reached
-                pos.trailing_stop_high_water = max(pos.trailing_stop_high_water, bar_high)
-                # Stop price is high_water - distance
-                stop_price = pos.trailing_stop_high_water - stop_distance
-                # Exit if bar_low crosses below stop
-                if bar_low <= stop_price:
-                    should_exit = True
-            else:
-                # SHORT: track lowest price reached
-                pos.trailing_stop_high_water = min(pos.trailing_stop_high_water, bar_low)
-                # Stop price is low_water + distance
-                stop_price = pos.trailing_stop_high_water + stop_distance
-                # Exit if bar_high crosses above stop
-                if bar_high >= stop_price:
-                    should_exit = True
+        if not pd.isna(col_value):
+            if dynamic_stop_type == "price":
+                # Column IS the stop price (e.g., SMA, support level)
+                # No trailing - just use the indicator value directly
+                stop_price = col_value
+                if direction == "LONG":
+                    if bar_low <= stop_price:
+                        should_exit = True
+                else:
+                    if bar_high >= stop_price:
+                        should_exit = True
 
-        if should_exit:
+            elif dynamic_stop_type == "percentage":
+                # Column is a percentage (e.g., 0.05 for 5%, or 5.0 for 5%)
+                # Normalize: if > 1, assume it's already percentage points (5.0 = 5%)
+                pct = col_value if col_value < 1 else col_value / 100.0
+
+                # Initialize high-water mark if not set
+                if pos.trailing_stop_high_water is None:
+                    pos.trailing_stop_high_water = pos.entry_price
+
+                if direction == "LONG":
+                    pos.trailing_stop_high_water = max(pos.trailing_stop_high_water, bar_high)
+                    # ta4j style: stop = highest × (1 - percentage)
+                    stop_price = pos.trailing_stop_high_water * (1.0 - pct)
+                    if bar_low <= stop_price:
+                        should_exit = True
+                else:
+                    pos.trailing_stop_high_water = min(pos.trailing_stop_high_water, bar_low)
+                    # SHORT: stop = lowest × (1 + percentage)
+                    stop_price = pos.trailing_stop_high_water * (1.0 + pct)
+                    if bar_high >= stop_price:
+                        should_exit = True
+
+            else:  # "distance" (default)
+                # Column is absolute distance (e.g., ATR value)
+                stop_distance = col_value
+                if stop_distance > 0:
+                    # Initialize high-water mark if not set
+                    if pos.trailing_stop_high_water is None:
+                        pos.trailing_stop_high_water = pos.entry_price
+
+                    if direction == "LONG":
+                        pos.trailing_stop_high_water = max(pos.trailing_stop_high_water, bar_high)
+                        stop_price = pos.trailing_stop_high_water - stop_distance
+                        if bar_low <= stop_price:
+                            should_exit = True
+                    else:
+                        pos.trailing_stop_high_water = min(pos.trailing_stop_high_water, bar_low)
+                        stop_price = pos.trailing_stop_high_water + stop_distance
+                        if bar_high >= stop_price:
+                            should_exit = True
+
+        if should_exit and stop_price is not None:
             trade, cash = _execute_exit(
                 pos=pos,
                 exit_price_raw=stop_price,  # Use calculated stop price, not current_price
@@ -1099,6 +1135,7 @@ def run_backtest(
     stop_loss_pct: float | None = None,
     take_profit_pct: float | None = None,
     dynamic_stop_column: str | None = None,
+    dynamic_stop_type: str = "distance",  # "distance" (ATR), "price" (SMA), "percentage" (ta4j style)
     dynamic_tp_pct_column: str | None = None,
     dynamic_exit_monitor_column: str | None = None,
     dynamic_exit_ref_column: str | None = None,
@@ -1161,6 +1198,13 @@ def run_backtest(
         raise ValueError(f"stop_loss_pct must be positive, got {stop_loss_pct}")
     if take_profit_pct is not None and take_profit_pct <= 0:
         raise ValueError(f"take_profit_pct must be positive, got {take_profit_pct}")
+
+    # Validate dynamic_stop_type
+    valid_stop_types = {"distance", "price", "percentage"}
+    if dynamic_stop_type not in valid_stop_types:
+        raise ValueError(
+            f"dynamic_stop_type must be one of {valid_stop_types}, got '{dynamic_stop_type}'"
+        )
 
     if commission_per_trade < 0:
         raise ValueError(f"commission_per_trade must be non-negative, got {commission_per_trade}")
@@ -1397,6 +1441,7 @@ def run_backtest(
                 stop_loss_pct=stop_loss_pct,
                 take_profit_pct=take_profit_pct,
                 dynamic_stop_column=dynamic_stop_column,
+                dynamic_stop_type=dynamic_stop_type,
                 dynamic_tp_pct=long_pos.dynamic_tp_pct,
             )
             # Check if stops triggered an exit
@@ -1426,6 +1471,7 @@ def run_backtest(
                 stop_loss_pct=stop_loss_pct,
                 take_profit_pct=take_profit_pct,
                 dynamic_stop_column=dynamic_stop_column,
+                dynamic_stop_type=dynamic_stop_type,
                 dynamic_tp_pct=short_pos.dynamic_tp_pct,
             )
             # Check if stops triggered an exit
