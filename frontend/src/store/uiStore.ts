@@ -30,6 +30,10 @@ interface UIState {
   setSidebarCollapsed: (collapsed: boolean) => void
   toggleSidebar: () => void
 
+  // Mobile menu
+  mobileMenuOpen: boolean
+  setMobileMenuOpen: (open: boolean) => void
+
   // Theme
   theme: Theme
   setTheme: (theme: Theme) => void
@@ -48,6 +52,10 @@ export const useUIStore = create<UIState>()(
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
       toggleSidebar: () =>
         set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+
+      // Mobile menu - always starts closed
+      mobileMenuOpen: false,
+      setMobileMenuOpen: (open) => set({ mobileMenuOpen: open }),
 
       // Theme - default dark
       theme: 'dark',

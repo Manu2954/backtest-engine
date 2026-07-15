@@ -18,7 +18,10 @@ export function Header({ title, children }: HeaderProps) {
     <header
       className={cn(
         'sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60',
-        sidebarCollapsed ? 'ml-16' : 'ml-56'
+        // Mobile: full width with space for hamburger menu
+        'ml-0 pl-14 md:pl-4',
+        // Desktop: adjust for sidebar width
+        sidebarCollapsed ? 'md:ml-16' : 'md:ml-56'
       )}
     >
       <div className="flex items-center gap-4">
@@ -31,7 +34,7 @@ export function Header({ title, children }: HeaderProps) {
       <div className="flex items-center gap-2">
         {/* Theme toggle */}
         <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
-          <ThemeIcon className="h-5 w-5" />
+          <ThemeIcon className="h-5 w-5" aria-hidden="true" />
         </Button>
       </div>
     </header>
