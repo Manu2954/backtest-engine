@@ -29,6 +29,7 @@ class TradeRecord:
     entry_conditions_met: list[str] | None = None
     exit_conditions_met: list[str] | None = None
     entry_signal_strength: float | None = None
+    exit_signal_strength: float | None = None  # ATTR-007
     market_return_during_trade: float | None = None
     alpha: float | None = None
     indicator_snapshot_entry: dict | None = None
@@ -57,6 +58,8 @@ class TradeRecord:
             result["exit_conditions_met"] = self.exit_conditions_met
         if self.entry_signal_strength is not None:
             result["entry_signal_strength"] = self.entry_signal_strength
+        if self.exit_signal_strength is not None:
+            result["exit_signal_strength"] = self.exit_signal_strength
         if self.market_return_during_trade is not None:
             result["market_return_during_trade"] = self.market_return_during_trade
         if self.alpha is not None:
@@ -202,6 +205,8 @@ def _calculate_trade_attribution(
     direction: str = "LONG",
     entry_fill_bar_idx: int | None = None,
     exit_fill_bar_idx: int | None = None,
+    actual_entry_price: float | None = None,
+    actual_exit_price: float | None = None,
 ) -> tuple[float | None, float | None]:
     """
     Calculate market return and alpha for a trade.
@@ -209,6 +214,9 @@ def _calculate_trade_attribution(
     ATTR-001/ATTR-002 FIX:
     - Uses fill bar indices (when available) instead of signal bar indices
     - Uses open prices to match actual execution (fills happen at bar open)
+
+    ATTR-003 FIX:
+    - For SL/TP exits, pass actual_exit_price to use the stop level instead of bar open
 
     Args:
         df: DataFrame with OHLCV data
@@ -218,6 +226,8 @@ def _calculate_trade_attribution(
         direction: 'LONG' or 'SHORT'
         entry_fill_bar_idx: Actual fill bar index (preferred)
         exit_fill_bar_idx: Actual fill bar index (preferred)
+        actual_entry_price: Override entry price (for slippage-adjusted fills)
+        actual_exit_price: Override exit price (for SL/TP exits at stop level)
 
     Returns:
         Tuple of (market_return, alpha) or (None, None) on error
@@ -229,9 +239,11 @@ def _calculate_trade_attribution(
         actual_entry_idx = entry_fill_bar_idx if entry_fill_bar_idx is not None else entry_bar_idx
         actual_exit_idx = exit_fill_bar_idx if exit_fill_bar_idx is not None else exit_bar_idx
 
-        # ATTR-002 FIX: Use open prices to match actual execution
+        # ATTR-002/ATTR-003 FIX: Use open prices, but allow actual prices for SL/TP
         market_return = calculate_market_return(
-            df, actual_entry_idx, actual_exit_idx, direction, use_open_prices=True
+            df, actual_entry_idx, actual_exit_idx, direction, use_open_prices=True,
+            actual_entry_price=actual_entry_price,
+            actual_exit_price=actual_exit_price,
         )
         alpha = pnl_pct - market_return
         return market_return, alpha
@@ -264,22 +276,29 @@ def _create_trade_record_with_attribution(
     exit_attribution_data: dict[str, Any] | None = None,
     entry_fill_bar_idx: int | None = None,
     exit_fill_bar_idx: int | None = None,
+    use_actual_prices_for_market_return: bool = False,
 ) -> TradeRecord:
     market_return = None
     alpha = None
     entry_conditions_met = None
     exit_conditions_met = None
     entry_signal_strength = None
+    exit_signal_strength = None  # ATTR-007
     indicator_snapshot_entry = None
     indicator_snapshot_exit = None
 
     if enable_attribution:
         if df is not None and entry_bar_idx is not None and exit_bar_idx is not None:
-            # ATTR-001/ATTR-002 FIX: Pass fill bar indices for accurate market return
+            # ATTR-001/ATTR-002/ATTR-003 FIX: Pass fill bar indices and actual prices
+            # For SL/TP exits, use actual entry/exit prices for market return calculation
+            actual_entry = entry_price if use_actual_prices_for_market_return else None
+            actual_exit = exit_price if use_actual_prices_for_market_return else None
             market_return, alpha = _calculate_trade_attribution(
                 df, entry_bar_idx, exit_bar_idx, pnl_pct, direction=direction,
                 entry_fill_bar_idx=entry_fill_bar_idx,
                 exit_fill_bar_idx=exit_fill_bar_idx,
+                actual_entry_price=actual_entry,
+                actual_exit_price=actual_exit,
             )
 
         if entry_attribution_data:
@@ -289,6 +308,8 @@ def _create_trade_record_with_attribution(
 
         if exit_attribution_data:
             exit_conditions_met = exit_attribution_data.get('condition_ids', [])
+            # ATTR-007: Extract exit signal strength
+            exit_signal_strength = exit_attribution_data.get('signal_strength')
             indicator_snapshot_exit = exit_attribution_data.get('indicator_snapshot')
 
     return TradeRecord(
@@ -308,6 +329,7 @@ def _create_trade_record_with_attribution(
         entry_conditions_met=entry_conditions_met,
         exit_conditions_met=exit_conditions_met,
         entry_signal_strength=entry_signal_strength,
+        exit_signal_strength=exit_signal_strength,  # ATTR-007
         market_return_during_trade=market_return,
         alpha=alpha,
         indicator_snapshot_entry=indicator_snapshot_entry,
@@ -468,6 +490,7 @@ def _execute_exit(
     exit_bar_idx: int,
     exit_attribution_data: dict[str, Any] | None = None,
     exit_fill_bar_idx: int | None = None,
+    use_actual_prices_for_market_return: bool = False,
 ) -> tuple[TradeRecord, float]:
     """
     Execute an exit for a position. Returns (trade_record, new_cash).
@@ -475,6 +498,7 @@ def _execute_exit(
     Handles direction-aware PnL, slippage, commission.
 
     ATTR-001 FIX: Added exit_fill_bar_idx parameter for accurate market return calculation.
+    ATTR-003 FIX: Added use_actual_prices_for_market_return for SL/TP exits.
     """
     direction = pos.direction
 
@@ -533,7 +557,7 @@ def _execute_exit(
         (exit_date - pos.entry_date).days if pos.entry_date is not None else 0
     )
 
-    # ATTR-001 FIX: Pass fill bar indices for accurate market return
+    # ATTR-001/ATTR-003 FIX: Pass fill bar indices and actual prices for accurate market return
     trade = _create_trade_record_with_attribution(
         entry_date=pos.entry_date or exit_date,
         entry_price=entry_price,
@@ -555,6 +579,7 @@ def _execute_exit(
         exit_attribution_data=exit_attribution_data,
         entry_fill_bar_idx=pos.entry_fill_bar_idx,
         exit_fill_bar_idx=exit_fill_bar_idx,
+        use_actual_prices_for_market_return=use_actual_prices_for_market_return,
     )
 
     # For SHORT: proceeds = entry_notional + pnl - commissions (already deducted)
@@ -843,6 +868,8 @@ def _check_stops(
                 exit_bar_idx=i,
                 # ATTR-001: For stop exits, fill happens on same bar as trigger
                 exit_fill_bar_idx=i,
+                # ATTR-003: Use actual stop price for market return calculation
+                use_actual_prices_for_market_return=True,
             )
             trade_log.append(trade)
             pos.reset()
@@ -899,17 +926,21 @@ def _check_stops(
                 exit_bar_idx=i,
                 # ATTR-001: For stop exits, fill happens on same bar as trigger
                 exit_fill_bar_idx=i,
+                # ATTR-003: Use actual stop price for market return calculation
+                use_actual_prices_for_market_return=True,
             )
             trade_log.append(trade)
             pos.reset()
             return cash
 
         if tp_hit:
+            # ATTR-008: Distinguish dynamic TP from static TP in exit_reason
+            tp_exit_reason = "dynamic_take_profit" if dynamic_tp_pct is not None else "take_profit"
             trade, cash = _execute_exit(
                 pos=pos,
                 exit_price_raw=tp_price,
                 exit_date=ts,
-                exit_reason="take_profit",
+                exit_reason=tp_exit_reason,
                 cash=cash,
                 slippage_pct=slippage_pct,
                 commission_per_trade=commission_per_trade,
@@ -919,6 +950,8 @@ def _check_stops(
                 exit_bar_idx=i,
                 # ATTR-001: For TP exits, fill happens on same bar as trigger
                 exit_fill_bar_idx=i,
+                # ATTR-003: Use actual TP price for market return calculation
+                use_actual_prices_for_market_return=True,
             )
             trade_log.append(trade)
             pos.reset()
@@ -1298,7 +1331,8 @@ def run_backtest(
                 long_pos.exit_rule_states = _capture_exit_rule_states(exit_rules, df, long_pos.entry_bar_idx)
 
         # ─── Fill pending SHORT entry ───
-        if has_short and short_pos.pending_entry and not short_pos.in_position:
+        # CT-NEW-009 FIX: Also check pending_entry when counter-trades enabled (counter-trade may arm SHORT)
+        if (has_short or enable_counter_trades) and short_pos.pending_entry and not short_pos.in_position:
             cash = _fill_entry(
                 pos=short_pos,
                 open_price=open_price,
@@ -1374,7 +1408,8 @@ def run_backtest(
 
         # ─── Check stops for SHORT (BEFORE pending exits - TP/SL takes priority) ───
         short_exited_via_stops = False
-        if has_short and short_pos.in_position:
+        # CT-NEW-009 FIX: Also check stops when counter-trades enabled
+        if (has_short or enable_counter_trades) and short_pos.in_position:
             prev_in_position = short_pos.in_position
             cash = _check_stops(
                 pos=short_pos,
@@ -1446,7 +1481,8 @@ def run_backtest(
             long_pos.reset()
 
         # ─── Fill pending SHORT exit (only if not already exited via stops) ───
-        if has_short and short_pos.pending_exit and short_pos.in_position and not short_exited_via_stops:
+        # CT-NEW-009 FIX: Also allow exit when counter-trades enabled
+        if (has_short or enable_counter_trades) and short_pos.pending_exit and short_pos.in_position and not short_exited_via_stops:
             trade, cash = _execute_exit(
                 pos=short_pos,
                 exit_price_raw=open_price,

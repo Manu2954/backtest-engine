@@ -61,7 +61,7 @@ class TestForceRefresh:
 
     @pytest.mark.asyncio
     async def test_force_refresh_skips_redis_cache(self, sample_ohlcv_df):
-        """force_refresh=True should skip Redis cache and delete existing key."""
+        """force_refresh=True should skip Redis cache (setex will overwrite on fetch)."""
         mock_redis = MagicMock()
         mock_redis.get.return_value = serialize_df(sample_ohlcv_df)
 
@@ -93,8 +93,9 @@ class TestForceRefresh:
                                             force_refresh=True,
                                         )
 
-                                    # Verify Redis cache was deleted, not read
-                                    mock_redis.delete.assert_called_once()
+                                    # DATA-004 FIX: Redis cache is NOT explicitly deleted (setex overwrites)
+                                    # Verify Redis.get was NOT called (skipped on force_refresh)
+                                    mock_redis.get.assert_not_called()
                                     # Verify DB cache was invalidated
                                     mock_invalidate.assert_called_once()
 

@@ -250,6 +250,78 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _filter_incomplete_bars(df: pd.DataFrame, resolution: str) -> pd.DataFrame:
+    """
+    DATA-002 FIX: Filter out incomplete bars for intraday resolutions.
+
+    For live/recent data, the last bar may be incomplete (e.g., a 1h bar
+    fetched at minute 30 only has half the data). This causes lookahead
+    bias and incorrect OHLC values.
+
+    Args:
+        df: OHLCV DataFrame with DatetimeIndex
+        resolution: Time resolution (e.g., "1h", "15m", "1d")
+
+    Returns:
+        DataFrame with incomplete bars removed
+    """
+    if df.empty:
+        return df
+
+    # Only filter intraday resolutions
+    intraday_resolutions = {"1m", "2m", "3m", "5m", "15m", "30m", "60m", "90m", "1h", "2h", "4h", "6h", "8h", "12h"}
+    if resolution not in intraday_resolutions:
+        return df
+
+    # Get resolution in seconds
+    resolution_seconds = {
+        "1m": 60,
+        "2m": 120,
+        "3m": 180,
+        "5m": 300,
+        "15m": 900,
+        "30m": 1800,
+        "60m": 3600,
+        "90m": 5400,
+        "1h": 3600,
+        "2h": 7200,
+        "4h": 14400,
+        "6h": 21600,
+        "8h": 28800,
+        "12h": 43200,
+    }.get(resolution, 0)
+
+    if resolution_seconds == 0:
+        return df
+
+    # Current time in naive UTC
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # Last bar is incomplete if its timestamp is within the current bar's period
+    # i.e., if now < bar_timestamp + resolution_seconds
+    last_bar_ts = df.index[-1]
+    if isinstance(last_bar_ts, pd.Timestamp):
+        last_bar_dt = last_bar_ts.to_pydatetime()
+    else:
+        last_bar_dt = last_bar_ts
+
+    # Make sure last_bar_dt is naive for comparison
+    if hasattr(last_bar_dt, 'tzinfo') and last_bar_dt.tzinfo is not None:
+        last_bar_dt = last_bar_dt.replace(tzinfo=None)
+
+    bar_end_time = last_bar_dt + timedelta(seconds=resolution_seconds)
+
+    # If the bar's end time is in the future, the bar is incomplete
+    if bar_end_time > now_utc:
+        logger.debug(
+            "DATA-002: Filtering incomplete bar at %s (resolution=%s, now=%s)",
+            last_bar_ts, resolution, now_utc
+        )
+        return df.iloc[:-1]
+
+    return df
+
+
 def merge_cached_range(*_args: Any, **_kwargs: Any) -> pd.DataFrame:
     """
     Placeholder for future range-merge behavior.
@@ -542,9 +614,9 @@ async def fetch_ohlcv_async(
                         return cached_df
                 except Exception as e:
                     logger.warning("Redis cache deserialization failed for key %s: %s", key, e)
-        else:
-            # Invalidate Redis cache on force_refresh
-            client.delete(key)
+        # DATA-004 FIX: Don't explicitly delete on force_refresh
+        # setex() later will overwrite anyway, and explicit delete creates a race
+        # where another request could re-populate with stale data between delete and setex
     except (redis.RedisError, redis.ConnectionError, ConnectionError, OSError) as e:
         logger.warning("Redis cache read failed for key %s: %s", key, e)
 
@@ -585,13 +657,22 @@ async def fetch_ohlcv_async(
                 actual_bars = len(db_df)
 
                 # Daily data should have at least 60% coverage (5/7 days minus holidays)
-                # Intraday can vary greatly, so we use a lower threshold
+                # DATA-003 FIX: Intraday needs 20% coverage (not just 1 bar)
+                # This prevents accepting data with large gaps (e.g., Jan 1-5 and Jan 25-31 for Jan 1-31)
                 if resolution == "1d":
                     min_expected_bars = expected_days * 0.6
                 else:
-                    # For intraday, just check we have some reasonable amount of data
-                    # Don't enforce strict coverage due to market hours variation
-                    min_expected_bars = 1
+                    # For intraday, calculate expected bars based on resolution
+                    # Assume ~12 trading hours per day as reasonable average
+                    resolution_hours = {
+                        "1m": 1/60, "2m": 2/60, "3m": 3/60, "5m": 5/60,
+                        "15m": 0.25, "30m": 0.5, "60m": 1, "90m": 1.5, "1h": 1,
+                        "2h": 2, "4h": 4, "6h": 6, "8h": 8, "12h": 12
+                    }.get(resolution, 1)
+                    bars_per_day = 12 / resolution_hours if resolution_hours > 0 else 12
+                    expected_total = expected_days * bars_per_day
+                    # Require 20% coverage to detect gaps
+                    min_expected_bars = max(1, expected_total * 0.2)
 
                 if actual_bars >= min_expected_bars:
                     # Check if cache is stale for STOCK data with recent date ranges
@@ -649,6 +730,8 @@ async def fetch_ohlcv_async(
             )
 
         df = _normalize_df(df)
+        # DATA-002 FIX: Filter incomplete bars for intraday resolutions
+        df = _filter_incomplete_bars(df, resolution)
         if df.empty:
             raise ValueError(
                 f"No OHLCV data for {ticker} in range {start_date.isoformat()} to {end_date.isoformat()}"

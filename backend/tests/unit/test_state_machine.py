@@ -1188,7 +1188,8 @@ def test_dynamic_tp_pct_column_basic() -> None:
     )
 
     assert len(trades) == 1
-    assert trades[0]["exit_reason"] == "take_profit"
+    # ATTR-008: Dynamic TP uses distinct exit_reason
+    assert trades[0]["exit_reason"] == "dynamic_take_profit"
     assert trades[0]["pnl_pct"] >= 2.9  # ~3% profit
 
 
@@ -1221,9 +1222,10 @@ def test_dynamic_tp_pct_varies_per_trade() -> None:
     )
 
     assert len(trades) == 2
-    assert trades[0]["exit_reason"] == "take_profit"
+    # ATTR-008: Dynamic TP uses distinct exit_reason
+    assert trades[0]["exit_reason"] == "dynamic_take_profit"
     assert trades[0]["pnl_pct"] >= 1.9  # ~2%
-    assert trades[1]["exit_reason"] == "take_profit"
+    assert trades[1]["exit_reason"] == "dynamic_take_profit"
     assert trades[1]["pnl_pct"] >= 4.9  # ~5%
 
 
@@ -1642,11 +1644,11 @@ def test_counter_trade_uses_dynamic_tp():
     assert abs(trades[0]["pnl_pct"] + 10.0) < 0.1  # -10%
     assert trades[0]["exit_reason"] == "signal"
 
-    # SHORT counter: should hit TP
+    # SHORT counter: should hit TP (dynamic TP from counter-trade)
     assert trades[1]["direction"] == "SHORT"
     assert trades[1]["entry_price"] == 87.0  # Bar 5 open
-    # TP should trigger when low reaches below TP price
-    assert trades[1]["exit_reason"] == "take_profit"
+    # ATTR-008: Counter-trade TP is dynamic, so exit_reason is "dynamic_take_profit"
+    assert trades[1]["exit_reason"] == "dynamic_take_profit"
 
 
 def test_counter_trade_short_to_long():
@@ -1900,8 +1902,9 @@ def test_counter_trade_dynamic_tp_pct_flow():
     # Critical verification: TP should be 15% (10% × 1.5)
     # For SHORT at 90, TP price = 90 * (1 - 0.15) = 76.5
     # Bar 10 low = 75 < 76.5 → should trigger TP
-    assert short_trade["exit_reason"] == "take_profit", \
-        f"Expected 'take_profit' but got '{short_trade['exit_reason']}'"
+    # ATTR-008: Counter-trade TP is dynamic, so exit_reason is "dynamic_take_profit"
+    assert short_trade["exit_reason"] == "dynamic_take_profit", \
+        f"Expected 'dynamic_take_profit' but got '{short_trade['exit_reason']}'"
 
     # Verify TP price is correct: 90 * (1 - 0.15) = 76.5
     expected_tp_price = 90.0 * (1.0 - 0.15)  # 76.5
@@ -1956,7 +1959,8 @@ def test_counter_trade_dynamic_tp_pct_not_overwritten():
     # Counter-trade should still use the dynamically calculated TP
     short_trade = trades[1]
     assert short_trade["direction"] == "SHORT"
-    assert short_trade["exit_reason"] == "take_profit"
+    # ATTR-008: Counter-trade TP is dynamic, so exit_reason is "dynamic_take_profit"
+    assert short_trade["exit_reason"] == "dynamic_take_profit"
     assert abs(short_trade["exit_price"] - 76.5) < 0.01
 
 
@@ -2006,7 +2010,8 @@ def test_counter_trade_dynamic_tp_pct_with_column_override():
 
     short_trade = trades[1]
     assert short_trade["direction"] == "SHORT"
-    assert short_trade["exit_reason"] == "take_profit"
+    # ATTR-008: Counter-trade TP is dynamic, so exit_reason is "dynamic_take_profit"
+    assert short_trade["exit_reason"] == "dynamic_take_profit"
     # TP is overwritten by column value (5%), not counter-trade value (15%)
     # Exit price should be 90 * (1 - 0.05) = 85.5
     expected_tp_price = 90.0 * (1.0 - 0.05)  # 85.5

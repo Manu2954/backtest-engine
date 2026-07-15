@@ -202,8 +202,9 @@ class TestTPvsSignalPriority:
             print(f"SHORT exit reason: {short_trade['exit_reason']}")
 
             # Expected: TP should win for counter-trade
-            assert short_trade["exit_reason"] == "take_profit", (
-                f"Expected SHORT exit_reason='take_profit', got '{short_trade['exit_reason']}'"
+            # ATTR-008: Counter-trade TP is dynamic, so exit_reason is "dynamic_take_profit"
+            assert short_trade["exit_reason"] == "dynamic_take_profit", (
+                f"Expected SHORT exit_reason='dynamic_take_profit', got '{short_trade['exit_reason']}'"
             )
             assert abs(short_trade["exit_price"] - expected_tp_price) < 1.0, (
                 f"Expected SHORT exit_price ~{expected_tp_price:.4f}, got {short_trade['exit_price']}"
@@ -275,9 +276,9 @@ class TestTPvsSignalPriority:
             print(f"SHORT exit reason: {short_trade['exit_reason']}")
 
             # This assertion documents the EXPECTED behavior (TP wins)
-            # It will FAIL with current code (signal wins)
-            assert short_trade["exit_reason"] == "take_profit", (
-                f"BUG: Expected SHORT exit_reason='take_profit', got '{short_trade['exit_reason']}'"
+            # ATTR-008: Counter-trade TP is dynamic, so exit_reason is "dynamic_take_profit"
+            assert short_trade["exit_reason"] == "dynamic_take_profit", (
+                f"BUG: Expected SHORT exit_reason='dynamic_take_profit', got '{short_trade['exit_reason']}'"
             )
             assert abs(short_trade["exit_price"] - expected_tp_price) < 1.0, (
                 f"BUG: Expected SHORT exit_price ~{expected_tp_price:.4f}, got {short_trade['exit_price']}"
@@ -317,12 +318,13 @@ class TestTPvsSignalPriority:
         print(f"Entry price: {trade['entry_price']}")
         print(f"Exit price: {trade['exit_price']}")
         print(f"Exit reason: {trade['exit_reason']}")
-        print(f"Expected exit reason: take_profit")
+        print(f"Expected exit reason: dynamic_take_profit")
         print(f"Expected exit price: ~105")
 
         # Expected: TP should win
-        assert trade["exit_reason"] == "take_profit", (
-            f"Expected exit_reason='take_profit', got '{trade['exit_reason']}'"
+        # ATTR-008: Dynamic TP uses distinct exit_reason
+        assert trade["exit_reason"] == "dynamic_take_profit", (
+            f"Expected exit_reason='dynamic_take_profit', got '{trade['exit_reason']}'"
         )
         assert abs(trade["exit_price"] - 105.0) < 1.0, (
             f"Expected exit_price ~105, got {trade['exit_price']}"

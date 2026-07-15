@@ -166,6 +166,8 @@ def calculate_market_return(
     exit_idx: int,
     direction: str,
     use_open_prices: bool = False,
+    actual_entry_price: float | None = None,
+    actual_exit_price: float | None = None,
 ) -> float:
     """
     Calculate market return during trade period.
@@ -179,6 +181,11 @@ def calculate_market_return(
     - When use_open_prices=False (signal bars), uses close prices for historical
       analysis
 
+    ATTR-003 FIX:
+    - When actual_entry_price/actual_exit_price provided, use them instead of
+      looking up from DataFrame. This handles SL/TP exits where exit price is
+      the stop level, not the bar's open price.
+
     Args:
         df: DataFrame with 'open' and 'close' columns
         entry_idx: Entry bar index (integer position, not datetime)
@@ -188,6 +195,8 @@ def calculate_market_return(
         direction: 'LONG' or 'SHORT'
         use_open_prices: If True, use open prices (matches actual fills).
                         If False, use close prices (legacy behavior).
+        actual_entry_price: Override entry price (e.g., for slippage-adjusted fills)
+        actual_exit_price: Override exit price (e.g., for SL/TP exits at stop level)
 
     Returns:
         float: Market return as percentage (5.0 = 5%)
@@ -203,8 +212,9 @@ def calculate_market_return(
     if price_col not in df.columns:
         price_col = 'close'
 
-    entry_price = float(df.iloc[entry_idx][price_col])
-    exit_price = float(df.iloc[exit_idx][price_col])
+    # ATTR-003 FIX: Use actual prices if provided (for SL/TP exits)
+    entry_price = actual_entry_price if actual_entry_price is not None else float(df.iloc[entry_idx][price_col])
+    exit_price = actual_exit_price if actual_exit_price is not None else float(df.iloc[exit_idx][price_col])
 
     if entry_price <= 0:
         return 0.0
