@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { Header } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +17,10 @@ import { useBacktest, useBacktestTrades } from '@/api/hooks'
 import { formatPercent, formatDateTimeFull, formatDurationFromTimestamps, cn } from '@/lib/utils'
 import { ArrowLeft, Search, Download } from 'lucide-react'
 
+// Shared grid template so header and rows stay aligned
+const GRID_COLS =
+  'grid grid-cols-[48px_90px_minmax(140px,1fr)_minmax(140px,1fr)_100px_100px_90px_100px_90px_90px_minmax(120px,1fr)]'
+
 export function BacktestTradesPage() {
   const { id } = useParams<{ id: string }>()
   const { data: backtest, isLoading: loadingBacktest } = useBacktest(id!)
@@ -24,6 +29,8 @@ export function BacktestTradesPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterDirection, setFilterDirection] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL')
   const [filterResult, setFilterResult] = useState<'ALL' | 'WIN' | 'LOSS'>('ALL')
+
+  const scrollParentRef = useRef<HTMLDivElement>(null)
 
   const isLoading = loadingBacktest || loadingTrades
 
@@ -40,6 +47,13 @@ export function BacktestTradesPage() {
       return false
     }
     return true
+  }) ?? []
+
+  const rowVirtualizer = useVirtualizer({
+    count: filteredTrades.length,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize: () => 45,
+    overscan: 15,
   })
 
   const handleExportCSV = () => {
@@ -165,65 +179,86 @@ export function BacktestTradesPage() {
           </div>
         </div>
 
-        {/* Trades Table */}
+        {/* Trades Table (virtualized) */}
         <Card>
           <CardContent className="p-0">
-            {filteredTrades && filteredTrades.length > 0 ? (
+            {filteredTrades.length > 0 ? (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-surface-1">
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">#</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Direction</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Entry</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Exit</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">Entry Price</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">Exit Price</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">Shares</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">PnL</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">PnL %</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">Duration</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Exit Reason</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredTrades.map((trade, index) => (
-                      <tr key={trade.id} className="border-b border-border/50 hover:bg-surface-1/50">
-                        <td className="px-4 py-3 text-muted-foreground">{index + 1}</td>
-                        <td className="px-4 py-3">
-                          <Badge variant={trade.direction === 'LONG' ? 'profit' : 'loss'} className="text-xs">
-                            {trade.direction}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3">{formatDateTimeFull(trade.entry_date)}</td>
-                        <td className="px-4 py-3">{formatDateTimeFull(trade.exit_date)}</td>
-                        <td className="px-4 py-3 text-right numeric">${trade.entry_price.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right numeric">${trade.exit_price.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right numeric">{trade.shares.toFixed(4)}</td>
-                        <td className={cn(
-                          'px-4 py-3 text-right numeric font-medium',
-                          trade.pnl >= 0 ? 'text-profit' : 'text-loss'
-                        )}>
-                          ${trade.pnl.toFixed(2)}
-                        </td>
-                        <td className={cn(
-                          'px-4 py-3 text-right numeric font-medium',
-                          trade.pnl_pct >= 0 ? 'text-profit' : 'text-loss'
-                        )}>
-                          {formatPercent(trade.pnl_pct)}
-                        </td>
-                        <td className="px-4 py-3 text-right numeric">{formatDurationFromTimestamps(trade.entry_date, trade.exit_date)}</td>
-                        <td className="px-4 py-3">
-                          {trade.exit_reason && (
-                            <Badge variant="outline" className="text-xs">
-                              {trade.exit_reason}
-                            </Badge>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="min-w-[1100px]">
+                  {/* Header */}
+                  <div className={cn(GRID_COLS, 'border-b border-border bg-surface-1 text-xs font-medium text-muted-foreground')}>
+                    <div className="px-4 py-3 text-left">#</div>
+                    <div className="px-4 py-3 text-left">Direction</div>
+                    <div className="px-4 py-3 text-left">Entry</div>
+                    <div className="px-4 py-3 text-left">Exit</div>
+                    <div className="px-4 py-3 text-right">Entry Price</div>
+                    <div className="px-4 py-3 text-right">Exit Price</div>
+                    <div className="px-4 py-3 text-right">Shares</div>
+                    <div className="px-4 py-3 text-right">PnL</div>
+                    <div className="px-4 py-3 text-right">PnL %</div>
+                    <div className="px-4 py-3 text-right">Duration</div>
+                    <div className="px-4 py-3 text-left">Exit Reason</div>
+                  </div>
+                  {/* Virtualized rows */}
+                  <div
+                    ref={scrollParentRef}
+                    className="max-h-[600px] overflow-y-auto"
+                  >
+                    <div
+                      style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+                      className="relative w-full"
+                    >
+                      {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                        const trade = filteredTrades[virtualRow.index]
+                        return (
+                          <div
+                            key={trade.id}
+                            className={cn(
+                              GRID_COLS,
+                              'absolute left-0 top-0 w-full items-center border-b border-border/50 text-sm hover:bg-surface-1/50'
+                            )}
+                            style={{
+                              height: `${virtualRow.size}px`,
+                              transform: `translateY(${virtualRow.start}px)`,
+                            }}
+                          >
+                            <div className="px-4 py-3 text-muted-foreground">{virtualRow.index + 1}</div>
+                            <div className="px-4 py-3">
+                              <Badge variant={trade.direction === 'LONG' ? 'profit' : 'loss'} className="text-xs">
+                                {trade.direction}
+                              </Badge>
+                            </div>
+                            <div className="px-4 py-3 truncate">{formatDateTimeFull(trade.entry_date)}</div>
+                            <div className="px-4 py-3 truncate">{formatDateTimeFull(trade.exit_date)}</div>
+                            <div className="px-4 py-3 text-right numeric">${trade.entry_price.toFixed(2)}</div>
+                            <div className="px-4 py-3 text-right numeric">${trade.exit_price.toFixed(2)}</div>
+                            <div className="px-4 py-3 text-right numeric">{trade.shares.toFixed(4)}</div>
+                            <div className={cn(
+                              'px-4 py-3 text-right numeric font-medium',
+                              trade.pnl >= 0 ? 'text-profit' : 'text-loss'
+                            )}>
+                              ${trade.pnl.toFixed(2)}
+                            </div>
+                            <div className={cn(
+                              'px-4 py-3 text-right numeric font-medium',
+                              trade.pnl_pct >= 0 ? 'text-profit' : 'text-loss'
+                            )}>
+                              {formatPercent(trade.pnl_pct)}
+                            </div>
+                            <div className="px-4 py-3 text-right numeric">{formatDurationFromTimestamps(trade.entry_date, trade.exit_date)}</div>
+                            <div className="px-4 py-3 truncate">
+                              {trade.exit_reason && (
+                                <Badge variant="outline" className="text-xs">
+                                  {trade.exit_reason}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="flex items-center justify-center py-12">
@@ -236,7 +271,7 @@ export function BacktestTradesPage() {
         </Card>
 
         {/* Summary Stats */}
-        {filteredTrades && filteredTrades.length > 0 && (
+        {filteredTrades.length > 0 && (
           <div className="text-sm text-muted-foreground">
             Showing {filteredTrades.length} of {trades?.length} trades
           </div>

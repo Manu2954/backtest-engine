@@ -146,6 +146,7 @@ interface StrategyActions {
     shortExitExpression?: string;
   }) => void;
   reset: () => void;
+  markSaved: () => void;
 
   // Computed helpers
   getIndicatorAliases: () => string[];
@@ -1010,6 +1011,10 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       historyIndex: -1,
       selectedGroupTarget: null,
     });
+  },
+
+  markSaved: () => {
+    set({ isDirty: false });
   },
 
   getIndicatorAliases: () => {

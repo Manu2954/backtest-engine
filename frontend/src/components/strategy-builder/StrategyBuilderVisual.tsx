@@ -10,6 +10,7 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core'
 import { useStrategyBuilderStore } from '@/store/strategyBuilderStore'
+import { useUnsavedChanges } from '@/hooks/useUnsavedChanges'
 import { IndicatorPalette } from './IndicatorPalette'
 import { BuilderCanvas } from './Canvas/BuilderCanvas'
 import { BlockInspector } from './Inspector/BlockInspector'
@@ -50,6 +51,11 @@ export function StrategyBuilderVisual() {
   const getExpression = useStrategyBuilderStore((s) => s.getExpression)
   const historyIndex = useStrategyBuilderStore((s) => s.historyIndex)
   const historyLength = useStrategyBuilderStore((s) => s.history.length)
+  const isDirty = useStrategyBuilderStore((s) => s.isDirty)
+
+  // Warn on navigation away with unsaved changes
+  useUnsavedChanges(isDirty)
+
 
   // Store actions
   const setName = useStrategyBuilderStore((s) => s.setName)
@@ -57,6 +63,7 @@ export function StrategyBuilderVisual() {
   const setChartType = useStrategyBuilderStore((s) => s.setChartType)
   const addIndicator = useStrategyBuilderStore((s) => s.addIndicator)
   const loadStrategy = useStrategyBuilderStore((s) => s.loadStrategy)
+  const markSaved = useStrategyBuilderStore((s) => s.markSaved)
   const reset = useStrategyBuilderStore((s) => s.reset)
   const undo = useStrategyBuilderStore((s) => s.undo)
   const redo = useStrategyBuilderStore((s) => s.redo)
@@ -298,6 +305,7 @@ export function StrategyBuilderVisual() {
       }
 
       const strategy = id ? await updateStrategy(id, payload) : await createStrategy(payload)
+      markSaved()
       navigate(`/strategies/${strategy.id}`)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to save')
