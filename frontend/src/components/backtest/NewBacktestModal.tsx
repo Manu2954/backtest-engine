@@ -17,6 +17,12 @@ import {
   Card,
   CardContent,
 } from '@/components/ui/card'
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from '@/components/ui/tabs'
 import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { useStrategies } from '@/api/hooks'
 import { useCreateBacktest } from '@/api/hooks'
@@ -148,7 +154,7 @@ export function NewBacktestModal({
   const [counterTpMultiplier, setCounterTpMultiplier] = useState('1.5')
 
   // UI state
-  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [activeTab, setActiveTab] = useState('basic')
   const [error, setError] = useState<string | null>(null)
   const [touched, setTouched] = useState<Record<string, boolean>>({})
 
@@ -407,16 +413,27 @@ export function NewBacktestModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5 py-2 max-h-[60vh] overflow-y-auto pr-2">
-          {/* Error Alert */}
+        <div className="py-2">
+          {/* Error Alert - always visible above tabs */}
           {error && (
-            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+            <div className="mb-3 flex items-center gap-2 text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
               <AlertCircle className="h-4 w-4 flex-shrink-0" />
               {error}
             </div>
           )}
 
-          {/* Strategy Selection */}
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid w-full grid-cols-5">
+              <TabsTrigger value="basic">Setup</TabsTrigger>
+              <TabsTrigger value="sizing">Sizing</TabsTrigger>
+              <TabsTrigger value="risk">Risk</TabsTrigger>
+              <TabsTrigger value="costs">Costs</TabsTrigger>
+              <TabsTrigger value="advanced">Advanced</TabsTrigger>
+            </TabsList>
+
+            {/* Setup Tab */}
+            <TabsContent value="basic" className="space-y-5 max-h-[55vh] overflow-y-auto pr-2">
+              {/* Strategy Selection */}
           <div className="space-y-2">
             <Label className="flex items-center gap-2">
               <Settings2 className="h-4 w-4 text-muted-foreground" />
@@ -623,23 +640,10 @@ export function NewBacktestModal({
               )}
             </div>
           </div>
+            </TabsContent>
 
-          {/* Advanced Settings Toggle */}
-          <button
-            type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-full py-2"
-          >
-            {showAdvanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            Advanced Settings
-            {(stopLossPct || takeProfitPct || commissionPerTrade || commissionPct || slippagePct || dcaEnabled || exitRules.length > 0 || enableCounterTrades || (assetClass === 'CRYPTO' && Number(leverage) > 1)) && (
-              <Badge variant="secondary" className="ml-auto text-xs">Configured</Badge>
-            )}
-          </button>
-
-          {/* Advanced Settings */}
-          {showAdvanced && (
-            <div className="space-y-4 pl-2 border-l-2 border-border">
+            {/* Sizing Tab */}
+            <TabsContent value="sizing" className="space-y-4 max-h-[55vh] overflow-y-auto pr-2">
               {/* Position Sizing */}
               <div className="space-y-2">
                 <Label className="text-xs text-muted-foreground">Position Sizing</Label>
@@ -726,8 +730,10 @@ export function NewBacktestModal({
                   </div>
                 </div>
               )}
+            </TabsContent>
 
-              {/* Risk Management */}
+            {/* Risk Tab */}
+            <TabsContent value="risk" className="space-y-4 max-h-[55vh] overflow-y-auto pr-2">
               <div className="space-y-2">
                 <Label className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Shield className="h-3 w-3" />
@@ -808,7 +814,10 @@ export function NewBacktestModal({
                   </div>
                 )}
               </div>
+            </TabsContent>
 
+            {/* Costs Tab */}
+            <TabsContent value="costs" className="space-y-4 max-h-[55vh] overflow-y-auto pr-2">
               {/* Transaction Costs */}
               <div className="space-y-2">
                 <Label className="text-xs text-muted-foreground">Transaction Costs</Label>
@@ -870,7 +879,10 @@ export function NewBacktestModal({
                   />
                 </div>
               </div>
+            </TabsContent>
 
+            {/* Advanced Tab */}
+            <TabsContent value="advanced" className="space-y-4 max-h-[55vh] overflow-y-auto pr-2">
               {/* Dollar Cost Averaging */}
               <div className="space-y-2">
                 <button
@@ -1276,8 +1288,8 @@ export function NewBacktestModal({
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            </TabsContent>
+          </Tabs>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
