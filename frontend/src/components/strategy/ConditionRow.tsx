@@ -1,5 +1,17 @@
 import { OPERATORS, OPERAND_TYPES, OHLCV_COLUMNS, isUnaryOperator } from "../../lib/constants";
 import { useStrategyBuilderStore } from "../../store/strategyBuilderStore";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Card } from "@/components/ui/card";
+import { Trash2 } from "lucide-react";
 import type { ConditionInput, OperandType, OperatorType } from "../../types";
 
 interface ConditionRowProps {
@@ -35,7 +47,7 @@ export function ConditionRow({ condition, index, target }: ConditionRowProps) {
 
     if (isInput) {
       return (
-        <input
+        <Input
           value={value}
           placeholder={type === "LOOKBACK" ? "column:-offset (e.g., close:-10)" : "Enter value"}
           onChange={(e) =>
@@ -43,110 +55,126 @@ export function ConditionRow({ condition, index, target }: ConditionRowProps) {
               [`${side}_operand_value`]: e.target.value,
             })
           }
-          style={{ minWidth: 120 }}
+          className="min-w-[120px]"
         />
       );
     }
 
     return (
-      <select
+      <Select
         value={value || options[0] || ""}
-        onChange={(e) =>
+        onValueChange={(newValue) =>
           handleChange({
-            [`${side}_operand_value`]: e.target.value,
+            [`${side}_operand_value`]: newValue,
           })
         }
-        style={{ minWidth: 120 }}
       >
-        {options.length === 0 && <option value="">-- No options --</option>}
-        {options.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger className="min-w-[120px]">
+          <SelectValue placeholder="Select..." />
+        </SelectTrigger>
+        <SelectContent>
+          {options.length === 0 && (
+            <SelectItem value="" disabled>-- No options --</SelectItem>
+          )}
+          {options.map((opt) => (
+            <SelectItem key={opt} value={opt}>
+              {opt}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     );
   };
 
   return (
-    <div
-      className="card"
-      style={{
-        padding: 12,
-        display: "flex",
-        alignItems: "flex-end",
-        gap: 8,
-        flexWrap: "wrap",
-      }}
-    >
-      {/* Left operand type */}
-      <div style={{ flex: "0 0 auto" }}>
-        <label style={{ fontSize: "0.8rem" }}>Left Type</label>
-        <select
-          value={condition.left_operand_type}
-          onChange={(e) => handleChange({ left_operand_type: e.target.value as OperandType })}
-        >
-          {OPERAND_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Left operand value */}
-      <div style={{ flex: 1, minWidth: 100 }}>
-        <label style={{ fontSize: "0.8rem" }}>Left Value</label>
-        {renderOperandValue("left", condition.left_operand_type, condition.left_operand_value)}
-      </div>
-
-      {/* Operator */}
-      <div style={{ flex: "0 0 auto" }}>
-        <label style={{ fontSize: "0.8rem" }}>Operator</label>
-        <select
-          value={condition.operator}
-          onChange={(e) => handleChange({ operator: e.target.value as OperatorType })}
-        >
-          {OPERATORS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Right operand (hidden for unary operators) */}
-      {!isUnary && (
-        <>
-          <div style={{ flex: "0 0 auto" }}>
-            <label style={{ fontSize: "0.8rem" }}>Right Type</label>
-            <select
-              value={condition.right_operand_type}
-              onChange={(e) => handleChange({ right_operand_type: e.target.value as OperandType })}
-            >
+    <Card className="p-3">
+      <div className="flex flex-wrap items-end gap-2">
+        {/* Left operand type */}
+        <div className="flex-shrink-0">
+          <Label className="text-xs text-muted-foreground">Left Type</Label>
+          <Select
+            value={condition.left_operand_type}
+            onValueChange={(value) => handleChange({ left_operand_type: value as OperandType })}
+          >
+            <SelectTrigger className="w-[100px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
               {OPERAND_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
+                <SelectItem key={t.value} value={t.value}>
                   {t.label}
-                </option>
+                </SelectItem>
               ))}
-            </select>
-          </div>
+            </SelectContent>
+          </Select>
+        </div>
 
-          <div style={{ flex: 1, minWidth: 100 }}>
-            <label style={{ fontSize: "0.8rem" }}>Right Value</label>
-            {renderOperandValue("right", condition.right_operand_type, condition.right_operand_value)}
-          </div>
-        </>
-      )}
+        {/* Left operand value */}
+        <div className="min-w-[100px] flex-1">
+          <Label className="text-xs text-muted-foreground">Left Value</Label>
+          {renderOperandValue("left", condition.left_operand_type, condition.left_operand_value)}
+        </div>
 
-      {/* Delete button */}
-      <button
-        className="btn secondary"
-        style={{ padding: "8px 12px", color: "var(--danger)", alignSelf: "flex-end" }}
-        onClick={() => removeCondition(target, index)}
-      >
-        Delete
-      </button>
-    </div>
+        {/* Operator */}
+        <div className="flex-shrink-0">
+          <Label className="text-xs text-muted-foreground">Operator</Label>
+          <Select
+            value={condition.operator}
+            onValueChange={(value) => handleChange({ operator: value as OperatorType })}
+          >
+            <SelectTrigger className="w-[130px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OPERATORS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Right operand (hidden for unary operators) */}
+        {!isUnary && (
+          <>
+            <div className="flex-shrink-0">
+              <Label className="text-xs text-muted-foreground">Right Type</Label>
+              <Select
+                value={condition.right_operand_type}
+                onValueChange={(value) => handleChange({ right_operand_type: value as OperandType })}
+              >
+                <SelectTrigger className="w-[100px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {OPERAND_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="min-w-[100px] flex-1">
+              <Label className="text-xs text-muted-foreground">Right Value</Label>
+              {renderOperandValue("right", condition.right_operand_type, condition.right_operand_value)}
+            </div>
+          </>
+        )}
+
+        {/* Delete button */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="self-end text-destructive hover:text-destructive hover:bg-destructive/10"
+          onClick={() => removeCondition(target, index)}
+          aria-label="Delete condition"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </Card>
   );
 }
