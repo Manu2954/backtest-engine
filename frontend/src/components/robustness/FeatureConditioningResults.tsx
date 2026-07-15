@@ -1,5 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+const COLORS = {
+  robust: 'hsl(var(--profit))',
+  moderate: 'hsl(var(--warning))',
+  fragile: 'hsl(var(--loss))',
+  muted: 'hsl(var(--muted))',
+  mutedForeground: 'hsl(var(--muted-foreground))',
+  profitBg: 'hsl(var(--profit) / 0.15)',
+  lossBg: 'hsl(var(--loss) / 0.15)',
+};
+
 interface FeatureConditioningResultsProps {
   report: Record<string, any>;
 }
@@ -8,14 +18,14 @@ function getLevelColor(level: string): string {
   switch (level) {
     case "PREDICTABLE":
     case "ROBUST":
-      return "#1b7f6b";
+      return COLORS.robust;
     case "MODERATE":
-      return "#d59f0f";
+      return COLORS.moderate;
     case "RANDOM":
     case "FRAGILE":
-      return "#b42318";
+      return COLORS.fragile;
     default:
-      return "var(--muted)";
+      return COLORS.muted;
   }
 }
 
@@ -134,7 +144,7 @@ export default function FeatureConditioningResults({
       {(winningConditions.length > 0 || losingConditions.length > 0) && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
           <div className="card">
-            <h4 style={{ color: "#1b7f6b" }}>Winning Conditions</h4>
+            <h4 style={{ color: COLORS.robust }}>Winning Conditions</h4>
             {winningConditions.length === 0 ? (
               <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
                 No significant winning conditions found.
@@ -146,9 +156,9 @@ export default function FeatureConditioningResults({
                     key={i}
                     style={{
                       padding: "12px",
-                      background: "#e6f4f1",
+                      background: COLORS.profitBg,
                       borderRadius: "8px",
-                      borderLeft: "4px solid #1b7f6b",
+                      borderLeft: `4px solid ${COLORS.robust}`,
                     }}
                   >
                     <div style={{ fontWeight: 600 }}>
@@ -156,7 +166,7 @@ export default function FeatureConditioningResults({
                     </div>
                     <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
                       {cond.condition && <span>{cond.condition} - </span>}
-                      Win Rate: <strong style={{ color: "#1b7f6b" }}>
+                      Win Rate: <strong style={{ color: COLORS.robust }}>
                         {((cond.win_rate || 0) * 100).toFixed(1)}%
                       </strong>
                       {cond.trade_count && <span> ({cond.trade_count} trades)</span>}
@@ -168,7 +178,7 @@ export default function FeatureConditioningResults({
           </div>
 
           <div className="card">
-            <h4 style={{ color: "#b42318" }}>Losing Conditions</h4>
+            <h4 style={{ color: COLORS.fragile }}>Losing Conditions</h4>
             {losingConditions.length === 0 ? (
               <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
                 No significant losing conditions found.
@@ -180,9 +190,9 @@ export default function FeatureConditioningResults({
                     key={i}
                     style={{
                       padding: "12px",
-                      background: "#fde8e7",
+                      background: COLORS.lossBg,
                       borderRadius: "8px",
-                      borderLeft: "4px solid #b42318",
+                      borderLeft: `4px solid ${COLORS.fragile}`,
                     }}
                   >
                     <div style={{ fontWeight: 600 }}>
@@ -190,7 +200,7 @@ export default function FeatureConditioningResults({
                     </div>
                     <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
                       {cond.condition && <span>{cond.condition} - </span>}
-                      Win Rate: <strong style={{ color: "#b42318" }}>
+                      Win Rate: <strong style={{ color: COLORS.fragile }}>
                         {((cond.win_rate || 0) * 100).toFixed(1)}%
                       </strong>
                       {cond.trade_count && <span> ({cond.trade_count} trades)</span>}
@@ -225,7 +235,7 @@ export default function FeatureConditioningResults({
                     style={{
                       flex: 1,
                       height: "20px",
-                      background: "#f0f0f0",
+                      background: COLORS.muted,
                       borderRadius: "4px",
                       overflow: "hidden",
                     }}
@@ -236,8 +246,8 @@ export default function FeatureConditioningResults({
                         height: "100%",
                         background:
                           feature.feature_name === summary.most_important_feature
-                            ? "#1b7f6b"
-                            : "#6a6157",
+                            ? COLORS.robust
+                            : COLORS.mutedForeground,
                       }}
                     />
                   </div>

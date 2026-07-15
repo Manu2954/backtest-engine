@@ -5,6 +5,8 @@ import ComparisonTable from '@/components/comparison/ComparisonTable'
 import OverlaidEquityCurve from '@/components/comparison/OverlaidEquityCurve'
 import { useComparisonStore } from '@/store/comparisonStore'
 import { getBacktest } from '@/api'
+import { Button } from '@/components/ui/button'
+import { ArrowLeft } from 'lucide-react'
 import type { BacktestOut } from '@/types'
 
 export function ComparePage() {
@@ -50,12 +52,13 @@ export function ComparePage() {
               <h2 className="text-xl font-semibold">
                 Comparing {backtests.length} Backtests
               </h2>
-              <button
-                className="btn secondary"
+              <Button
+                variant="outline"
                 onClick={handleBack}
               >
-                ← Change Selection
-              </button>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Change Selection
+              </Button>
             </div>
             <OverlaidEquityCurve backtests={backtests} />
             <ComparisonTable backtests={backtests} />

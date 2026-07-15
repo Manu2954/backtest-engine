@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AppShell } from '@/components/layout'
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
 import {
   Dashboard,
   StrategiesPage,
@@ -13,6 +14,7 @@ import {
   ChartPage,
   RobustnessPage,
   SettingsPage,
+  NotFoundPage,
 } from '@/pages'
 
 const queryClient = new QueryClient({
@@ -28,26 +30,29 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/strategies" element={<StrategiesPage />} />
-            <Route path="/strategies/new" element={<StrategyBuilderPage />} />
-            <Route path="/strategies/:id" element={<StrategyDetailPage />} />
-            <Route path="/strategies/:id/edit" element={<StrategyBuilderPage />} />
-            <Route path="/backtests" element={<BacktestsPage />} />
-            <Route path="/backtests/:id" element={<BacktestReportPage />} />
-            <Route path="/backtests/:id/trades" element={<BacktestTradesPage />} />
-            <Route path="/compare" element={<ComparePage />} />
-            <Route path="/chart" element={<ChartPage />} />
-            <Route path="/chart/:ticker" element={<ChartPage />} />
-            <Route path="/robustness" element={<RobustnessPage />} />
-            <Route path="/robustness/:id" element={<RobustnessPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/strategies" element={<StrategiesPage />} />
+              <Route path="/strategies/new" element={<StrategyBuilderPage />} />
+              <Route path="/strategies/:id" element={<StrategyDetailPage />} />
+              <Route path="/strategies/:id/edit" element={<StrategyBuilderPage />} />
+              <Route path="/backtests" element={<BacktestsPage />} />
+              <Route path="/backtests/:id" element={<BacktestReportPage />} />
+              <Route path="/backtests/:id/trades" element={<BacktestTradesPage />} />
+              <Route path="/compare" element={<ComparePage />} />
+              <Route path="/chart" element={<ChartPage />} />
+              <Route path="/chart/:ticker" element={<ChartPage />} />
+              <Route path="/robustness" element={<RobustnessPage />} />
+              <Route path="/robustness/:id" element={<RobustnessPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </ErrorBoundary>
     </QueryClientProvider>
   )
 }

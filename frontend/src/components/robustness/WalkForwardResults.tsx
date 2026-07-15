@@ -1,5 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+const COLORS = {
+  robust: 'hsl(var(--profit))',
+  moderate: 'hsl(var(--warning))',
+  fragile: 'hsl(var(--loss))',
+  muted: 'hsl(var(--muted))',
+  mutedForeground: 'hsl(var(--muted-foreground))',
+};
+
 interface WalkForwardResultsProps {
   report: Record<string, any>;
 }
@@ -7,13 +15,13 @@ interface WalkForwardResultsProps {
 function getLevelColor(level: string): string {
   switch (level) {
     case "ROBUST":
-      return "#1b7f6b";
+      return COLORS.robust;
     case "MODERATE":
-      return "#d59f0f";
+      return COLORS.moderate;
     case "FRAGILE":
-      return "#b42318";
+      return COLORS.fragile;
     default:
-      return "var(--muted)";
+      return COLORS.muted;
   }
 }
 
@@ -71,7 +79,7 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
             <div
               style={{
                 height: "12px",
-                background: "#eee",
+                background: COLORS.muted,
                 borderRadius: "6px",
                 overflow: "hidden",
               }}
@@ -113,7 +121,7 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
                 style={{
                   fontSize: "1.2rem",
                   fontWeight: 600,
-                  color: summary.avg_return >= 0 ? "#1b7f6b" : "#b42318",
+                  color: summary.avg_return >= 0 ? COLORS.robust : COLORS.fragile,
                 }}
               >
                 {(summary.avg_return * 100).toFixed(2)}%
@@ -191,12 +199,12 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
                       width: "100%",
                       height: `${height}%`,
                       minHeight: "10px",
-                      background: isProfitable ? "#1b7f6b" : "#b42318",
+                      background: isProfitable ? COLORS.robust : COLORS.fragile,
                       borderRadius: "4px 4px 0 0",
                       border: isBest
-                        ? "2px solid #0f5c4d"
+                        ? `2px solid ${COLORS.robust}`
                         : isWorst
-                          ? "2px solid #8a1a12"
+                          ? `2px solid ${COLORS.fragile}`
                           : "none",
                       position: "relative",
                     }}
@@ -211,7 +219,7 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
                           transform: "translateX(-50%)",
                           fontSize: "0.7rem",
                           fontWeight: 600,
-                          color: isBest ? "#1b7f6b" : "#b42318",
+                          color: isBest ? COLORS.robust : COLORS.fragile,
                         }}
                       >
                         {isBest ? "BEST" : "WORST"}
@@ -257,14 +265,14 @@ export default function WalkForwardResults({ report }: WalkForwardResultsProps) 
                     </td>
                     <td
                       style={{
-                        color: w.returnValue >= 0 ? "#1b7f6b" : "#b42318",
+                        color: w.returnValue >= 0 ? COLORS.robust : COLORS.fragile,
                         fontWeight: 600,
                       }}
                     >
                       {(w.returnValue * 100).toFixed(2)}%
                     </td>
                     <td>{(w.sharpe_ratio || 0).toFixed(2)}</td>
-                    <td style={{ color: "#b42318" }}>
+                    <td style={{ color: COLORS.fragile }}>
                       -{(Math.abs(w.max_drawdown ?? w.max_drawdown_pct ?? 0) * 100).toFixed(2)}%
                     </td>
                     <td>{w.total_trades || 0}</td>

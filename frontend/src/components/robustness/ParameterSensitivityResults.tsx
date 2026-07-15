@@ -4,16 +4,27 @@ interface ParameterSensitivityResultsProps {
   report: ParameterSensitivityReport;
 }
 
+// Theme-aware colors using CSS variables
+const COLORS = {
+  robust: 'hsl(var(--profit))',
+  moderate: 'hsl(var(--warning))',
+  fragile: 'hsl(var(--loss))',
+  muted: 'hsl(var(--muted))',
+  mutedForeground: 'hsl(var(--muted-foreground))',
+  profitBg: 'hsl(var(--profit) / 0.15)',
+  lossBg: 'hsl(var(--loss) / 0.15)',
+};
+
 function getLevelColor(level: string): string {
   switch (level) {
     case "ROBUST":
-      return "#1b7f6b";
+      return COLORS.robust;
     case "MODERATE":
-      return "#d59f0f";
+      return COLORS.moderate;
     case "FRAGILE":
-      return "#b42318";
+      return COLORS.fragile;
     default:
-      return "var(--muted)";
+      return COLORS.mutedForeground;
   }
 }
 
@@ -111,7 +122,7 @@ export default function ParameterSensitivityResults({
             <div
               style={{
                 height: "12px",
-                background: "#eee",
+                background: COLORS.muted,
                 borderRadius: "6px",
                 overflow: "hidden",
               }}
@@ -181,7 +192,7 @@ export default function ParameterSensitivityResults({
                   style={{
                     flex: 1,
                     height: "20px",
-                    background: "#f0f0f0",
+                    background: COLORS.muted,
                     borderRadius: "4px",
                     overflow: "hidden",
                   }}
@@ -190,7 +201,7 @@ export default function ParameterSensitivityResults({
                     style={{
                       width: `${cvPercent}%`,
                       height: "100%",
-                      background: isHigh ? "#d59f0f" : "#1b7f6b",
+                      background: isHigh ? COLORS.moderate : COLORS.robust,
                     }}
                   />
                 </div>
@@ -236,7 +247,7 @@ export default function ParameterSensitivityResults({
                     <tr key={i}>
                       <td>
                         {v.param_name || 'unknown'}{" "}
-                        <span style={{ color: v.direction === "up" ? "#1b7f6b" : "#b42318" }}>
+                        <span style={{ color: v.direction === "up" ? COLORS.robust : COLORS.fragile }}>
                           ({v.direction === "up" ? "+" : "-"}20%)
                         </span>
                       </td>
@@ -244,7 +255,7 @@ export default function ParameterSensitivityResults({
                       <td>{v.variant_value ?? '—'}</td>
                       <td
                         style={{
-                          color: returnDelta >= 0 ? "#1b7f6b" : "#b42318",
+                          color: returnDelta >= 0 ? COLORS.robust : COLORS.fragile,
                         }}
                       >
                         {returnDelta >= 0 ? "+" : ""}
@@ -252,7 +263,7 @@ export default function ParameterSensitivityResults({
                       </td>
                       <td
                         style={{
-                          color: sharpeDelta >= 0 ? "#1b7f6b" : "#b42318",
+                          color: sharpeDelta >= 0 ? COLORS.robust : COLORS.fragile,
                         }}
                       >
                         {sharpeDelta >= 0 ? "+" : ""}

@@ -4,32 +4,43 @@ interface RegimeDetectionResultsProps {
   report: Record<string, any>;
 }
 
+const COLORS = {
+  robust: 'hsl(var(--profit))',
+  moderate: 'hsl(var(--warning))',
+  fragile: 'hsl(var(--loss))',
+  muted: 'hsl(var(--muted))',
+  mutedForeground: 'hsl(var(--muted-foreground))',
+  border: 'hsl(var(--border))',
+  profitBg: 'hsl(var(--profit) / 0.15)',
+  lossBg: 'hsl(var(--loss) / 0.15)',
+};
+
 const REGIME_COLORS: Record<string, string> = {
-  BULL: "#1b7f6b",
-  BEAR: "#b42318",
-  CHOPPY: "#d59f0f",
-  RANGING: "#6a6157",
-  HIGH_VOL: "#b42318",
-  LOW_VOL: "#1b7f6b",
-  TRANSITION: "#d59f0f",
+  BULL: COLORS.robust,
+  BEAR: COLORS.fragile,
+  CHOPPY: COLORS.moderate,
+  RANGING: COLORS.mutedForeground,
+  HIGH_VOL: COLORS.fragile,
+  LOW_VOL: COLORS.robust,
+  TRANSITION: COLORS.moderate,
 };
 
 function getRegimeColor(regime: string): string {
-  return REGIME_COLORS[regime] || "#6a6157";
+  return REGIME_COLORS[regime] || COLORS.mutedForeground;
 }
 
 function getLevelColor(level: string): string {
   switch (level) {
     case "INDEPENDENT":
     case "ROBUST":
-      return "#1b7f6b";
+      return COLORS.robust;
     case "MODERATE":
-      return "#d59f0f";
+      return COLORS.moderate;
     case "DEPENDENT":
     case "FRAGILE":
-      return "#b42318";
+      return COLORS.fragile;
     default:
-      return "var(--muted)";
+      return COLORS.muted;
   }
 }
 
@@ -79,7 +90,7 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
             <div
               style={{
                 height: "12px",
-                background: "#eee",
+                background: COLORS.muted,
                 borderRadius: "6px",
                 overflow: "hidden",
               }}
@@ -180,7 +191,7 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
                     minWidth: "4px",
                     height: "100%",
                     background: getRegimeColor(r.regime),
-                    borderRight: i < regimes.length - 1 ? "1px solid white" : "none",
+                    borderRight: i < regimes.length - 1 ? `1px solid ${COLORS.border}` : "none",
                   }}
                   title={`${r.regime}: ${r.bar_count || 0} bars`}
                 />
@@ -233,12 +244,12 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
                       />
                       <strong>{rp.regime}</strong>
                       {rp.regime === summary.best_regime && (
-                        <span className="tag" style={{ background: "#e6f4f1", color: "#1b7f6b" }}>
+                        <span className="tag" style={{ background: COLORS.profitBg, color: COLORS.robust }}>
                           BEST
                         </span>
                       )}
                       {rp.regime === summary.worst_regime && (
-                        <span className="tag" style={{ background: "#fde8e7", color: "#b42318" }}>
+                        <span className="tag" style={{ background: COLORS.lossBg, color: COLORS.fragile }}>
                           WORST
                         </span>
                       )}
@@ -248,7 +259,7 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
                   <td>{((rp.win_rate || 0) * 100).toFixed(1)}%</td>
                   <td
                     style={{
-                      color: (rp.avg_return ?? rp.avg_return_pct ?? 0) >= 0 ? "#1b7f6b" : "#b42318",
+                      color: (rp.avg_return ?? rp.avg_return_pct ?? 0) >= 0 ? COLORS.robust : COLORS.fragile,
                       fontWeight: 600,
                     }}
                   >
@@ -297,7 +308,7 @@ export default function RegimeDetectionResults({ report }: RegimeDetectionResult
                   <td>{((r.win_rate || 0) * 100).toFixed(1)}%</td>
                   <td
                     style={{
-                      color: (r.avg_return_pct || 0) >= 0 ? "#1b7f6b" : "#b42318",
+                      color: (r.avg_return_pct || 0) >= 0 ? COLORS.robust : COLORS.fragile,
                       fontWeight: 600,
                     }}
                   >

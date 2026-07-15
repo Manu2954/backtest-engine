@@ -1,6 +1,5 @@
-import { Search, Moon, Sun, Monitor, Bell } from 'lucide-react'
+import { Moon, Sun, Monitor } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { useUIStore } from '@/store/uiStore'
 import { cn } from '@/lib/utils'
 
@@ -30,23 +29,8 @@ export function Header({ title, children }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Search */}
-        <div className="relative hidden md:block">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search... (⌘K)"
-            className="w-64 pl-8"
-          />
-        </div>
-
-        {/* Notifications */}
-        <Button variant="ghost" size="icon">
-          <Bell className="h-5 w-5" />
-        </Button>
-
         {/* Theme toggle */}
-        <Button variant="ghost" size="icon" onClick={toggleTheme}>
+        <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
           <ThemeIcon className="h-5 w-5" />
         </Button>
       </div>
