@@ -17,6 +17,7 @@ import { getStrategy, createStrategy, updateStrategy } from '@/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { Undo2, Redo2, Save } from 'lucide-react'
 import type { Strategy, IndicatorInput, ConditionGroupInput, StrategyCreate } from '@/types'
 
@@ -36,22 +37,38 @@ export function StrategyBuilderVisual() {
   // Store state
   const name = useStrategyBuilderStore((s) => s.name)
   const description = useStrategyBuilderStore((s) => s.description)
+  const chartType = useStrategyBuilderStore((s) => s.chartType)
   const indicators = useStrategyBuilderStore((s) => s.indicators)
   const entry = useStrategyBuilderStore((s) => s.entry)
   const exit = useStrategyBuilderStore((s) => s.exit)
   const shortEntry = useStrategyBuilderStore((s) => s.shortEntry)
   const shortExit = useStrategyBuilderStore((s) => s.shortExit)
+  const entryGroups = useStrategyBuilderStore((s) => s.entryGroups)
+  const exitGroups = useStrategyBuilderStore((s) => s.exitGroups)
+  const shortEntryGroups = useStrategyBuilderStore((s) => s.shortEntryGroups)
+  const shortExitGroups = useStrategyBuilderStore((s) => s.shortExitGroups)
+  const getExpression = useStrategyBuilderStore((s) => s.getExpression)
   const historyIndex = useStrategyBuilderStore((s) => s.historyIndex)
   const historyLength = useStrategyBuilderStore((s) => s.history.length)
 
   // Store actions
   const setName = useStrategyBuilderStore((s) => s.setName)
   const setDescription = useStrategyBuilderStore((s) => s.setDescription)
+  const setChartType = useStrategyBuilderStore((s) => s.setChartType)
   const addIndicator = useStrategyBuilderStore((s) => s.addIndicator)
   const loadStrategy = useStrategyBuilderStore((s) => s.loadStrategy)
   const reset = useStrategyBuilderStore((s) => s.reset)
   const undo = useStrategyBuilderStore((s) => s.undo)
   const redo = useStrategyBuilderStore((s) => s.redo)
+
+  // Helper function to convert user-friendly operators to backend format
+  const convertExpressionToBackend = (expression: string): string => {
+    if (!expression) return ''
+    return expression
+      .replace(/\bAND\b/g, '&&')
+      .replace(/\bOR\b/g, '||')
+      .replace(/\bNOT\b/g, '!')
+  }
 
   // DnD sensors
   const sensors = useSensors(
@@ -71,13 +88,67 @@ export function StrategyBuilderVisual() {
     setLoading(true)
     getStrategy(id)
       .then((strategy: Strategy) => {
-        const entryGroup = strategy.condition_groups.find((g) => g.group_type === 'ENTRY')
-        const exitGroup = strategy.condition_groups.find((g) => g.group_type === 'EXIT')
-        const shortEntryGroup = strategy.condition_groups.find((g) => g.group_type === 'SHORT_ENTRY')
-        const shortExitGroup = strategy.condition_groups.find((g) => g.group_type === 'SHORT_EXIT')
+        // Organize condition groups by type and name
+        const entryGroups: Record<string, ConditionGroupInput> = {}
+        const exitGroups: Record<string, ConditionGroupInput> = {}
+        const shortEntryGroups: Record<string, ConditionGroupInput> = {}
+        const shortExitGroups: Record<string, ConditionGroupInput> = {}
+
+        // Legacy single groups (for backward compatibility)
+        let entryGroup: ConditionGroupInput | undefined
+        let exitGroup: ConditionGroupInput | undefined
+        let shortEntryGroup: ConditionGroupInput | undefined
+        let shortExitGroup: ConditionGroupInput | undefined
+
+        // Parse condition groups
+        strategy.condition_groups.forEach((g) => {
+          const group: ConditionGroupInput = {
+            logic: g.logic as 'AND' | 'OR',
+            conditions: g.conditions.map((c, idx) => ({
+              ...c,
+              id: `${g.group_type}_${g.group_name || 'main'}_${idx}`,
+            })),
+          }
+
+          if (g.group_name) {
+            // Named group mode
+            switch (g.group_type) {
+              case 'ENTRY':
+                entryGroups[g.group_name] = group
+                break
+              case 'EXIT':
+                exitGroups[g.group_name] = group
+                break
+              case 'SHORT_ENTRY':
+                shortEntryGroups[g.group_name] = group
+                break
+              case 'SHORT_EXIT':
+                shortExitGroups[g.group_name] = group
+                break
+            }
+          } else {
+            // Legacy single group mode
+            switch (g.group_type) {
+              case 'ENTRY':
+                entryGroup = group
+                break
+              case 'EXIT':
+                exitGroup = group
+                break
+              case 'SHORT_ENTRY':
+                shortEntryGroup = group
+                break
+              case 'SHORT_EXIT':
+                shortExitGroup = group
+                break
+            }
+          }
+        })
+
         loadStrategy({
           name: strategy.name,
           description: strategy.description || '',
+          chartType: strategy.chart_type || 'ohlcv',
           indicators: strategy.indicators.map((ind, idx) => ({
             id: `loaded_${idx}`,
             indicator_type: ind.indicator_type,
@@ -85,42 +156,20 @@ export function StrategyBuilderVisual() {
             params: ind.params || {},
             display_order: ind.display_order ?? idx,
           })) as IndicatorInput[],
-          entry: entryGroup
-            ? {
-                logic: entryGroup.logic as 'AND' | 'OR',
-                conditions: entryGroup.conditions.map((c, idx) => ({
-                  ...c,
-                  id: `entry_${idx}`,
-                })),
-              }
-            : { logic: 'AND', conditions: [] },
-          exit: exitGroup
-            ? {
-                logic: exitGroup.logic as 'AND' | 'OR',
-                conditions: exitGroup.conditions.map((c, idx) => ({
-                  ...c,
-                  id: `exit_${idx}`,
-                })),
-              }
-            : { logic: 'AND', conditions: [] },
-          shortEntry: shortEntryGroup
-            ? {
-                logic: shortEntryGroup.logic as 'AND' | 'OR',
-                conditions: shortEntryGroup.conditions.map((c, idx) => ({
-                  ...c,
-                  id: `short_entry_${idx}`,
-                })),
-              }
-            : { logic: 'AND', conditions: [] },
-          shortExit: shortExitGroup
-            ? {
-                logic: shortExitGroup.logic as 'AND' | 'OR',
-                conditions: shortExitGroup.conditions.map((c, idx) => ({
-                  ...c,
-                  id: `short_exit_${idx}`,
-                })),
-              }
-            : { logic: 'AND', conditions: [] },
+          // Named groups and expressions
+          entryGroups,
+          exitGroups,
+          shortEntryGroups,
+          shortExitGroups,
+          entryExpression: strategy.entry_expression || '',
+          exitExpression: strategy.exit_expression || '',
+          shortEntryExpression: strategy.short_entry_expression || '',
+          shortExitExpression: strategy.short_exit_expression || '',
+          // Legacy single groups
+          entry: entryGroup || { logic: 'AND', conditions: [] },
+          exit: exitGroup || { logic: 'AND', conditions: [] },
+          shortEntry: shortEntryGroup || { logic: 'AND', conditions: [] },
+          shortExit: shortExitGroup || { logic: 'AND', conditions: [] },
         })
       })
       .catch((err: Error) => setError(err.message || 'Failed to load strategy'))
@@ -163,26 +212,85 @@ export function StrategyBuilderVisual() {
       const payload: StrategyCreate = {
         name,
         description,
+        chart_type: chartType,
         indicators: indicators.map(({ id: _id, ...rest }) => rest), // Remove client-side IDs
-        entry: {
+      }
+
+      // Check if using named groups or legacy single groups
+      const hasEntryGroups = Object.keys(entryGroups).length > 0
+      const hasExitGroups = Object.keys(exitGroups).length > 0
+      const hasShortEntryGroups = Object.keys(shortEntryGroups).length > 0
+      const hasShortExitGroups = Object.keys(shortExitGroups).length > 0
+
+      if (hasEntryGroups) {
+        // Named groups mode
+        payload.entry_groups = Object.fromEntries(
+          Object.entries(entryGroups).map(([name, group]) => [
+            name,
+            {
+              logic: group.logic,
+              conditions: group.conditions.map(({ id: _id, ...rest }) => rest),
+            },
+          ])
+        )
+        payload.entry_expression = convertExpressionToBackend(getExpression('entry'))
+      } else {
+        // Legacy single group mode
+        payload.entry = {
           logic: entry.logic,
           conditions: entry.conditions.map(({ id: _id, ...rest }) => rest),
-        } as ConditionGroupInput,
-        exit: {
+        } as ConditionGroupInput
+      }
+
+      if (hasExitGroups) {
+        payload.exit_groups = Object.fromEntries(
+          Object.entries(exitGroups).map(([name, group]) => [
+            name,
+            {
+              logic: group.logic,
+              conditions: group.conditions.map(({ id: _id, ...rest }) => rest),
+            },
+          ])
+        )
+        payload.exit_expression = convertExpressionToBackend(getExpression('exit'))
+      } else {
+        payload.exit = {
           logic: exit.logic,
           conditions: exit.conditions.map(({ id: _id, ...rest }) => rest),
-        } as ConditionGroupInput,
+        } as ConditionGroupInput
       }
 
       // Only include short conditions if they have any conditions defined
-      if (shortEntry.conditions.length > 0) {
+      if (hasShortEntryGroups) {
+        payload.short_entry_groups = Object.fromEntries(
+          Object.entries(shortEntryGroups).map(([name, group]) => [
+            name,
+            {
+              logic: group.logic,
+              conditions: group.conditions.map(({ id: _id, ...rest }) => rest),
+            },
+          ])
+        )
+        payload.short_entry_expression = convertExpressionToBackend(getExpression('shortEntry'))
+      } else if (shortEntry.conditions.length > 0) {
         payload.short_entry = {
           logic: shortEntry.logic,
           conditions: shortEntry.conditions.map(({ id: _id, ...rest }) => rest),
         }
       }
 
-      if (shortExit.conditions.length > 0) {
+      if (hasShortExitGroups) {
+        payload.short_exit_groups = Object.fromEntries(
+          Object.entries(shortExitGroups).map(([name, group]) => [
+            name,
+            {
+              logic: group.logic,
+              conditions: group.conditions.map(({ id: _id, ...rest }) => rest),
+            },
+          ])
+        )
+        payload.short_exit_expression = convertExpressionToBackend(getExpression('shortExit'))
+      } else if (shortExit.conditions.length > 0) {
         payload.short_exit = {
           logic: shortExit.logic,
           conditions: shortExit.conditions.map(({ id: _id, ...rest }) => rest),
@@ -227,6 +335,28 @@ export function StrategyBuilderVisual() {
               placeholder="Description (optional)"
               className="w-64"
             />
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Chart Type:</label>
+              <select
+                value={chartType}
+                onChange={(e) => setChartType(e.target.value)}
+                className="px-3 py-2 rounded-md border border-input bg-background text-sm"
+              >
+                <option value="ohlcv">Candlestick</option>
+                <option value="heikinashi">Heikin Ashi</option>
+              </select>
+              {chartType !== 'ohlcv' && (
+                <HelpTooltip
+                  text={
+                    <>
+                      Indicators computed on {chartType === 'heikinashi' ? 'Heikin Ashi' : chartType} prices.
+                      <br />
+                      Trade fills use real prices.
+                    </>
+                  }
+                />
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button

@@ -1,5 +1,9 @@
 """
-Heikin Ashi + Donchian Channel + SMA50 Long/Short Strategy with Dynamic TP
+Heikin Ashi + Donchian Channel + SMA50 Long/Short Strategy with Dynamic TP (FIXED)
+
+FIXED: Proper boolean handling in crossover detection.
+The original script had a bug where ~series.shift(1).fillna(False) returned
+-1/-2 instead of True/False due to object dtype from fillna().
 
 Strategy Logic:
   LONG:
@@ -20,7 +24,7 @@ Indicators (all calculated on Heikin Ashi candles):
 Note: Signals use HA-based indicators, but fills happen at real OHLC prices
 
 Usage:
-  python scripts/smoke_ha_donchian_sma_custom.py
+  python scripts/smoke_ha_donchian_sma_fixed.py
 """
 from __future__ import annotations
 
@@ -146,9 +150,14 @@ def main():
     dc_above_sma = df["dc_20_mid"] > df["sma_50"]
     dc_below_sma = df["dc_20_mid"] < df["sma_50"]
 
-    # Crossover detection
-    dc_cross_above = dc_above_sma & (~dc_above_sma.shift(1).fillna(False))
-    dc_cross_below = dc_below_sma & (~dc_below_sma.shift(1).fillna(False))
+    # Crossover detection (FIXED: proper boolean handling)
+    # Cross above: was not above (<=), now is above (>)
+    prev_not_above = ~dc_above_sma.shift(1).fillna(False).astype(bool)
+    dc_cross_above = dc_above_sma & prev_not_above
+
+    # Cross below: was not below (>=), now is below (<)
+    prev_not_below = ~dc_below_sma.shift(1).fillna(False).astype(bool)
+    dc_cross_below = dc_below_sma & prev_not_below
 
     # LONG signals: DC crosses above SMA
     long_entry_signal = dc_cross_above

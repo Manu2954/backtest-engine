@@ -90,7 +90,7 @@ async def test_full_walk_forward_workflow():
             "exit_expression": "crossunder"
         }
 
-        strategy_response = await client.post("/strategies", json=strategy_data)
+        strategy_response = await client.post("/api/v1/strategies", json=strategy_data)
         assert strategy_response.status_code == 200
         strategy_id = strategy_response.json()["id"]
         print(f"\n✓ Created strategy: {strategy_id}")
@@ -110,7 +110,7 @@ async def test_full_walk_forward_workflow():
         }
 
         analysis_response = await client.post(
-            "/robustness/walk-forward",
+            "/api/v1/robustness/walk-forward",
             json=analysis_request,
             timeout=10.0
         )
@@ -131,7 +131,7 @@ async def test_full_walk_forward_workflow():
         completed = False
 
         while time.time() - start_time < max_wait:
-            status_response = await client.get(f"/robustness/{analysis_id}")
+            status_response = await client.get(f"/api/v1/robustness/{analysis_id}")
             assert status_response.status_code == 200
 
             status_data = status_response.json()
@@ -153,7 +153,7 @@ async def test_full_walk_forward_workflow():
         print(f"✓ Analysis completed in {int(time.time() - start_time)}s")
 
         # Step 4: Verify report structure
-        final_response = await client.get(f"/robustness/{analysis_id}")
+        final_response = await client.get(f"/api/v1/robustness/{analysis_id}")
         final_data = final_response.json()
 
         assert final_data["status"] == "COMPLETE"
@@ -224,7 +224,7 @@ async def test_full_walk_forward_workflow():
         assert "ticker" in report["metadata"]
 
         # Cleanup
-        delete_response = await client.delete(f"/robustness/{analysis_id}")
+        delete_response = await client.delete(f"/api/v1/robustness/{analysis_id}")
         assert delete_response.status_code == 200
         print(f"✓ Cleaned up analysis")
 
@@ -276,7 +276,7 @@ async def test_walk_forward_with_different_window_counts():
             "exit_expression": "exit"
         }
 
-        strategy_response = await client.post("/strategies", json=strategy_data)
+        strategy_response = await client.post("/api/v1/strategies", json=strategy_data)
         strategy_id = strategy_response.json()["id"]
 
         # Submit with 3 windows
@@ -290,7 +290,7 @@ async def test_walk_forward_with_different_window_counts():
         }
 
         analysis_response = await client.post(
-            "/robustness/walk-forward",
+            "/api/v1/robustness/walk-forward",
             json=analysis_request,
             timeout=60.0
         )
@@ -300,7 +300,7 @@ async def test_walk_forward_with_different_window_counts():
         # Wait for completion
         max_attempts = 60
         for _ in range(max_attempts):
-            status_response = await client.get(f"/robustness/{analysis_id}")
+            status_response = await client.get(f"/api/v1/robustness/{analysis_id}")
             status_data = status_response.json()
 
             if status_data["status"] == "COMPLETE":
@@ -315,7 +315,7 @@ async def test_walk_forward_with_different_window_counts():
                 print(f"  Level: {report['assessment']['level']}")
 
                 # Cleanup
-                await client.delete(f"/robustness/{analysis_id}")
+                await client.delete(f"/api/v1/robustness/{analysis_id}")
                 await client.delete(f"/strategies/{strategy_id}")
                 return
 
@@ -367,7 +367,7 @@ async def test_walk_forward_insufficient_data():
             "exit_expression": "exit"
         }
 
-        strategy_response = await client.post("/strategies", json=strategy_data)
+        strategy_response = await client.post("/api/v1/strategies", json=strategy_data)
         strategy_id = strategy_response.json()["id"]
 
         # Submit with very short date range (will fail after warmup)
@@ -381,7 +381,7 @@ async def test_walk_forward_insufficient_data():
         }
 
         analysis_response = await client.post(
-            "/robustness/walk-forward",
+            "/api/v1/robustness/walk-forward",
             json=analysis_request,
             timeout=60.0
         )
@@ -391,7 +391,7 @@ async def test_walk_forward_insufficient_data():
         # Wait for completion (should fail)
         max_attempts = 30
         for _ in range(max_attempts):
-            status_response = await client.get(f"/robustness/{analysis_id}")
+            status_response = await client.get(f"/api/v1/robustness/{analysis_id}")
             status_data = status_response.json()
 
             if status_data["status"] == "FAILED":
@@ -404,13 +404,13 @@ async def test_walk_forward_insufficient_data():
                 print(f"  Error: {status_data['error_message']}")
 
                 # Cleanup
-                await client.delete(f"/robustness/{analysis_id}")
+                await client.delete(f"/api/v1/robustness/{analysis_id}")
                 await client.delete(f"/strategies/{strategy_id}")
                 return
 
             if status_data["status"] == "COMPLETE":
                 # If it completed, that's also OK - just means there was enough data
-                await client.delete(f"/robustness/{analysis_id}")
+                await client.delete(f"/api/v1/robustness/{analysis_id}")
                 await client.delete(f"/strategies/{strategy_id}")
                 print(f"\n✓ Analysis completed (had sufficient data)")
                 return
@@ -418,7 +418,7 @@ async def test_walk_forward_insufficient_data():
             await asyncio.sleep(2)
 
         # Cleanup if timed out
-        await client.delete(f"/robustness/{analysis_id}")
+        await client.delete(f"/api/v1/robustness/{analysis_id}")
         await client.delete(f"/strategies/{strategy_id}")
 
 

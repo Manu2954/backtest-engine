@@ -1,0 +1,356 @@
+Named Condition Groups - API Contract
+=====================================
+
+BACKEND → FRONTEND (Load Strategy)
+-----------------------------------
+
+Endpoint: GET /strategies/{id}
+
+Response Schema (StrategyOut):
+{
+  "id": "uuid",
+  "name": "string",
+  "description": "string | null",
+
+  // Indicators
+  "indicators": [
+    {
+      "id": "uuid",
+      "indicator_type": "string",
+      "alias": "string",
+      "params": { "key": "value" },
+      "display_order": "number"
+    }
+  ],
+
+  // Condition Groups (flat array with type and name)
+  "condition_groups": [
+    {
+      "id": "uuid",
+      "group_type": "ENTRY" | "EXIT" | "SHORT_ENTRY" | "SHORT_EXIT",
+      "group_name": "string | null",  // null = legacy mode
+      "logic": "AND" | "OR",
+      "conditions": [
+        {
+          "id": "uuid",
+          "left_operand_type": "string",
+          "left_operand_value": "string",
+          "operator": "string",
+          "right_operand_type": "string",
+          "right_operand_value": "string",
+          "display_order": "number"
+        }
+      ]
+    }
+  ],
+
+  // Boolean Expressions (for named groups)
+  "entry_expression": "string | null",      // e.g., "trend AND volume"
+  "exit_expression": "string | null",
+  "short_entry_expression": "string | null",
+  "short_exit_expression": "string | null"
+}
+
+Frontend Parsing Logic:
+  1. Iterate through condition_groups
+  2. If group_name is NOT null:
+     - Add to entryGroups/exitGroups/etc. based on group_type
+  3. If group_name IS null:
+     - Set as legacy entry/exit/etc. based on group_type
+  4. Load expressions from entry_expression/etc. fields
+
+
+FRONTEND → BACKEND (Save Strategy)
+-----------------------------------
+
+Endpoint: POST /strategies (create) or PUT /strategies/{id} (update)
+
+Request Schema (StrategyCreate):
+{
+  "name": "string (required)",
+  "description": "string | undefined",
+
+  // Indicators (always sent)
+  "indicators": [
+    {
+      "indicator_type": "string",
+      "alias": "string",
+      "params": { "key": "value" },
+      "display_order": "number"
+    }
+  ],
+
+  // OPTION A: Named Groups Mode (mutually exclusive with legacy per type)
+  "entry_groups": {
+    "group_name_1": {
+      "logic": "AND" | "OR",
+      "conditions": [ /* same as above */ ]
+    },
+    "group_name_2": { /* ... */ }
+  } | undefined,
+  "entry_expression": "string | undefined",  // e.g., "group_name_1 OR group_name_2"
+
+  "exit_groups": { /* same structure */ } | undefined,
+  "exit_expression": "string | undefined",
+
+  "short_entry_groups": { /* same structure */ } | undefined,
+  "short_entry_expression": "string | undefined",
+
+  "short_exit_groups": { /* same structure */ } | undefined,
+  "short_exit_expression": "string | undefined",
+
+  // OPTION B: Legacy Single Group Mode (mutually exclusive with named per type)
+  "entry": {
+    "logic": "AND" | "OR",
+    "conditions": [ /* same as above */ ]
+  } | undefined,
+
+  "exit": { /* same structure */ } | undefined,
+  "short_entry": { /* same structure */ } | undefined,
+  "short_exit": { /* same structure */ } | undefined
+}
+
+Frontend Building Logic:
+  For each signal type (entry, exit, short_entry, short_exit):
+    1. Check if {type}Groups is not empty
+    2. If not empty (named groups mode):
+       - Send {type}_groups with Record<string, ConditionGroup>
+       - Send {type}_expression with boolean expression string
+    3. If empty (legacy mode):
+       - Send {type} with single ConditionGroup
+       - Do NOT send {type}_expression
+
+
+BACKEND STORAGE
+---------------
+
+Database Tables:
+
+1. strategies:
+   - id (uuid)
+   - name (string)
+   - description (string | null)
+   - entry_expression (string | null)
+   - exit_expression (string | null)
+   - short_entry_expression (string | null)
+   - short_exit_expression (string | null)
+
+2. indicators:
+   - id (uuid)
+   - strategy_id (uuid FK)
+   - indicator_type (string)
+   - alias (string)
+   - params (jsonb)
+   - display_order (int)
+
+3. condition_groups:
+   - id (uuid)
+   - strategy_id (uuid FK)
+   - group_type (enum: ENTRY, EXIT, SHORT_ENTRY, SHORT_EXIT)
+   - group_name (string | null)  // null = legacy mode
+   - logic (enum: AND, OR)
+
+4. conditions:
+   - id (uuid)
+   - condition_group_id (uuid FK)
+   - left_operand_type (string)
+   - left_operand_value (string)
+   - operator (string)
+   - right_operand_type (string)
+   - right_operand_value (string)
+   - display_order (int)
+
+Backend Processing:
+  1. Receive StrategyCreate payload
+  2. If entry_groups is provided:
+     - Create multiple condition_groups with group_name set
+     - Store entry_expression in strategies table
+  3. If entry is provided (legacy):
+     - Create single condition_group with group_name = null
+     - Store null in entry_expression
+  4. Same logic for exit, short_entry, short_exit
+
+
+MODE DETECTION RULES
+--------------------
+
+Rule 1: Load Mode Detection (Backend → Frontend)
+  IF condition_group.group_name IS NOT NULL:
+    → Named groups mode
+    → Load into entryGroups/exitGroups/etc.
+  ELSE:
+    → Legacy mode
+    → Load into entry/exit/etc.
+
+Rule 2: Save Mode Detection (Frontend → Backend)
+  IF Object.keys(entryGroups).length > 0:
+    → Named groups mode
+    → Send entry_groups + entry_expression
+  ELSE:
+    → Legacy mode
+    → Send entry (single group)
+    → Do NOT send entry_expression
+
+Rule 3: Per-Type Independence
+  - Entry can be in named groups mode
+  - Exit can be in legacy mode
+  - Independent decision per signal type
+
+Rule 4: No Mixed Mode Per Type
+  - Cannot have both entry AND entry_groups
+  - Cannot have both exit AND exit_groups
+  - One mode per signal type at a time
+
+
+VALIDATION RULES
+----------------
+
+Frontend Validation:
+  1. Group names must be non-empty strings
+  2. Group names must be unique within their type
+  3. Expressions should reference existing group names (optional validation)
+  4. At least one indicator required
+  5. Strategy name required
+
+Backend Validation:
+  1. If entry_groups provided, entry must NOT be provided (per type)
+  2. If entry_groups provided, entry_expression must be provided
+  3. Group names must be valid identifiers (alphanumeric + underscore)
+  4. Conditions must have valid operators and operand types
+  5. Referenced indicator aliases must exist
+
+
+EXAMPLES
+--------
+
+Example 1: New Strategy with Named Groups
+  Frontend State:
+    entryGroups = {
+      "trend": { logic: "AND", conditions: [{ left: "close", op: "GT", right: "sma_50" }] },
+      "volume": { logic: "AND", conditions: [{ left: "volume", op: "GT", right: "avg_vol" }] }
+    }
+    entryExpression = "trend OR volume"
+
+  API Request:
+    {
+      "name": "Trend + Volume Strategy",
+      "indicators": [...],
+      "entry_groups": {
+        "trend": { "logic": "AND", "conditions": [...] },
+        "volume": { "logic": "AND", "conditions": [...] }
+      },
+      "entry_expression": "trend OR volume",
+      "exit": { "logic": "OR", "conditions": [...] }  // Legacy exit
+    }
+
+  Backend Storage:
+    condition_groups:
+      - (group_type="ENTRY", group_name="trend", logic="AND")
+      - (group_type="ENTRY", group_name="volume", logic="AND")
+      - (group_type="EXIT", group_name=NULL, logic="OR")
+    strategies:
+      - entry_expression = "trend OR volume"
+      - exit_expression = NULL
+
+Example 2: Legacy Strategy (Backward Compatibility)
+  Frontend State:
+    entry = { logic: "AND", conditions: [...] }
+    entryGroups = {}
+    entryExpression = ""
+
+  API Request:
+    {
+      "name": "Simple Strategy",
+      "indicators": [...],
+      "entry": { "logic": "AND", "conditions": [...] },
+      "exit": { "logic": "OR", "conditions": [...] }
+    }
+
+  Backend Storage:
+    condition_groups:
+      - (group_type="ENTRY", group_name=NULL, logic="AND")
+      - (group_type="EXIT", group_name=NULL, logic="OR")
+    strategies:
+      - entry_expression = NULL
+      - exit_expression = NULL
+
+Example 3: Mixed Mode (Entry Named, Exit Legacy)
+  Frontend State:
+    entryGroups = { "group1": {...} }
+    entryExpression = "group1"
+    exit = { logic: "OR", conditions: [...] }
+    exitGroups = {}
+
+  API Request:
+    {
+      "name": "Mixed Mode Strategy",
+      "indicators": [...],
+      "entry_groups": { "group1": {...} },
+      "entry_expression": "group1",
+      "exit": { "logic": "OR", "conditions": [...] }
+    }
+
+  Backend Storage:
+    condition_groups:
+      - (group_type="ENTRY", group_name="group1", logic="AND")
+      - (group_type="EXIT", group_name=NULL, logic="OR")
+
+
+TYPE DEFINITIONS
+----------------
+
+TypeScript (Frontend):
+  interface StrategyCreate {
+    name: string;
+    description?: string;
+    indicators: Omit<Indicator, "id">[];
+
+    // Named groups mode
+    entry_groups?: Record<string, Omit<ConditionGroup, "id" | "group_type">>;
+    exit_groups?: Record<string, Omit<ConditionGroup, "id" | "group_type">>;
+    short_entry_groups?: Record<string, Omit<ConditionGroup, "id" | "group_type">>;
+    short_exit_groups?: Record<string, Omit<ConditionGroup, "id" | "group_type">>;
+    entry_expression?: string;
+    exit_expression?: string;
+    short_entry_expression?: string;
+    short_exit_expression?: string;
+
+    // Legacy mode
+    entry?: Omit<ConditionGroup, "id" | "group_type">;
+    exit?: Omit<ConditionGroup, "id" | "group_type">;
+    short_entry?: Omit<ConditionGroup, "id" | "group_type">;
+    short_exit?: Omit<ConditionGroup, "id" | "group_type">;
+  }
+
+Python (Backend):
+  class StrategyCreate(BaseModel):
+    name: str
+    description: str | None = None
+    indicators: list[IndicatorCreate]
+
+    # Named groups mode
+    entry_groups: dict[str, ConditionGroupCreate] | None = None
+    exit_groups: dict[str, ConditionGroupCreate] | None = None
+    short_entry_groups: dict[str, ConditionGroupCreate] | None = None
+    short_exit_groups: dict[str, ConditionGroupCreate] | None = None
+    entry_expression: str | None = None
+    exit_expression: str | None = None
+    short_entry_expression: str | None = None
+    short_exit_expression: str | None = None
+
+    # Legacy mode
+    entry: ConditionGroupCreate | None = None
+    exit: ConditionGroupCreate | None = None
+    short_entry: ConditionGroupCreate | None = None
+    short_exit: ConditionGroupCreate | None = None
+
+
+VERIFICATION CHECKLIST
+----------------------
+✓ TypeScript types match Python schemas
+✓ Frontend load logic handles both modes
+✓ Frontend save logic routes to correct mode
+✓ Backend accepts both modes
+✓ Backend stores both modes correctly
+✓ Backward compatibility maintained
+✓ Build successful with no TypeScript errors

@@ -1,0 +1,429 @@
+================================================================================
+ENGINE REVIEW V2 - COMPREHENSIVE FEATURE-BY-FEATURE AUDIT
+================================================================================
+Generated: 2026-07-08
+Scope: All optional features + core execution paths
+Method: Multi-agent parallel audit
+
+================================================================================
+SECTION 1: COUNTER-TRADE BUGS (NEW)
+================================================================================
+Previously documented: CT-001 through CT-004
+
+CT-NEW-005 | HIGH | Counter-trade ignores leverage configuration
+--------------------------------------------------------------------------------
+Location: state_machine.py:1343-1350, 1097-1113
+Issue: Counter-trades inherit global leverage param. For 10x leverage strategies,
+counter-trades also use 10x, compounding losses in reversal scenarios.
+Fix: Store leverage separately in counter_trade_pending dict, allow override.
+
+CT-NEW-006 | MEDIUM | Counter-trade TP uses PnL% which includes costs
+--------------------------------------------------------------------------------
+Location: state_machine.py:1241, 1275
+Issue: Counter TP = abs(pnl_pct) * multiplier, but pnl_pct already includes
+commission/slippage from losing trade. Counter-trade needs 3%+ price move
+when TP set to 3% because it pays additional costs.
+Fix: Use pure price move: abs((exit_price - entry_price) / entry_price * 100)
+
+CT-NEW-007 | MEDIUM | Counter-trade race condition with opposite pending entry
+--------------------------------------------------------------------------------
+Location: state_machine.py:1343, 1356-1358, 1378-1380
+Issue: Counter-trade can be armed but blocked by previously-armed opposite
+position, leaking state that never executes.
+Fix: Check for opposite pending_entry before arming counter-trade.
+
+CT-NEW-008 | LOW | Counter-trade exit_rule_states captured at wrong bar
+--------------------------------------------------------------------------------
+Location: state_machine.py:1344, 1346, 1124-1125
+Issue: entry_bar_idx set to ARM bar, not FILL bar. Exit rules capture refs
+from wrong bar.
+Fix: Same as CT-004 - update entry_bar_idx after fill.
+
+CT-NEW-009 | CRITICAL | SHORT counter-trade with leverage uses wrong proceeds formula
+--------------------------------------------------------------------------------
+Location: state_machine.py:422-435, 436-451, 560, 606, 1251-1282
+Issue: Leveraged SHORT exits use LONG proceeds formula. Margin and PnL
+calculation is incorrect for leveraged shorts.
+Fix: Add direction-aware branch in leveraged exit path.
+
+CT-NEW-010 | MEDIUM | Counter-trade with risk_based sizing uses wrong stop
+--------------------------------------------------------------------------------
+Location: state_machine.py:1097-1113, 309-318, 534-544
+Issue: risk_based sizing calculates position from ATR at counter-trade entry
+bar, not original trade's stop. Position size varies wildly.
+Fix: Force fixed_amount or percent_capital for counter-trades.
+
+================================================================================
+SECTION 2: PERIODIC CONTRIBUTIONS (DCA) BUGS
+================================================================================
+
+DCA-001 | HIGH | Contributions don't allow DCA into existing positions
+--------------------------------------------------------------------------------
+Location: state_machine.py:546, 1081-1090
+Issue: "Periodic contributions" is misleading. New cash only available for
+NEW trades after exiting. Cannot average into existing position.
+Fix: Either rename to "periodic_cash_injection" or implement true DCA with
+multiple entries accumulating shares.
+
+DCA-002 | LOW | interval_days not validated >= 1
+--------------------------------------------------------------------------------
+Location: state_machine.py:1059, 1069-1075
+Issue: Fractional interval_days (e.g., 0.5) causes bucketing issues.
+Fix: Add validation: interval_days >= 1.
+
+================================================================================
+SECTION 3: ATTRIBUTION SYSTEM BUGS
+================================================================================
+
+ATTR-001 | CRITICAL | Market return uses signal bars, not fill bars
+--------------------------------------------------------------------------------
+Location: state_machine.py:186-206, 238-241, 467-486
+Issue: entry_bar_idx and exit_bar_idx are SIGNAL bars, but fills happen at
+NEXT bar's open. Alpha = trade_return - market_return compares mismatched
+periods (execution prices vs signal prices).
+Fix: Pass fill bar indices to calculate_market_return.
+
+ATTR-002 | HIGH | Market return uses close prices, fills use open prices
+--------------------------------------------------------------------------------
+Location: strength_calculator.py:189-190, state_machine.py:1097-1113, 1128-1145
+Issue: calculate_market_return uses close-to-close. Trades fill at open.
+Overnight gaps included in trade PnL but excluded from market return.
+Fix: Use open-to-open for market return, or document the discrepancy.
+
+ATTR-003 | MEDIUM | SL/TP exits have conceptually flawed market return
+--------------------------------------------------------------------------------
+Location: state_machine.py:787-820, strength_calculator.py:189-190
+Issue: Trade exits at stop price, but market return uses close. Alpha
+compares stop execution against close movement.
+Fix: Use actual exit price for market return calculation.
+
+ATTR-004 | MEDIUM | Liquidation trades have no attribution data
+--------------------------------------------------------------------------------
+Location: state_machine.py:671-698
+Issue: Liquidation creates TradeRecord directly without calling
+_create_trade_record_with_attribution.
+Fix: Add attribution capture for liquidation exits.
+
+ATTR-005 | LOW | Force close trades have no exit attribution
+--------------------------------------------------------------------------------
+Location: state_machine.py:1439-1461
+Issue: Last bar force-close calls _execute_exit without exit_attribution_data.
+Fix: Capture exit attribution for force_close trades.
+
+ATTR-006 | LOW | Attribution captured at signal bar, not validated at fill
+--------------------------------------------------------------------------------
+Location: state_machine.py:1355-1363, 1379-1384, 1096-1126
+Issue: Indicator values may change between signal and fill. Attribution
+records signal state, not execution state.
+Fix: Document this as intended behavior or capture at fill.
+
+ATTR-007 | LOW | No signal_strength for exit signals
+--------------------------------------------------------------------------------
+Location: state_machine.py:152-183, 243-246
+Issue: Entry has signal_strength, exit does not. Asymmetric analysis.
+Fix: Add exit_signal_strength field.
+
+ATTR-008 | LOW | Dynamic TP not distinguished in exit_reason
+--------------------------------------------------------------------------------
+Location: state_machine.py:1114-1118, 804-820
+Issue: Both static and dynamic TP exits use 'take_profit' reason.
+Fix: Use 'dynamic_take_profit' for dynamic TP exits.
+
+================================================================================
+SECTION 4: EXIT RULES SYSTEM BUGS
+================================================================================
+
+EXIT-001 | MEDIUM | activation_operator uses strict inequality
+--------------------------------------------------------------------------------
+Location: state_machine.py:871-874
+Issue: val < threshold or val > threshold excludes equality. "RSI >= 30"
+fails when RSI == 30.
+Fix: Use <= and >= for activation checks.
+
+EXIT-002 | LOW | First triggered rule wins - undocumented
+--------------------------------------------------------------------------------
+Location: state_machine.py:915
+Issue: Multiple rules same bar → first in list wins. Not documented.
+Fix: Document priority behavior in ExitRule docstring.
+
+EXIT-003 | HIGH | NaN skip_col treated as skip (True)
+--------------------------------------------------------------------------------
+Location: state_machine.py:894
+Issue: bool(float('nan')) is True in Python. Rule incorrectly suppressed
+when skip indicator not computed yet.
+Fix: Explicit pd.isna() check before bool() cast.
+
+EXIT-004 | LOW | activation_operator naming misleading
+--------------------------------------------------------------------------------
+Location: exit_rules.py:25, state_machine.py:871-874
+Issue: activation_operator=LT means "active when val < threshold", which
+is counterintuitive.
+Fix: Rename to activation_comparison or document clearly.
+
+EXIT-005 | MEDIUM | monitor_col not validated at entry
+--------------------------------------------------------------------------------
+Location: state_machine.py:862, 891
+Issue: Rule marked active=True at entry even if monitor_col missing.
+Silent failure every bar.
+Fix: Validate monitor_col existence in _capture_exit_rule_states.
+
+EXIT-006 | MEDIUM | min_loss_pct uses close_price, exit at next open
+--------------------------------------------------------------------------------
+Location: state_machine.py:905-911
+Issue: Loss check at close, but exit executes at next bar open.
+Fix: Document timing or use consistent price reference.
+
+EXIT-007 | MEDIUM | Missing GTE/LTE operators
+--------------------------------------------------------------------------------
+Location: exit_rules.py:5
+Issue: SUPPORTED_OPERATORS = {"LT", "GT"} only. Real rules often need >=.
+Fix: Add GTE, LTE, EQ operators.
+
+================================================================================
+SECTION 5: POSITION SIZING BUGS
+================================================================================
+
+SIZE-001 | HIGH | total_capital uses cash, not equity
+--------------------------------------------------------------------------------
+Location: state_machine.py:546, 301, 320
+Issue: percent_capital and risk_based modes use cash only, not total equity.
+After first trade, sizing shrinks because position value not counted.
+Fix: total_capital = cash + position_mtm for these modes.
+
+SIZE-002 | MEDIUM | Commission not reserved before sizing
+--------------------------------------------------------------------------------
+Location: state_machine.py:547-556, 566-568
+Issue: Size calculated, then commission causes overflow, triggers fallback.
+Inefficient and edge cases may fail.
+Fix: Reserve commission upfront in sizing calculation.
+
+SIZE-003 | CRITICAL | Leverage multiplies shares AFTER risk_based sizing
+--------------------------------------------------------------------------------
+Location: state_machine.py:559-561, 308-326
+Issue: risk_based calculates shares for X risk, then leverage multiplies,
+making actual risk X * leverage. Completely breaks risk management.
+Fix: _calculate_position_size must know leverage and size for margin, not
+multiply afterward.
+
+SIZE-004 | MEDIUM | risk_based doesn't account for commission
+--------------------------------------------------------------------------------
+Location: state_machine.py:308-326, 323-325
+Issue: Same as SIZE-002 but specific to risk_based mode.
+Fix: Account for commission in max affordable shares calculation.
+
+SIZE-005 | HIGH | full_capital doesn't reserve for commission
+--------------------------------------------------------------------------------
+Location: state_machine.py:297-299, 578-580
+Issue: Uses ALL cash, then commission must come from... where? Always
+triggers fallback recalculation.
+Fix: amount_to_invest = cash - estimated_commission.
+
+SIZE-006 | HIGH | Leverage commission formula wrong in recalculation
+--------------------------------------------------------------------------------
+Location: state_machine.py:591-592
+Issue: price * (1.0 + leverage * commission_pct / 100.0) is WRONG.
+Commission on notional, not multiplied by leverage.
+Correct: price * (1/leverage + commission_pct/100).
+Fix: Rewrite commission calculation formula.
+
+SIZE-007 | LOW | Integer truncation may loop without progress
+--------------------------------------------------------------------------------
+Location: state_machine.py:596, 332, 598-600
+Issue: Recalculation yields same truncated int, no progress made.
+Fix: Add logging for silent size rejection.
+
+SIZE-008 | MEDIUM | max_position_size not implemented
+--------------------------------------------------------------------------------
+Location: state_machine.py:284-333, 918-952
+Issue: CLAUDE.md mentions max position size limits, but no such parameter
+exists in run_backtest().
+Fix: Add max_position_size parameter with enforcement.
+
+================================================================================
+SECTION 6: DYNAMIC STOP/TP BUGS
+================================================================================
+
+DYN-001 | MEDIUM | Dynamic TP captured from signal bar, not fill bar
+--------------------------------------------------------------------------------
+Location: state_machine.py:1114-1118, 1146-1150
+Issue: entry_bar_idx is signal bar. TP % comes from bar before fill.
+Fix: Capture from current bar i after fill, not entry_bar_idx.
+
+DYN-002 | CRITICAL | Dynamic stop is NOT a trailing stop
+--------------------------------------------------------------------------------
+Location: state_machine.py:700-748
+Issue: Reads current bar's column value, not tracked trailing value.
+If indicator drops, stop moves DOWN for LONG (opposite of trailing).
+Exit reason says 'trailing_stop' but it's not trailing.
+Fix: Implement actual trailing logic - only move stop in favorable direction.
+
+DYN-003 | HIGH | No validation for negative/zero dynamic TP values
+--------------------------------------------------------------------------------
+Location: state_machine.py:1114-1118, 1146-1150, 768
+Issue: TP=-5% calculates price below entry for LONG = instant trigger.
+Fix: Validate val > 0 before assigning.
+
+DYN-004 | LOW | Dynamic stop crossover incorrect at bar 0
+--------------------------------------------------------------------------------
+Location: state_machine.py:716-718
+Issue: Bar 0 has no prev bar, defaults to should_exit=True.
+Fix: Check entry_price vs stop at bar 0.
+
+DYN-005 | MEDIUM | Counter-trade dynamic TP timing mismatch
+--------------------------------------------------------------------------------
+Location: state_machine.py:1343-1349, 1114-1118
+Issue: Counter-trade arms at bar i, fills at i+1, but TP captured from i.
+Fix: Same as DYN-001.
+
+================================================================================
+SECTION 7: DATA LAYER BUGS
+================================================================================
+
+DATA-001 | HIGH | Timezone inconsistency between providers
+--------------------------------------------------------------------------------
+Location: yfinance_provider.py:110-111, binance_provider.py:200-206,
+         data_layer.py:245-246
+Issue: yfinance returns naive UTC, Binance converts UTC→local→naive.
+Same timestamp = different date index.
+Fix: Standardize all providers to UTC before stripping timezone.
+
+DATA-002 | MEDIUM | Partial/incomplete bar included in data
+--------------------------------------------------------------------------------
+Location: binance_provider.py:120-125, data_layer.py:276-278, 325-328
+Issue: Current incomplete bar included. Training on partial data = bias.
+Fix: Filter out bars where timestamp > now - resolution.
+
+DATA-003 | MEDIUM | Gap detection threshold too lenient (min 1 bar)
+--------------------------------------------------------------------------------
+Location: data_layer.py:586-591
+Issue: Single bar passing cache check allows severely incomplete data.
+Fix: Require minimum 10-20% of expected bars or consecutive date coverage.
+
+DATA-004 | LOW | Cache invalidation race condition
+--------------------------------------------------------------------------------
+Location: data_layer.py:544, 562-565
+Issue: Redis deleted before DB fetch. Race can re-populate stale data.
+Fix: Delete Redis AFTER successful DB fetch.
+
+DATA-005 | HIGH | Date boundary double-addition for Binance
+--------------------------------------------------------------------------------
+Location: data_layer.py:325-328, binance_provider.py:120-125
+Issue: data_layer adds 1 day to end_date, Binance also adds 1 day.
+Result: 2 days over-fetch.
+Fix: Remove duplication - only one layer should adjust end date.
+
+DATA-006 | LOW | Provider failover documentation mismatch
+--------------------------------------------------------------------------------
+Location: data_layer.py:625-646, CLAUDE.md
+Issue: CLAUDE.md mentions failover, but no failover logic exists.
+Fix: Update documentation or implement failover.
+
+DATA-007 | CRITICAL | Binance provider uses FUTURES API, not spot
+--------------------------------------------------------------------------------
+Location: binance_provider.py:17, data_layer.py:152
+Issue: URL is fapi.binance.com (futures), not api.binance.com (spot).
+Futures prices include funding, can diverge significantly from spot.
+Users expecting spot data get futures data.
+Fix: Change to spot API URL or add explicit api_type parameter.
+
+================================================================================
+SECTION 8: INDICATOR LAYER BUGS
+================================================================================
+
+IND-001 | MEDIUM | ROC indicator missing period validation
+--------------------------------------------------------------------------------
+Location: indicator_layer.py:358-363
+Issue: ROC accepts negative/zero period, pandas_ta returns None silently.
+Fix: Add _validate_period(period, 'ROC') after line 361.
+
+IND-002 | LOW | Donchian Channel missing period validation
+--------------------------------------------------------------------------------
+Location: indicator_layer.py:369-383
+Issue: Invalid period causes misleading "returned empty data" error.
+Fix: Add _validate_period(period, 'Donchian Channel') after line 371.
+
+================================================================================
+SECTION 9: REPORT GENERATOR BUGS
+================================================================================
+
+RPT-001 | MEDIUM | Profit factor 0.0 for perfect strategies (duplicate of CRIT-008)
+--------------------------------------------------------------------------------
+Location: report_generator.py:296
+Issue: When gross_loss=0, profit_factor=0.0 via _safe_div.
+Fix: Return 999999.0 (sentinel) or Infinity for perfect strategies.
+
+RPT-002 | LOW | Calmar ratio not implemented
+--------------------------------------------------------------------------------
+Missing metric: CAGR / Max Drawdown
+
+RPT-003 | LOW | Recovery factor not implemented
+--------------------------------------------------------------------------------
+Missing metric: Net Profit / Max Drawdown (dollars)
+
+RPT-004 | LOW | Exposure time not implemented
+--------------------------------------------------------------------------------
+Missing metric: % of time in position
+
+================================================================================
+SECTION 10: SHORT SELLING - NO BUGS FOUND
+================================================================================
+
+All short selling mechanics verified correct:
+- Direction-aware PnL: (entry - exit) * shares ✓
+- Direction-aware stops: SL on bar_high, TP on bar_low ✓
+- Direction-aware slippage: entry=sell, exit=buy ✓
+- Liquidation price: entry * (1 + 1/leverage) ✓
+- Position sizing: correct stop_distance formula ✓
+- Binance constraint: no simultaneous long/short ✓
+
+Real-world limitations not modeled (expected):
+- Borrow costs
+- Short squeeze risk
+- Uptick rule
+
+================================================================================
+SUMMARY BY SEVERITY
+================================================================================
+
+CRITICAL (6):
+- CT-NEW-009: SHORT counter-trade leverage proceeds wrong
+- SIZE-003: Leverage breaks risk_based sizing
+- DYN-002: Dynamic stop is NOT trailing
+- DATA-007: Binance uses futures API, not spot
+- ATTR-001: Market return uses wrong bars
+
+HIGH (12):
+- CT-NEW-005: Counter-trade inherits leverage
+- DCA-001: DCA doesn't add to existing positions
+- ATTR-002: Market return uses close, fills use open
+- EXIT-003: NaN skip_col treated as skip
+- SIZE-001: total_capital uses cash only
+- SIZE-005: full_capital no commission reserve
+- SIZE-006: Leverage commission formula wrong
+- DYN-003: No validation for negative dynamic TP
+- DATA-001: Timezone inconsistency between providers
+- DATA-005: Date boundary double-addition
+
+MEDIUM (16):
+- CT-NEW-006, CT-NEW-007, CT-NEW-010
+- ATTR-003, ATTR-004
+- EXIT-001, EXIT-005, EXIT-006, EXIT-007
+- SIZE-002, SIZE-004, SIZE-008
+- DYN-001, DYN-005
+- DATA-002, DATA-003
+- IND-001, RPT-001
+
+LOW (14):
+- CT-NEW-008
+- DCA-002
+- ATTR-005, ATTR-006, ATTR-007, ATTR-008
+- EXIT-002, EXIT-004
+- SIZE-007
+- DYN-004
+- DATA-004, DATA-006
+- IND-002
+- RPT-002, RPT-003, RPT-004
+
+================================================================================
+TOTAL: 48 issues (6 critical, 12 high, 16 medium, 14 low)
+================================================================================

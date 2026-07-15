@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { ChartManager, type CandleData, type LineDataPoint } from '@/features/live-chart'
-import { useUIStore } from '@/store/uiStore'
+import { useUIStore, getEffectiveTheme } from '@/store/uiStore'
 
 interface TradingChartProps {
   candleData: CandleData[]
@@ -31,7 +31,7 @@ export function TradingChart({
     chartManagerRef.current = new ChartManager({
       container: containerRef.current,
       height,
-      theme,
+      theme: getEffectiveTheme(theme),
     })
 
     // Add candlestick data
@@ -56,7 +56,7 @@ export function TradingChart({
 
   // Handle theme changes
   useEffect(() => {
-    chartManagerRef.current?.setTheme(theme)
+    chartManagerRef.current?.setTheme(getEffectiveTheme(theme))
   }, [theme])
 
   // Handle resize

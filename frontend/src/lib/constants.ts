@@ -143,6 +143,7 @@ export const OPERAND_TYPES = [
   { value: "OHLCV", label: "Price (OHLCV)" },
   { value: "SCALAR", label: "Number" },
   { value: "LOOKBACK", label: "Lookback" },
+  { value: "EXPRESSION", label: "Expression", description: "Arithmetic expression (e.g., high - low)" },
 ] as const;
 
 export type OperandType = typeof OPERAND_TYPES[number]["value"];

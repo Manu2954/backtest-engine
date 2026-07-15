@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { ChartManager, type LineDataPoint } from '@/features/live-chart'
-import { useUIStore } from '@/store/uiStore'
+import { useUIStore, getEffectiveTheme } from '@/store/uiStore'
 
 interface EquityCurveProps {
   data: Array<{ date: string; equity: number; benchmark?: number }>
@@ -26,7 +26,7 @@ export function EquityCurve({
     chartManagerRef.current = new ChartManager({
       container: containerRef.current,
       height,
-      theme,
+      theme: getEffectiveTheme(theme),
     })
 
     // Deduplicate and sort data by date (keep last value for each date)
@@ -80,7 +80,7 @@ export function EquityCurve({
 
   // Handle theme changes
   useEffect(() => {
-    chartManagerRef.current?.setTheme(theme)
+    chartManagerRef.current?.setTheme(getEffectiveTheme(theme))
   }, [theme])
 
   // Handle resize

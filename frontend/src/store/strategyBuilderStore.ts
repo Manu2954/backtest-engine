@@ -19,11 +19,24 @@ export interface StrategyState {
   // Strategy metadata
   name: string;
   description: string;
+  chartType: string;
 
   // Indicators
   indicators: IndicatorInput[];
 
-  // Condition groups (simple mode)
+  // Condition groups - named groups mode
+  entryGroups: Record<string, ConditionGroupInput>;
+  exitGroups: Record<string, ConditionGroupInput>;
+  shortEntryGroups: Record<string, ConditionGroupInput>;
+  shortExitGroups: Record<string, ConditionGroupInput>;
+
+  // Boolean expressions for combining named groups
+  entryExpression: string;
+  exitExpression: string;
+  shortEntryExpression: string;
+  shortExitExpression: string;
+
+  // Legacy single group mode (for backward compatibility)
   entry: ConditionGroupInput;
   exit: ConditionGroupInput;
   shortEntry: ConditionGroupInput;
@@ -37,6 +50,8 @@ export interface StrategyState {
   selectedBlockId: string | null;
   selectedBlockType: BlockType;
   selectedIndicatorIndex: number | null; // Legacy support
+  selectedGroupName: string | null; // For group selection
+  selectedGroupTarget: ConditionTarget | null; // Track which target the selected group belongs to
   isDirty: boolean;
 }
 
@@ -44,6 +59,14 @@ interface StrategySnapshot {
   name: string;
   description: string;
   indicators: IndicatorInput[];
+  entryGroups: Record<string, ConditionGroupInput>;
+  exitGroups: Record<string, ConditionGroupInput>;
+  shortEntryGroups: Record<string, ConditionGroupInput>;
+  shortExitGroups: Record<string, ConditionGroupInput>;
+  entryExpression: string;
+  exitExpression: string;
+  shortEntryExpression: string;
+  shortExitExpression: string;
   entry: ConditionGroupInput;
   exit: ConditionGroupInput;
   shortEntry: ConditionGroupInput;
@@ -54,6 +77,7 @@ interface StrategyActions {
   // Metadata
   setName: (name: string) => void;
   setDescription: (description: string) => void;
+  setChartType: (chartType: string) => void;
 
   // Indicator actions
   addIndicator: (type: string) => void;
@@ -66,22 +90,35 @@ interface StrategyActions {
 
   // Block selection (Visual Builder)
   selectBlock: (id: string | null, type: BlockType) => void;
+  selectGroup: (target: ConditionTarget, groupName: string | null) => void;
   getSelectedIndicator: () => IndicatorInput | null;
-  getSelectedCondition: () => { condition: ConditionInput; target: ConditionTarget; index: number } | null;
+  getSelectedCondition: () => { condition: ConditionInput; target: ConditionTarget; groupName: string; index: number } | null;
+  getSelectedGroup: () => { target: ConditionTarget; groupName: string; group: ConditionGroupInput } | null;
 
-  // Condition group actions
+  // Named group actions
+  createGroup: (target: ConditionTarget, name: string) => void;
+  renameGroup: (target: ConditionTarget, oldName: string, newName: string) => void;
+  deleteGroup: (target: ConditionTarget, name: string) => void;
+  getGroups: (target: ConditionTarget) => Record<string, ConditionGroupInput>;
+  setGroupLogic: (target: ConditionTarget, groupName: string, logic: "AND" | "OR") => void;
+
+  // Boolean expression actions
+  setExpression: (target: ConditionTarget, expression: string) => void;
+  getExpression: (target: ConditionTarget) => string;
+
+  // Condition group actions (legacy - single group mode)
   setConditionLogic: (target: ConditionTarget, logic: "AND" | "OR") => void;
   setEntryLogic: (logic: "AND" | "OR") => void;
   setExitLogic: (logic: "AND" | "OR") => void;
   setShortEntryLogic: (logic: "AND" | "OR") => void;
   setShortExitLogic: (logic: "AND" | "OR") => void;
 
-  // Condition actions
-  addCondition: (target: ConditionTarget) => void;
-  addConditionWithId: (target: ConditionTarget) => string; // Returns the new ID
-  removeCondition: (target: ConditionTarget, index: number) => void;
+  // Condition actions (updated to support group names)
+  addCondition: (target: ConditionTarget, groupName?: string) => void;
+  addConditionWithId: (target: ConditionTarget, groupName?: string) => string; // Returns the new ID
+  removeCondition: (target: ConditionTarget, index: number, groupName?: string) => void;
   removeConditionById: (id: string) => void;
-  updateCondition: (target: ConditionTarget, index: number, patch: Partial<ConditionInput>) => void;
+  updateCondition: (target: ConditionTarget, index: number, patch: Partial<ConditionInput>, groupName?: string) => void;
   updateConditionById: (id: string, patch: Partial<ConditionInput>) => void;
 
   // History actions
@@ -93,18 +130,27 @@ interface StrategyActions {
   loadStrategy: (data: {
     name: string;
     description: string;
+    chartType?: string;
     indicators: IndicatorInput[];
-    entry: ConditionGroupInput;
-    exit: ConditionGroupInput;
+    entry?: ConditionGroupInput;
+    exit?: ConditionGroupInput;
     shortEntry?: ConditionGroupInput;
     shortExit?: ConditionGroupInput;
+    entryGroups?: Record<string, ConditionGroupInput>;
+    exitGroups?: Record<string, ConditionGroupInput>;
+    shortEntryGroups?: Record<string, ConditionGroupInput>;
+    shortExitGroups?: Record<string, ConditionGroupInput>;
+    entryExpression?: string;
+    exitExpression?: string;
+    shortEntryExpression?: string;
+    shortExitExpression?: string;
   }) => void;
   reset: () => void;
 
   // Computed helpers
   getIndicatorAliases: () => string[];
   findIndicatorById: (id: string) => { indicator: IndicatorInput; index: number } | null;
-  findConditionById: (id: string) => { condition: ConditionInput; target: ConditionTarget; index: number } | null;
+  findConditionById: (id: string) => { condition: ConditionInput; target: ConditionTarget; groupName: string; index: number } | null;
   getConditionGroup: (target: ConditionTarget) => ConditionGroupInput;
 }
 
@@ -126,7 +172,16 @@ const createEmptyCondition = (): ConditionInput => ({
 const initialState: StrategyState = {
   name: "",
   description: "",
+  chartType: "ohlcv",
   indicators: [],
+  entryGroups: {},
+  exitGroups: {},
+  shortEntryGroups: {},
+  shortExitGroups: {},
+  entryExpression: "",
+  exitExpression: "",
+  shortEntryExpression: "",
+  shortExitExpression: "",
   entry: emptyConditionGroup(),
   exit: emptyConditionGroup(),
   shortEntry: emptyConditionGroup(),
@@ -136,6 +191,8 @@ const initialState: StrategyState = {
   selectedBlockId: null,
   selectedBlockType: null,
   selectedIndicatorIndex: null,
+  selectedGroupName: null,
+  selectedGroupTarget: null,
   isDirty: false,
 };
 
@@ -148,6 +205,10 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
 
   setDescription: (description) => {
     set({ description, isDirty: true });
+  },
+
+  setChartType: (chartType) => {
+    set({ chartType, isDirty: true });
   },
 
   addIndicator: (type) => {
@@ -252,6 +313,18 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       selectedBlockId: id,
       selectedBlockType: type,
       selectedIndicatorIndex: null, // Clear legacy selection
+      selectedGroupName: null, // Clear group selection when selecting a block
+      selectedGroupTarget: null,
+    });
+  },
+
+  selectGroup: (target, groupName) => {
+    set({
+      selectedBlockId: null,
+      selectedBlockType: 'group',
+      selectedIndicatorIndex: null,
+      selectedGroupName: groupName,
+      selectedGroupTarget: groupName ? target : null,
     });
   },
 
@@ -265,31 +338,71 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     const state = get();
     if (state.selectedBlockType !== 'condition' || !state.selectedBlockId) return null;
 
-    // Search in entry conditions
+    // Helper to search in groups
+    const searchInGroups = (groups: Record<string, ConditionGroupInput>, target: ConditionTarget) => {
+      for (const [groupName, group] of Object.entries(groups)) {
+        const idx = group.conditions.findIndex((c) => c.id === state.selectedBlockId);
+        if (idx !== -1) {
+          return { condition: group.conditions[idx], target, groupName, index: idx };
+        }
+      }
+      return null;
+    };
+
+    // Search in entry groups first, then legacy entry
+    let result = searchInGroups(state.entryGroups, 'entry');
+    if (result) return result;
+
     const entryIdx = state.entry.conditions.findIndex((c) => c.id === state.selectedBlockId);
     if (entryIdx !== -1) {
-      return { condition: state.entry.conditions[entryIdx], target: 'entry' as const, index: entryIdx };
+      return { condition: state.entry.conditions[entryIdx], target: 'entry' as const, groupName: 'main', index: entryIdx };
     }
 
-    // Search in exit conditions
+    // Search in exit groups, then legacy exit
+    result = searchInGroups(state.exitGroups, 'exit');
+    if (result) return result;
+
     const exitIdx = state.exit.conditions.findIndex((c) => c.id === state.selectedBlockId);
     if (exitIdx !== -1) {
-      return { condition: state.exit.conditions[exitIdx], target: 'exit' as const, index: exitIdx };
+      return { condition: state.exit.conditions[exitIdx], target: 'exit' as const, groupName: 'main', index: exitIdx };
     }
 
-    // Search in short entry conditions
+    // Search in short entry groups, then legacy
+    result = searchInGroups(state.shortEntryGroups, 'shortEntry');
+    if (result) return result;
+
     const shortEntryIdx = state.shortEntry.conditions.findIndex((c) => c.id === state.selectedBlockId);
     if (shortEntryIdx !== -1) {
-      return { condition: state.shortEntry.conditions[shortEntryIdx], target: 'shortEntry' as const, index: shortEntryIdx };
+      return { condition: state.shortEntry.conditions[shortEntryIdx], target: 'shortEntry' as const, groupName: 'main', index: shortEntryIdx };
     }
 
-    // Search in short exit conditions
+    // Search in short exit groups, then legacy
+    result = searchInGroups(state.shortExitGroups, 'shortExit');
+    if (result) return result;
+
     const shortExitIdx = state.shortExit.conditions.findIndex((c) => c.id === state.selectedBlockId);
     if (shortExitIdx !== -1) {
-      return { condition: state.shortExit.conditions[shortExitIdx], target: 'shortExit' as const, index: shortExitIdx };
+      return { condition: state.shortExit.conditions[shortExitIdx], target: 'shortExit' as const, groupName: 'main', index: shortExitIdx };
     }
 
     return null;
+  },
+
+  getSelectedGroup: () => {
+    const state = get();
+    if (state.selectedBlockType !== 'group' || !state.selectedGroupName || !state.selectedGroupTarget) return null;
+
+    const groupsKey = `${state.selectedGroupTarget}Groups` as 'entryGroups' | 'exitGroups' | 'shortEntryGroups' | 'shortExitGroups';
+    const groups = state[groupsKey];
+    const group = groups[state.selectedGroupName];
+
+    if (!group) return null;
+
+    return {
+      target: state.selectedGroupTarget,
+      groupName: state.selectedGroupName,
+      group,
+    };
   },
 
   setConditionLogic: (target, logic) => {
@@ -317,42 +430,253 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     set((state) => ({ shortExit: { ...state.shortExit, logic }, isDirty: true }));
   },
 
-  addCondition: (target) => {
+  // Named group actions
+  createGroup: (target, name) => {
     const state = get();
     get().saveToHistory();
-    const group = state[target];
-    const newCondition: ConditionInput = {
-      ...createEmptyCondition(),
-      display_order: group.conditions.length,
-    };
-    const updated = {
-      ...group,
-      conditions: [...group.conditions, newCondition],
-    };
+
+    const groupsKey = `${target}Groups` as 'entryGroups' | 'exitGroups' | 'shortEntryGroups' | 'shortExitGroups';
+    const currentGroups = state[groupsKey];
+
+    // Don't create if already exists
+    if (currentGroups[name]) return;
+
     set({
-      [target]: updated,
+      [groupsKey]: {
+        ...currentGroups,
+        [name]: emptyConditionGroup(),
+      },
+      isDirty: true,
+    });
+
+    // Auto-update expression if it's empty
+    const expressionKey = `${target}Expression` as 'entryExpression' | 'exitExpression' | 'shortEntryExpression' | 'shortExitExpression';
+    const currentExpression = state[expressionKey];
+    if (!currentExpression) {
+      const allGroupNames = [...Object.keys(currentGroups), name];
+      set({
+        [expressionKey]: allGroupNames.join(' OR '),
+      });
+    }
+  },
+
+  renameGroup: (target, oldName, newName) => {
+    const state = get();
+    get().saveToHistory();
+
+    const groupsKey = `${target}Groups` as 'entryGroups' | 'exitGroups' | 'shortEntryGroups' | 'shortExitGroups';
+    const currentGroups = state[groupsKey];
+
+    // Don't rename if old doesn't exist or new already exists
+    if (!currentGroups[oldName] || (currentGroups[newName] && oldName !== newName)) return;
+
+    const newGroups = { ...currentGroups };
+    newGroups[newName] = newGroups[oldName];
+    delete newGroups[oldName];
+
+    set({
+      [groupsKey]: newGroups,
+      selectedGroupName: state.selectedGroupName === oldName ? newName : state.selectedGroupName,
+      isDirty: true,
+    });
+
+    // Update expression to replace old name with new name
+    const expressionKey = `${target}Expression` as 'entryExpression' | 'exitExpression' | 'shortEntryExpression' | 'shortExitExpression';
+    const currentExpression = state[expressionKey];
+    if (currentExpression) {
+      // Use word boundaries to only replace whole words
+      const updatedExpression = currentExpression.replace(
+        new RegExp(`\\b${oldName}\\b`, 'g'),
+        newName
+      );
+      set({
+        [expressionKey]: updatedExpression,
+      });
+    }
+  },
+
+  deleteGroup: (target, name) => {
+    const state = get();
+    get().saveToHistory();
+
+    const groupsKey = `${target}Groups` as 'entryGroups' | 'exitGroups' | 'shortEntryGroups' | 'shortExitGroups';
+    const currentGroups = state[groupsKey];
+
+    const newGroups = { ...currentGroups };
+    delete newGroups[name];
+
+    set({
+      [groupsKey]: newGroups,
+      selectedGroupName: state.selectedGroupName === name ? null : state.selectedGroupName,
+      selectedGroupTarget: state.selectedGroupName === name ? null : state.selectedGroupTarget,
+      selectedBlockType: state.selectedGroupName === name ? null : state.selectedBlockType,
+      isDirty: true,
+    });
+
+    // Update expression to remove references to deleted group
+    const expressionKey = `${target}Expression` as 'entryExpression' | 'exitExpression' | 'shortEntryExpression' | 'shortExitExpression';
+    const currentExpression = state[expressionKey];
+    if (currentExpression) {
+      // Remove the deleted group name from expression
+      let updatedExpression = currentExpression.replace(
+        new RegExp(`\\b${name}\\b`, 'g'),
+        ''
+      );
+      // Clean up extra operators and whitespace
+      updatedExpression = updatedExpression
+        .replace(/\s+/g, ' ')
+        .replace(/\(\s+/g, '(')
+        .replace(/\s+\)/g, ')')
+        .replace(/\b(AND|OR)\s+(AND|OR)\b/gi, '$1')
+        .replace(/^\s*(AND|OR)\s+/i, '')
+        .replace(/\s+(AND|OR)\s*$/i, '')
+        .trim();
+
+      // If expression is now empty and there are remaining groups, generate default
+      if (!updatedExpression && Object.keys(newGroups).length > 0) {
+        updatedExpression = Object.keys(newGroups).join(' OR ');
+      }
+
+      set({
+        [expressionKey]: updatedExpression,
+      });
+    }
+  },
+
+  getGroups: (target) => {
+    const state = get();
+    const groupsKey = `${target}Groups` as 'entryGroups' | 'exitGroups' | 'shortEntryGroups' | 'shortExitGroups';
+    return state[groupsKey];
+  },
+
+  setGroupLogic: (target, groupName, logic) => {
+    const state = get();
+    get().saveToHistory();
+
+    const groupsKey = `${target}Groups` as 'entryGroups' | 'exitGroups' | 'shortEntryGroups' | 'shortExitGroups';
+    const currentGroups = state[groupsKey];
+
+    if (!currentGroups[groupName]) return;
+
+    set({
+      [groupsKey]: {
+        ...currentGroups,
+        [groupName]: {
+          ...currentGroups[groupName],
+          logic,
+        },
+      },
       isDirty: true,
     });
   },
 
-  addConditionWithId: (target) => {
-    const state = get();
+  setExpression: (target, expression) => {
     get().saveToHistory();
-    const group = state[target];
-    const newCondition: ConditionInput = {
-      ...createEmptyCondition(),
-      display_order: group.conditions.length,
-    };
-    const updated = {
-      ...group,
-      conditions: [...group.conditions, newCondition],
-    };
+    const expressionKey = `${target}Expression` as 'entryExpression' | 'exitExpression' | 'shortEntryExpression' | 'shortExitExpression';
     set({
-      [target]: updated,
-      selectedBlockId: newCondition.id,
-      selectedBlockType: 'condition',
+      [expressionKey]: expression,
       isDirty: true,
     });
+  },
+
+  getExpression: (target) => {
+    const state = get();
+    const expressionKey = `${target}Expression` as 'entryExpression' | 'exitExpression' | 'shortEntryExpression' | 'shortExitExpression';
+    return state[expressionKey];
+  },
+
+  addCondition: (target, groupName) => {
+    const state = get();
+    get().saveToHistory();
+
+    // If groupName is provided, add to named group
+    if (groupName) {
+      const groupsKey = `${target}Groups` as 'entryGroups' | 'exitGroups' | 'shortEntryGroups' | 'shortExitGroups';
+      const currentGroups = state[groupsKey];
+      const group = currentGroups[groupName];
+
+      if (!group) return;
+
+      const newCondition: ConditionInput = {
+        ...createEmptyCondition(),
+        display_order: group.conditions.length,
+      };
+
+      set({
+        [groupsKey]: {
+          ...currentGroups,
+          [groupName]: {
+            ...group,
+            conditions: [...group.conditions, newCondition],
+          },
+        },
+        isDirty: true,
+      });
+    } else {
+      // Legacy mode: add to single group
+      const group = state[target];
+      const newCondition: ConditionInput = {
+        ...createEmptyCondition(),
+        display_order: group.conditions.length,
+      };
+      const updated = {
+        ...group,
+        conditions: [...group.conditions, newCondition],
+      };
+      set({
+        [target]: updated,
+        isDirty: true,
+      });
+    }
+  },
+
+  addConditionWithId: (target, groupName) => {
+    const state = get();
+    get().saveToHistory();
+
+    const newCondition: ConditionInput = {
+      ...createEmptyCondition(),
+    };
+
+    // If groupName is provided, add to named group
+    if (groupName) {
+      const groupsKey = `${target}Groups` as 'entryGroups' | 'exitGroups' | 'shortEntryGroups' | 'shortExitGroups';
+      const currentGroups = state[groupsKey];
+      const group = currentGroups[groupName];
+
+      if (!group) return newCondition.id!;
+
+      newCondition.display_order = group.conditions.length;
+
+      set({
+        [groupsKey]: {
+          ...currentGroups,
+          [groupName]: {
+            ...group,
+            conditions: [...group.conditions, newCondition],
+          },
+        },
+        selectedBlockId: newCondition.id,
+        selectedBlockType: 'condition',
+        isDirty: true,
+      });
+    } else {
+      // Legacy mode: add to single group
+      const group = state[target];
+      newCondition.display_order = group.conditions.length;
+
+      const updated = {
+        ...group,
+        conditions: [...group.conditions, newCondition],
+      };
+      set({
+        [target]: updated,
+        selectedBlockId: newCondition.id,
+        selectedBlockType: 'condition',
+        isDirty: true,
+      });
+    }
+
     return newCondition.id!;
   },
 
@@ -374,7 +698,35 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     const state = get();
     get().saveToHistory();
 
-    // Check entry conditions
+    // Helper to remove from groups
+    const removeFromGroups = (groups: Record<string, ConditionGroupInput>, groupsKey: string) => {
+      for (const [groupName, group] of Object.entries(groups)) {
+        if (group.conditions.some((c) => c.id === id)) {
+          set({
+            [groupsKey]: {
+              ...groups,
+              [groupName]: {
+                ...group,
+                conditions: group.conditions.filter((c) => c.id !== id),
+              },
+            },
+            selectedBlockId: state.selectedBlockId === id ? null : state.selectedBlockId,
+            selectedBlockType: state.selectedBlockId === id ? null : state.selectedBlockType,
+            isDirty: true,
+          });
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Try to remove from named groups first
+    if (removeFromGroups(state.entryGroups, 'entryGroups')) return;
+    if (removeFromGroups(state.exitGroups, 'exitGroups')) return;
+    if (removeFromGroups(state.shortEntryGroups, 'shortEntryGroups')) return;
+    if (removeFromGroups(state.shortExitGroups, 'shortExitGroups')) return;
+
+    // Fallback to legacy single groups
     if (state.entry.conditions.some((c) => c.id === id)) {
       set({
         entry: {
@@ -388,7 +740,6 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       return;
     }
 
-    // Check exit conditions
     if (state.exit.conditions.some((c) => c.id === id)) {
       set({
         exit: {
@@ -402,7 +753,6 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       return;
     }
 
-    // Check short entry conditions
     if (state.shortEntry.conditions.some((c) => c.id === id)) {
       set({
         shortEntry: {
@@ -416,7 +766,6 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       return;
     }
 
-    // Check short exit conditions
     if (state.shortExit.conditions.some((c) => c.id === id)) {
       set({
         shortExit: {
@@ -446,7 +795,36 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
   updateConditionById: (id, patch) => {
     const state = get();
 
-    // Check entry conditions
+    // Helper to update in groups
+    const updateInGroups = (groups: Record<string, ConditionGroupInput>, groupsKey: string) => {
+      for (const [groupName, group] of Object.entries(groups)) {
+        const idx = group.conditions.findIndex((c) => c.id === id);
+        if (idx !== -1) {
+          set({
+            [groupsKey]: {
+              ...groups,
+              [groupName]: {
+                ...group,
+                conditions: group.conditions.map((c, i) =>
+                  i === idx ? { ...c, ...patch } : c
+                ),
+              },
+            },
+            isDirty: true,
+          });
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Try named groups first
+    if (updateInGroups(state.entryGroups, 'entryGroups')) return;
+    if (updateInGroups(state.exitGroups, 'exitGroups')) return;
+    if (updateInGroups(state.shortEntryGroups, 'shortEntryGroups')) return;
+    if (updateInGroups(state.shortExitGroups, 'shortExitGroups')) return;
+
+    // Fallback to legacy single groups
     const entryIdx = state.entry.conditions.findIndex((c) => c.id === id);
     if (entryIdx !== -1) {
       set({
@@ -461,7 +839,6 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       return;
     }
 
-    // Check exit conditions
     const exitIdx = state.exit.conditions.findIndex((c) => c.id === id);
     if (exitIdx !== -1) {
       set({
@@ -476,7 +853,6 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       return;
     }
 
-    // Check short entry conditions
     const shortEntryIdx = state.shortEntry.conditions.findIndex((c) => c.id === id);
     if (shortEntryIdx !== -1) {
       set({
@@ -491,7 +867,6 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       return;
     }
 
-    // Check short exit conditions
     const shortExitIdx = state.shortExit.conditions.findIndex((c) => c.id === id);
     if (shortExitIdx !== -1) {
       set({
@@ -512,6 +887,14 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       name: state.name,
       description: state.description,
       indicators: JSON.parse(JSON.stringify(state.indicators)),
+      entryGroups: JSON.parse(JSON.stringify(state.entryGroups)),
+      exitGroups: JSON.parse(JSON.stringify(state.exitGroups)),
+      shortEntryGroups: JSON.parse(JSON.stringify(state.shortEntryGroups)),
+      shortExitGroups: JSON.parse(JSON.stringify(state.shortExitGroups)),
+      entryExpression: state.entryExpression,
+      exitExpression: state.exitExpression,
+      shortEntryExpression: state.shortEntryExpression,
+      shortExitExpression: state.shortExitExpression,
       entry: JSON.parse(JSON.stringify(state.entry)),
       exit: JSON.parse(JSON.stringify(state.exit)),
       shortEntry: JSON.parse(JSON.stringify(state.shortEntry)),
@@ -537,6 +920,14 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       name: snapshot.name,
       description: snapshot.description,
       indicators: JSON.parse(JSON.stringify(snapshot.indicators)),
+      entryGroups: JSON.parse(JSON.stringify(snapshot.entryGroups)),
+      exitGroups: JSON.parse(JSON.stringify(snapshot.exitGroups)),
+      shortEntryGroups: JSON.parse(JSON.stringify(snapshot.shortEntryGroups)),
+      shortExitGroups: JSON.parse(JSON.stringify(snapshot.shortExitGroups)),
+      entryExpression: snapshot.entryExpression,
+      exitExpression: snapshot.exitExpression,
+      shortEntryExpression: snapshot.shortEntryExpression,
+      shortExitExpression: snapshot.shortExitExpression,
       entry: JSON.parse(JSON.stringify(snapshot.entry)),
       exit: JSON.parse(JSON.stringify(snapshot.exit)),
       shortEntry: JSON.parse(JSON.stringify(snapshot.shortEntry)),
@@ -554,6 +945,14 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
       name: snapshot.name,
       description: snapshot.description,
       indicators: JSON.parse(JSON.stringify(snapshot.indicators)),
+      entryGroups: JSON.parse(JSON.stringify(snapshot.entryGroups)),
+      exitGroups: JSON.parse(JSON.stringify(snapshot.exitGroups)),
+      shortEntryGroups: JSON.parse(JSON.stringify(snapshot.shortEntryGroups)),
+      shortExitGroups: JSON.parse(JSON.stringify(snapshot.shortExitGroups)),
+      entryExpression: snapshot.entryExpression,
+      exitExpression: snapshot.exitExpression,
+      shortEntryExpression: snapshot.shortEntryExpression,
+      shortExitExpression: snapshot.shortExitExpression,
       entry: JSON.parse(JSON.stringify(snapshot.entry)),
       exit: JSON.parse(JSON.stringify(snapshot.exit)),
       shortEntry: JSON.parse(JSON.stringify(snapshot.shortEntry)),
@@ -566,14 +965,27 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
     set({
       name: data.name,
       description: data.description,
+      chartType: data.chartType || "ohlcv",
       indicators: JSON.parse(JSON.stringify(data.indicators)),
-      entry: JSON.parse(JSON.stringify(data.entry)),
-      exit: JSON.parse(JSON.stringify(data.exit)),
+      entryGroups: data.entryGroups ? JSON.parse(JSON.stringify(data.entryGroups)) : {},
+      exitGroups: data.exitGroups ? JSON.parse(JSON.stringify(data.exitGroups)) : {},
+      shortEntryGroups: data.shortEntryGroups ? JSON.parse(JSON.stringify(data.shortEntryGroups)) : {},
+      shortExitGroups: data.shortExitGroups ? JSON.parse(JSON.stringify(data.shortExitGroups)) : {},
+      entryExpression: data.entryExpression || "",
+      exitExpression: data.exitExpression || "",
+      shortEntryExpression: data.shortEntryExpression || "",
+      shortExitExpression: data.shortExitExpression || "",
+      entry: data.entry ? JSON.parse(JSON.stringify(data.entry)) : emptyConditionGroup(),
+      exit: data.exit ? JSON.parse(JSON.stringify(data.exit)) : emptyConditionGroup(),
       shortEntry: data.shortEntry ? JSON.parse(JSON.stringify(data.shortEntry)) : emptyConditionGroup(),
       shortExit: data.shortExit ? JSON.parse(JSON.stringify(data.shortExit)) : emptyConditionGroup(),
       history: [],
       historyIndex: -1,
       selectedIndicatorIndex: null,
+      selectedBlockId: null,
+      selectedBlockType: null,
+      selectedGroupName: null,
+      selectedGroupTarget: null,
       isDirty: false,
     });
   },
@@ -581,12 +993,22 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
   reset: () => {
     set({
       ...initialState,
+      chartType: "ohlcv",
+      entryGroups: {},
+      exitGroups: {},
+      shortEntryGroups: {},
+      shortExitGroups: {},
+      entryExpression: "",
+      exitExpression: "",
+      shortEntryExpression: "",
+      shortExitExpression: "",
       entry: emptyConditionGroup(),
       exit: emptyConditionGroup(),
       shortEntry: emptyConditionGroup(),
       shortExit: emptyConditionGroup(),
       history: [],
       historyIndex: -1,
+      selectedGroupTarget: null,
     });
   },
 
@@ -607,24 +1029,49 @@ export const useStrategyBuilderStore = create<StrategyState & StrategyActions>((
   findConditionById: (id) => {
     const state = get();
 
+    // Helper to search in groups
+    const searchInGroups = (groups: Record<string, ConditionGroupInput>, target: ConditionTarget) => {
+      for (const [groupName, group] of Object.entries(groups)) {
+        const idx = group.conditions.findIndex((c) => c.id === id);
+        if (idx !== -1) {
+          return { condition: group.conditions[idx], target, groupName, index: idx };
+        }
+      }
+      return null;
+    };
+
+    // Search in named groups first
+    let result = searchInGroups(state.entryGroups, 'entry');
+    if (result) return result;
+
+    result = searchInGroups(state.exitGroups, 'exit');
+    if (result) return result;
+
+    result = searchInGroups(state.shortEntryGroups, 'shortEntry');
+    if (result) return result;
+
+    result = searchInGroups(state.shortExitGroups, 'shortExit');
+    if (result) return result;
+
+    // Fallback to legacy single groups
     const entryIdx = state.entry.conditions.findIndex((c) => c.id === id);
     if (entryIdx !== -1) {
-      return { condition: state.entry.conditions[entryIdx], target: 'entry' as const, index: entryIdx };
+      return { condition: state.entry.conditions[entryIdx], target: 'entry' as const, groupName: 'main', index: entryIdx };
     }
 
     const exitIdx = state.exit.conditions.findIndex((c) => c.id === id);
     if (exitIdx !== -1) {
-      return { condition: state.exit.conditions[exitIdx], target: 'exit' as const, index: exitIdx };
+      return { condition: state.exit.conditions[exitIdx], target: 'exit' as const, groupName: 'main', index: exitIdx };
     }
 
     const shortEntryIdx = state.shortEntry.conditions.findIndex((c) => c.id === id);
     if (shortEntryIdx !== -1) {
-      return { condition: state.shortEntry.conditions[shortEntryIdx], target: 'shortEntry' as const, index: shortEntryIdx };
+      return { condition: state.shortEntry.conditions[shortEntryIdx], target: 'shortEntry' as const, groupName: 'main', index: shortEntryIdx };
     }
 
     const shortExitIdx = state.shortExit.conditions.findIndex((c) => c.id === id);
     if (shortExitIdx !== -1) {
-      return { condition: state.shortExit.conditions[shortExitIdx], target: 'shortExit' as const, index: shortExitIdx };
+      return { condition: state.shortExit.conditions[shortExitIdx], target: 'shortExit' as const, groupName: 'main', index: shortExitIdx };
     }
 
     return null;

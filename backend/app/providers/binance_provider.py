@@ -14,7 +14,9 @@ import pandas as pd
 
 from app.providers.base import DataProvider
 
-BINANCE_URL = "https://fapi.binance.com/fapi/v1"
+# DATA-007 FIX: Use spot API (api.binance.com) not futures API (fapi.binance.com)
+# Futures prices include funding rates and can diverge significantly from spot
+BINANCE_URL = "https://api.binance.com/api/v3"
 BINANCE_INTERVAL_MS = {
     "1m": 1 * 60 * 1000,
     "3m": 3 * 60 * 1000,
@@ -121,8 +123,8 @@ class BinanceProvider(DataProvider):
                 end_dt = end_date
             else:
                 end_dt = datetime.combine(end_date, datetime.min.time())
-                # For date-only input, make end inclusive by adding 1 day
-                end_dt = end_dt + timedelta(days=1)
+                # DATA-005 FIX: Don't add 1 day here - caller (data_layer) already
+                # handles inclusive date ranges. Adding here causes 2-day over-fetch.
 
             # Make timezone-aware if not already
             if end_dt.tzinfo is None:
@@ -197,12 +199,11 @@ class BinanceProvider(DataProvider):
             )
 
             # Convert timestamp to datetime (Binance returns UTC timestamps)
+            # DATA-001 FIX: Keep as naive UTC (don't convert to local timezone)
+            # All providers should return naive UTC for consistent date alignment
             df["date"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
 
-            # Convert to user's timezone
-            df["date"] = df["date"].dt.tz_convert(self.timezone)
-
-            # Remove timezone info to keep consistency with rest of system
+            # Remove timezone info to keep as naive UTC
             df["date"] = df["date"].dt.tz_localize(None)
 
             # Select and convert required columns

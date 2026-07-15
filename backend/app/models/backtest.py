@@ -49,6 +49,14 @@ class BacktestRun(Base):
     # Risk-free rate for Sharpe ratio calculation (annual, e.g., 0.05 for 5%)
     risk_free_rate: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True, default=0.0)
 
+    # Advanced features
+    leverage: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True, default=1.0)
+    dynamic_stop_column: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    dynamic_tp_pct_column: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    enable_counter_trades: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    counter_tp_multiplier: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True, default=1.5)
+    exit_rules: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
     strategy = relationship("Strategy", back_populates="backtest_runs")
     trades = relationship("TradeLog", back_populates="run", cascade="all, delete-orphan")
 

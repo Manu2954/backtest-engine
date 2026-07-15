@@ -1,6 +1,29 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+export type Theme = 'dark' | 'light' | 'system'
+export type EffectiveTheme = 'dark' | 'light'
+
+// Helper to get the effective theme based on system preference
+export function getEffectiveTheme(theme: Theme): EffectiveTheme {
+  if (theme === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light'
+  }
+  return theme
+}
+
+// Apply theme to document
+function applyTheme(theme: Theme) {
+  const effective = getEffectiveTheme(theme)
+  if (effective === 'light') {
+    document.documentElement.classList.add('light')
+  } else {
+    document.documentElement.classList.remove('light')
+  }
+}
+
 interface UIState {
   // Sidebar
   sidebarCollapsed: boolean
@@ -8,8 +31,8 @@ interface UIState {
   toggleSidebar: () => void
 
   // Theme
-  theme: 'dark' | 'light'
-  setTheme: (theme: 'dark' | 'light') => void
+  theme: Theme
+  setTheme: (theme: Theme) => void
   toggleTheme: () => void
 
   // Modal states
@@ -19,7 +42,7 @@ interface UIState {
 
 export const useUIStore = create<UIState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       // Sidebar - default collapsed on mobile, expanded on desktop
       sidebarCollapsed: false,
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
@@ -30,23 +53,16 @@ export const useUIStore = create<UIState>()(
       theme: 'dark',
       setTheme: (theme) => {
         set({ theme })
-        // Update document class
-        if (theme === 'light') {
-          document.documentElement.classList.add('light')
-        } else {
-          document.documentElement.classList.remove('light')
-        }
+        applyTheme(theme)
       },
-      toggleTheme: () =>
-        set((state) => {
-          const newTheme = state.theme === 'dark' ? 'light' : 'dark'
-          if (newTheme === 'light') {
-            document.documentElement.classList.add('light')
-          } else {
-            document.documentElement.classList.remove('light')
-          }
-          return { theme: newTheme }
-        }),
+      toggleTheme: () => {
+        const current = get().theme
+        // Cycle: dark -> light -> system -> dark
+        const next: Theme =
+          current === 'dark' ? 'light' : current === 'light' ? 'system' : 'dark'
+        set({ theme: next })
+        applyTheme(next)
+      },
 
       // Command palette
       commandPaletteOpen: false,
@@ -60,10 +76,22 @@ export const useUIStore = create<UIState>()(
       }),
       onRehydrateStorage: () => (state) => {
         // Apply theme on rehydration
-        if (state?.theme === 'light') {
-          document.documentElement.classList.add('light')
+        if (state?.theme) {
+          applyTheme(state.theme)
         }
       },
     }
   )
 )
+
+// Listen for system theme changes when in 'system' mode
+if (typeof window !== 'undefined') {
+  window
+    .matchMedia('(prefers-color-scheme: dark)')
+    .addEventListener('change', () => {
+      const { theme } = useUIStore.getState()
+      if (theme === 'system') {
+        applyTheme('system')
+      }
+    })
+}

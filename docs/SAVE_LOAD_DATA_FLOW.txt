@@ -1,0 +1,181 @@
+Named Condition Groups - Data Flow Diagram
+==========================================
+
+LOAD FLOW (Backend → Frontend)
+-------------------------------
+
+Backend API Response (StrategyOut):
+  {
+    "id": "...",
+    "name": "My Strategy",
+    "indicators": [...],
+    "condition_groups": [
+      { "id": "...", "group_type": "ENTRY", "group_name": "trend", "logic": "AND", "conditions": [...] },
+      { "id": "...", "group_type": "ENTRY", "group_name": "volume", "logic": "AND", "conditions": [...] },
+      { "id": "...", "group_type": "EXIT", "group_name": null, "logic": "OR", "conditions": [...] }  // legacy
+    ],
+    "entry_expression": "trend OR volume",
+    "exit_expression": null,
+    ...
+  }
+
+         ↓ Parse in StrategyBuilderVisual.tsx (useEffect)
+
+Frontend Store State:
+  {
+    // Named groups mode (has group_name)
+    entryGroups: {
+      "trend": { logic: "AND", conditions: [...] },
+      "volume": { logic: "AND", conditions: [...] }
+    },
+    entryExpression: "trend OR volume",
+
+    // Legacy mode (no group_name)
+    exit: { logic: "OR", conditions: [...] },
+    exitExpression: "",
+
+    exitGroups: {},
+    ...
+  }
+
+         ↓ Render in UI
+
+Visual Builder Display:
+  - Entry: Show named groups "trend" and "volume" + expression editor
+  - Exit: Show single legacy group (backward compatible)
+
+
+SAVE FLOW (Frontend → Backend)
+-------------------------------
+
+Frontend Store State:
+  {
+    entryGroups: {
+      "trend": { logic: "AND", conditions: [...] },
+      "volume": { logic: "AND", conditions: [...] }
+    },
+    entryExpression: "trend OR volume",
+
+    exit: { logic: "OR", conditions: [...] },
+    exitExpression: "",
+    exitGroups: {},
+    ...
+  }
+
+         ↓ Build payload in StrategyBuilderVisual.tsx (handleSave)
+
+API Request (StrategyCreate):
+  {
+    "name": "My Strategy",
+    "indicators": [...],
+
+    // Named groups mode (entryGroups not empty)
+    "entry_groups": {
+      "trend": { "logic": "AND", "conditions": [...] },
+      "volume": { "logic": "AND", "conditions": [...] }
+    },
+    "entry_expression": "trend OR volume",
+
+    // Legacy mode (exitGroups empty)
+    "exit": { "logic": "OR", "conditions": [...] },
+    // No exit_expression sent
+  }
+
+         ↓ Backend processes
+
+Backend Storage (PostgreSQL):
+  condition_groups table:
+    - (id, strategy_id, group_type="ENTRY", group_name="trend", logic="AND")
+    - (id, strategy_id, group_type="ENTRY", group_name="volume", logic="AND")
+    - (id, strategy_id, group_type="EXIT", group_name=NULL, logic="OR")
+
+  strategies table:
+    - entry_expression = "trend OR volume"
+    - exit_expression = NULL
+
+
+MODE DETECTION LOGIC
+--------------------
+
+Load Mode Detection:
+  if (condition_group.group_name) {
+    // Named groups mode
+    entryGroups[group_name] = { logic, conditions }
+  } else {
+    // Legacy mode
+    entry = { logic, conditions }
+  }
+
+Save Mode Detection:
+  if (Object.keys(entryGroups).length > 0) {
+    // Named groups mode
+    payload.entry_groups = entryGroups
+    payload.entry_expression = getExpression('entry')
+  } else {
+    // Legacy mode
+    payload.entry = entry
+    // No expression
+  }
+
+
+BACKWARD COMPATIBILITY
+----------------------
+
+Old Strategy (created before named groups):
+  Backend → Frontend:
+    condition_groups = [{ group_name: null, ... }]
+    entry_expression = null
+
+    → Loads into legacy fields (entry, exit, etc.)
+
+  Frontend → Backend:
+    entryGroups = {} (empty)
+    entry = { logic: "AND", conditions: [...] }
+
+    → Sends legacy payload (entry, exit, etc.)
+    → No expressions sent
+
+New Strategy (with named groups):
+  Backend → Frontend:
+    condition_groups = [{ group_name: "group1", ... }, { group_name: "group2", ... }]
+    entry_expression = "group1 OR group2"
+
+    → Loads into named groups (entryGroups, expressions)
+
+  Frontend → Backend:
+    entryGroups = { "group1": {...}, "group2": {...} }
+    entryExpression = "group1 OR group2"
+
+    → Sends named groups payload (entry_groups, entry_expression)
+
+
+KEY DECISION POINTS
+-------------------
+
+1. Load Strategy:
+   - Check group_name field on each condition_group
+   - Separate into named groups vs legacy groups
+
+2. Save Strategy:
+   - Check if entryGroups/exitGroups/etc. are empty
+   - Route to named groups mode or legacy mode
+
+3. Store State:
+   - Maintain both modes simultaneously
+   - Only one mode active per signal type at a time
+
+4. UI Rendering:
+   - Check which mode is active
+   - Show appropriate controls (group list + expression editor vs single group)
+
+
+TYPE SAFETY
+-----------
+
+TypeScript enforces:
+  ✓ StrategyCreate has both named groups fields and legacy fields (optional)
+  ✓ Backend response has expressions and condition_groups with group_name
+  ✓ Store state includes all required fields
+  ✓ No runtime type mismatches
+
+Build successful with no errors.

@@ -1,0 +1,515 @@
+================================================================================
+BACKTEST ENGINE FIX PLAN - COMPREHENSIVE IMPLEMENTATION GUIDE
+================================================================================
+Generated: 2026-07-15
+Total Bugs: 48 (5 Critical, 10 High, 16 Medium, 14 Low)
+Total Effort: 80-90 hours (~4 weeks at focused pace)
+Reference: ta4j source code for correct implementations
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+Decision: FIX backtest-engine using ta4j as reference (not switch to ta4j)
+
+Rationale:
+- User wants to "test almost everything" - needs all features correct
+- Robustness module is valuable and ta4j doesn't have it
+- Python ecosystem preferred for strategy experimentation
+- 48 bugs are fixable in ~4 weeks
+
+Scope:
+- Fix all 48 documented bugs
+- NOT integrating with trade-executor yet
+- NOT building hybrid ta4j architecture
+- Focus: correctness for personal strategy experimentation
+
+================================================================================
+PHASE 1: CRITICAL DATA & SIZING BUGS
+================================================================================
+Timeline: Week 1-2
+Effort: 20 hours
+Priority: MUST DO FIRST - these corrupt results silently
+
+--------------------------------------------------------------------------------
+P1.1 DATA LAYER (6 hours)
+--------------------------------------------------------------------------------
+
+DATA-007 | CRITICAL | Binance uses FUTURES API, not spot
+File: backend/app/providers/binance_provider.py:17
+Current: BINANCE_URL = "https://fapi.binance.com/fapi/v1"
+Fix: Change to "https://api.binance.com/api/v3"
+     Add market_type param (default="spot") for explicit futures support
+Tests: test_binance_spot_url_default, test_binance_spot_fetch_btcusdt
+Effort: 2 hours
+Risk: LOW
+
+DATA-001 | HIGH | Timezone inconsistency between providers
+Files: yfinance_provider.py:89-110, binance_provider.py:200-206
+Problem: yfinance returns naive UTC, Binance converts UTC→local→naive
+Fix: Standardize ALL providers to naive UTC before returning
+     - yfinance: if tz-aware, convert to UTC then localize(None)
+     - binance: keep as naive UTC (remove local tz conversion at lines 203-206)
+Tests: test_timezone_consistency_yfinance_binance
+Effort: 2 hours
+Risk: MEDIUM (may need to clear cached data)
+
+DATA-005 | HIGH | Date boundary double-addition for Binance
+File: binance_provider.py:119-125
+Problem: data_layer adds 1 day, Binance provider also adds 1 day = 2 days over-fetch
+Fix: Remove + timedelta(days=1) from binance_provider.py
+     Provider receives datetime bounds already exclusive from caller
+Tests: test_fetch_single_day_returns_single_day, test_fetch_range_no_double_add
+Effort: 1.5 hours
+Risk: LOW
+
+--------------------------------------------------------------------------------
+P1.2 POSITION SIZING (7.5 hours)
+--------------------------------------------------------------------------------
+
+SIZE-003 | CRITICAL | Leverage multiplies shares AFTER risk_based sizing
+File: state_machine.py:558-560
+Problem: Risk-based calculates shares for X% risk, then leverage multiplies.
+         User wanting 2% risk with 10x leverage gets 20% actual risk.
+Fix: For risk_based sizing, DO NOT multiply by leverage afterward.
+     Leverage affects margin calculation, not risk exposure.
+     Other sizing modes (full_capital, percent_capital) DO multiply.
+Tests: test_risk_based_ignores_leverage_multiplier
+Effort: 2 hours
+Risk: HIGH (changes leverage behavior - document clearly)
+
+SIZE-001 | HIGH | percent_capital and risk_based use cash, not equity
+File: state_machine.py:546-548
+Problem: After first trade, sizing shrinks because position value not counted
+Fix: Calculate equity = cash + position_mtm before sizing
+     Pass equity as total_capital, keep cash as available constraint
+Tests: test_percent_capital_uses_equity, test_risk_based_uses_equity
+Effort: 2 hours
+Risk: MEDIUM
+
+SIZE-005 | HIGH | full_capital uses ALL cash, commission has nowhere to come from
+File: state_machine.py:297-299
+Problem: Uses all cash, then commission must come from... where?
+Fix: Reserve commission budget before sizing
+     amount_to_invest = cash - estimated_commission
+     For pct commission: shares = (cash - fixed) / (price * (1 + pct/100))
+Tests: test_full_capital_reserves_commission
+Effort: 2 hours
+Risk: LOW
+
+SIZE-006 | HIGH | Leverage commission formula wrong in recalculation
+File: state_machine.py:590-591
+Problem: price * (1.0 + leverage * commission_pct / 100.0) - WRONG
+         Commission is on notional, not multiplied by leverage
+Fix: Correct formula: price * (1/leverage + commission_pct/100)
+Tests: test_leverage_commission_not_multiplied
+Effort: 1.5 hours
+Risk: MEDIUM
+
+--------------------------------------------------------------------------------
+P1.3 DYNAMIC STOPS (4 hours)
+--------------------------------------------------------------------------------
+
+DYN-002 | CRITICAL | Dynamic stop is NOT a trailing stop
+File: state_machine.py:700-748
+Problem: Reads current bar's column value. If indicator drops, stop moves
+         DOWN for LONG (opposite of trailing). Exit reason says "trailing_stop"
+         but it's not trailing.
+Fix: Implement actual trailing logic:
+     - Add trailing_stop_high_water field to PositionState
+     - At entry, initialize with entry price
+     - Each bar, update high water mark if price moves favorably
+     - Stop price = high_water - (column value or static %)
+Tests: test_dynamic_stop_trails_up_for_long, test_dynamic_stop_trails_down_for_short
+Effort: 3 hours
+Risk: HIGH (significant behavior change - consider feature flag)
+
+DYN-003 | HIGH | No validation for negative/zero dynamic TP values
+File: state_machine.py:1114-1118
+Problem: TP=-5% calculates price below entry = instant trigger
+Fix: Validate val > 0 before assigning
+     Log warning for invalid values
+Tests: test_dynamic_tp_rejects_negative, test_dynamic_tp_rejects_zero
+Effort: 1 hour
+Risk: LOW
+
+--------------------------------------------------------------------------------
+P1 INTEGRATION TESTING (3 hours)
+--------------------------------------------------------------------------------
+
+Test Scenarios:
+1. Data Layer: Fetch same symbol from both providers, verify timestamp alignment
+2. Position Sizing: Full backtest with risk_based + leverage = verify risk %
+3. Dynamic Stops: Backtest with ATR trailing stop = verify stop only trails up
+
+Rollback Strategy: Each fix is separate commit, can revert individually
+
+================================================================================
+PHASE 2: EXIT RULES & ATTRIBUTION
+================================================================================
+Timeline: Week 2-3
+Effort: 24-28 hours
+
+--------------------------------------------------------------------------------
+P2.1 EXIT RULES (7.5 hours)
+--------------------------------------------------------------------------------
+
+EXIT-003 | HIGH | NaN skip_col treated as skip (True)
+File: state_machine.py:893-895
+Problem: bool(float('nan')) is True in Python. Rule incorrectly suppressed
+         when skip indicator not computed yet (warmup period).
+Fix: Explicit pd.isna() check before bool() cast
+     if pd.notna(skip_val) and bool(skip_val): continue
+Tests: test_exit_rule_skip_col_nan_does_not_skip
+Effort: 1.5 hours
+Risk: LOW
+
+EXIT-007 | MEDIUM | Missing GTE/LTE operators
+File: exit_rules.py:5, state_machine.py:899-902
+Problem: SUPPORTED_OPERATORS = {"LT", "GT"} only. Many use cases need >= or <=
+Fix: Add GTE, LTE to SUPPORTED_OPERATORS
+     Update _check_exit_rules() and _capture_exit_rule_states()
+Tests: test_exit_rule_lte_operator, test_exit_rule_gte_operator
+Effort: 2 hours
+Risk: LOW (additive)
+
+EXIT-001 | MEDIUM | activation_operator uses strict inequality
+File: state_machine.py:870-874
+Problem: val < threshold excludes equality. "RSI >= 30" fails when RSI == 30
+Fix: Use GTE/LTE operators (depends on EXIT-007)
+Tests: test_exit_rule_activation_at_exact_threshold
+Effort: 1 hour (after EXIT-007)
+Risk: LOW
+
+EXIT-005 | MEDIUM | monitor_col not validated at entry
+File: state_machine.py:856-876
+Problem: Rule marked active=True even if monitor_col missing. Silent failure.
+Fix: Validate monitor_col exists before marking active
+     Log warning for missing columns
+Tests: test_exit_rule_missing_monitor_col_inactive
+Effort: 1.5 hours
+Risk: LOW
+
+EXIT-002 | LOW | First triggered rule wins - undocumented
+File: state_machine.py:915 (break statement)
+Fix: Documentation only - update docstrings
+Effort: 0.5 hours
+
+EXIT-004 | LOW | activation_operator naming misleading
+Fix: Documentation only - update ExitRule docstring
+Effort: 0.5 hours
+
+EXIT-006 | MEDIUM | min_loss_pct uses close_price, exit at next open
+Fix: Document as intended behavior (consistent with signal-based exits)
+Effort: 0.5 hours
+
+--------------------------------------------------------------------------------
+P2.2 ATTRIBUTION SYSTEM (12-16 hours)
+--------------------------------------------------------------------------------
+
+ATTR-001 | CRITICAL | Market return uses signal bars, not fill bars
+File: state_machine.py:186-206, 238-241
+Problem: entry_bar_idx and exit_bar_idx are SIGNAL bars, but fills happen
+         at NEXT bar's open. Alpha calculation compares mismatched periods.
+Fix: Track fill bar indices separately:
+     - Add entry_fill_bar_idx, exit_fill_bar_idx to PositionState
+     - Set in _fill_entry() and _execute_exit()
+     - Pass to _calculate_trade_attribution()
+Tests: test_attribution_fill_bar_vs_signal_bar
+Effort: 3 hours
+Risk: MEDIUM (touches core trade flow)
+
+ATTR-002 | HIGH | Market return uses close prices, fills use open prices
+File: attribution/strength_calculator.py:163-203
+Problem: calculate_market_return uses close-to-close, fills use open prices
+Fix: Use open prices at fill bars to match actual execution
+Tests: test_market_return_uses_open_prices
+Effort: 1.5 hours (after ATTR-001)
+Risk: LOW
+
+ATTR-003 | MEDIUM | SL/TP exits have conceptually flawed market return
+Problem: Exit price is SL/TP level, not bar open. Market return should reflect this.
+Fix: Modify calculate_market_return to accept actual exit price
+Tests: test_market_return_stop_loss_uses_actual_exit
+Effort: 2 hours (after ATTR-001, ATTR-002)
+Risk: MEDIUM
+
+ATTR-004 | MEDIUM | Liquidation trades have no attribution data
+File: state_machine.py:680-697
+Problem: Liquidation creates TradeRecord directly, bypassing attribution
+Fix: Use _create_trade_record_with_attribution() for liquidation
+Tests: test_liquidation_has_attribution_data
+Effort: 1.5 hours (after ATTR-001)
+Risk: LOW
+
+ATTR-007 | LOW | No signal_strength for exit signals
+Fix: Add exit_signal_strength field to TradeRecord
+Effort: 1 hour
+
+ATTR-008 | LOW | Dynamic TP not distinguished in exit_reason
+Fix: Use "dynamic_take_profit" for dynamic TP exits
+Effort: 1 hour
+
+ATTR-005 | LOW | Force close trades have no exit attribution
+Fix: Document as intended (force close is not signal-based)
+Effort: 0.5 hours
+
+ATTR-006 | LOW | Attribution captured at signal bar, not fill bar
+Fix: Document as intended (captures WHY signal triggered)
+Effort: 0.5 hours
+
+================================================================================
+PHASE 3: COUNTER-TRADE & DCA
+================================================================================
+Timeline: Week 3-4
+Effort: 10 hours
+
+Decision: FIX Counter-Trade (Not Remove)
+
+Rationale:
+- Use case is valid (mean-reversion, stop-and-reverse strategies)
+- Feature is ~70% working, bugs are in edge cases
+- Removal would delete ~450 lines of code + break existing strategies
+- Fix effort (8h) < removal effort + re-implementation later
+
+--------------------------------------------------------------------------------
+P3.1 COUNTER-TRADE FIXES (8 hours)
+--------------------------------------------------------------------------------
+
+CT-NEW-009 | CRITICAL | SHORT counter-trade with leverage uses wrong proceeds
+File: state_machine.py:422-450
+Status: May be phantom bug - code looks correct
+Action: Write detailed test to verify. If passes, close as "cannot reproduce"
+Effort: 2 hours (investigation + testing)
+
+CT-NEW-005 | HIGH | Counter-trade ignores leverage configuration
+File: state_machine.py:1336-1350
+Problem: Counter-trades inherit global leverage (may compound losses)
+Fix: Add counter_leverage param (default 1.0)
+     Store in counter_trade_pending dict, use at fill time
+Tests: test_counter_trade_with_counter_leverage_param
+Effort: 2 hours
+
+CT-NEW-006 | MEDIUM | Counter-trade TP uses PnL% which includes costs
+File: state_machine.py:1240-1241, 1274-1275
+Problem: pnl_pct includes commission/slippage, making TP harder to hit
+Fix: Use raw price-based loss %:
+     price_change_pct = abs((exit_price - entry_price) / entry_price * 100)
+Tests: test_counter_trade_tp_uses_price_pct_not_pnl_pct
+Effort: 1 hour
+
+CT-NEW-007 | MEDIUM | Counter-trade race condition with opposite pending entry
+Status: May not be a bug - counter-trade check happens before regular signals
+Action: Write test to verify race doesn't occur
+Effort: 1 hour (testing only)
+
+CT-NEW-008 | LOW | Counter-trade exit_rule_states captured at wrong bar
+Problem: entry_bar_idx is ARM bar, not FILL bar
+Fix: Update entry_bar_idx to current bar after fill succeeds
+     Affects ALL trades, not just counter-trades (broader fix)
+Effort: 1.5 hours
+Risk: MEDIUM
+
+CT-NEW-010 | MEDIUM | Counter-trade with risk_based sizing uses wrong stop
+Fix: Documentation only - document that risk_based uses global SL
+Effort: 0.5 hours
+
+--------------------------------------------------------------------------------
+P3.2 DCA FIXES (2 hours)
+--------------------------------------------------------------------------------
+
+DCA-001 | HIGH | Contributions don't allow DCA into existing positions
+Decision: RENAME to "periodic_cash_injection" (honest naming)
+
+Rationale:
+- True DCA requires tracking avg entry, partial exits, rebalancing SL/TP
+- Estimated 1-2 weeks to implement correctly
+- Current feature IS useful for simulating regular contributions
+- Can implement true DCA later as separate feature
+
+Fix: Rename periodic_contribution → periodic_cash_injection
+     Update schema descriptions
+     Add deprecation warning for old name
+Effort: 1.5 hours
+
+DCA-002 | LOW | interval_days not validated >= 1
+Status: Existing validation at lines 1058-1059 appears correct
+Action: Verify with test, close if working
+Effort: 0.5 hours
+
+================================================================================
+PHASE 4: POLISH & TESTING
+================================================================================
+Timeline: Week 4+
+Effort: 28 hours
+
+--------------------------------------------------------------------------------
+P4.1 REMAINING MEDIUM/LOW BUGS (10.5 hours)
+--------------------------------------------------------------------------------
+
+INDICATOR LAYER (1 hour):
+- IND-001 | MEDIUM | ROC missing period validation - add _validate_period()
+- IND-002 | LOW | Donchian missing period validation - add _validate_period()
+
+REPORT GENERATOR (4.5 hours):
+- RPT-001 | MEDIUM | Profit factor 0.0 for perfect strategies
+  Fix: Return 999999.0 (sentinel) when gross_loss=0 and gross_profit>0
+- RPT-002 | LOW | Calmar ratio not implemented
+  Formula: CAGR / |Max Drawdown|
+- RPT-003 | LOW | Recovery factor not implemented
+  Formula: Net Profit / |Max Drawdown (dollars)|
+- RPT-004 | LOW | Exposure time not implemented
+  Formula: (bars_in_position / total_bars) * 100
+
+DATA LAYER (5 hours):
+- DATA-002 | MEDIUM | Partial/incomplete bar included in data
+  Fix: Filter bars where timestamp > now - resolution
+- DATA-003 | MEDIUM | Gap detection threshold too lenient
+  Fix: Require 20% coverage for intraday (not just 1 bar)
+- DATA-004 | LOW | Cache invalidation race condition
+  Fix: Remove explicit delete (setex overwrites anyway)
+- DATA-006 | LOW | Provider failover doc mismatch
+  Fix: Update CLAUDE.md to remove failover mentions
+
+--------------------------------------------------------------------------------
+P4.2 REGRESSION TEST SUITE (14 hours)
+--------------------------------------------------------------------------------
+
+UNIT TESTS (6 hours):
+Create test functions for each fixed bug:
+- test_data_layer_providers.py (DATA-*)
+- test_state_machine.py (SIZE-*, DYN-*, EXIT-*, ATTR-*, CT-*)
+- test_indicator_layer.py (IND-*)
+- test_report_generator.py (RPT-*)
+
+INTEGRATION TESTS (4 hours):
+- test_leverage_integration.py - SIZE-003 + sizing modes + shorts
+- test_exit_rules_integration.py - EXIT-* + DYN-002
+- test_attribution_integration.py - ATTR-* + stop exits
+- test_data_pipeline_integration.py - DATA-* end-to-end
+
+SMOKE TESTS (2 hours):
+- smoke_leverage_sizing.py - Leverage + sizing modes produce expected results
+- smoke_trailing_stop.py - Dynamic stop actually trails
+- smoke_attribution_bars.py - Attribution uses correct bar indices
+- smoke_data_providers.py - Binance spot + yfinance return consistent data
+
+MANUAL VERIFICATION (2 hours):
+- Pick 3 representative strategies
+- Run backtest, export trade log
+- Manually verify first 5 trades match expected calculations
+- Document in docs/MANUAL_VERIFICATION.txt
+
+--------------------------------------------------------------------------------
+P4.3 DOCUMENTATION UPDATES (3.5 hours)
+--------------------------------------------------------------------------------
+
+CLAUDE.md (1 hour):
+- Position Management: Update sizing formulas, leverage notes
+- Dynamic Stop Loss: Change to accurate description
+- Exit Rules: Document GTE/LTE, NaN handling
+- Data Layer: Remove failover mention, add spot API note
+- Performance Metrics: Add Calmar, Recovery, Exposure
+
+docs/*.txt (1 hour):
+- POSITION_SIZING.txt: Update formulas
+- INDICATORS.txt: Add period validation notes
+- V1_LIMITATIONS.txt: Update with fixed bugs
+
+Code Comments (1 hour):
+- _calculate_position_size(): Document leverage-aware behavior
+- _check_dynamic_stop(): Document actual trailing logic
+- ExitRule class: Document all operators, NaN handling
+
+API Schema (0.5 hours):
+- BacktestResultSchema: Add calmar_ratio, recovery_factor, exposure_time_pct
+
+================================================================================
+TIMELINE SUMMARY
+================================================================================
+
+Week 1 (Days 1-5):
+  Day 1-2: DATA-007, DATA-001, DATA-005 (5.5h)
+  Day 2-3: SIZE-003, SIZE-006 (3.5h)
+  Day 3-4: SIZE-001, SIZE-005 (4h)
+  Day 4-5: DYN-002, DYN-003 (4h)
+  Day 5: P1 Integration Testing (3h)
+  Week 1 Total: 20 hours
+
+Week 2 (Days 6-10):
+  Day 6-7: EXIT-003, EXIT-007, EXIT-001 (4.5h)
+  Day 7-8: EXIT-005, EXIT docs (2.5h)
+  Day 8-9: ATTR-001, ATTR-002 (4.5h)
+  Day 9-10: ATTR-003, ATTR-004, ATTR docs (5h)
+  Week 2 Total: 16.5 hours
+
+Week 3 (Days 11-15):
+  Day 11-12: CT-NEW-009 investigation, CT-NEW-005 (4h)
+  Day 12-13: CT-NEW-006, CT-NEW-007, CT-NEW-008 (3.5h)
+  Day 13: DCA-001, DCA-002 (2h)
+  Day 14-15: ATTR-007, ATTR-008, remaining EXIT/ATTR (3h)
+  Week 3 Total: 12.5 hours
+
+Week 4 (Days 16-20):
+  Day 16-17: IND-*, RPT-* bugs (5.5h)
+  Day 17-18: DATA-002, DATA-003, DATA-004 (5h)
+  Day 18-19: Unit tests, integration tests (10h)
+  Day 19-20: Smoke tests, manual verification, docs (8h)
+  Week 4 Total: 28.5 hours
+
+================================================================================
+SUCCESS CRITERIA
+================================================================================
+
+1. All 5 CRITICAL bugs fixed and tested
+2. All 10 HIGH bugs fixed and tested
+3. All unit tests passing
+4. Integration tests passing
+5. Smoke tests passing
+6. Manual verification documented
+7. Sanity check: backtest results match hand calculations
+8. Walk-forward validation produces consistent results
+9. Can run strategy experiments without doubting results
+
+================================================================================
+ta4j REFERENCE POINTS
+================================================================================
+
+When fixing bugs, consult ta4j source for correct implementation:
+
+| Bug Area          | ta4j Reference                                      |
+|-------------------|-----------------------------------------------------|
+| Position sizing   | PositionSizer interface, Context record             |
+| Trailing stop     | TrailingStopLossRule class                          |
+| Execution timing  | TradeExecutionModel implementations                 |
+| Lot matching      | TradingRecord, TradeFill, ExecutionMatchPolicy      |
+| Cost models       | CostModel interface hierarchy                       |
+| Indicator caching | CachingIndicator, lazy evaluation pattern           |
+
+================================================================================
+MINIMUM VIABLE FIX (If Time Constrained)
+================================================================================
+
+If limited to 2 weeks, prioritize:
+
+Phase 1 CRITICAL only (12h):
+- DATA-007: Binance spot API
+- SIZE-003: Leverage risk_based sizing
+- DYN-002: Actual trailing stop
+
+Phase 2 CRITICAL only (3h):
+- ATTR-001: Fill bar indices for attribution
+
+Phase 3 Skip:
+- Counter-trade and DCA can wait
+
+Phase 4 Minimal (8h):
+- Unit tests for fixed bugs only
+- Skip new metrics
+- Minimal docs update
+
+Minimum Total: ~25 hours (~2 weeks part-time)
+
+================================================================================
+END OF PLAN
+================================================================================

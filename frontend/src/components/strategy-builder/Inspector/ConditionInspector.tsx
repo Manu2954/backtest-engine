@@ -47,6 +47,8 @@ export function ConditionInspector({ condition, target }: ConditionInspectorProp
         defaultValue = 'close'
       } else if (value === 'SCALAR') {
         defaultValue = '0'
+      } else if (value === 'EXPRESSION') {
+        defaultValue = ''
       }
 
       updateConditionById(condition.id, {
@@ -64,16 +66,29 @@ export function ConditionInspector({ condition, target }: ConditionInspectorProp
     value: string
   ) => {
     const options = getValueOptions(type)
-    const isInput = type === 'SCALAR' || type === 'LOOKBACK'
+    const isInput = type === 'SCALAR' || type === 'LOOKBACK' || type === 'EXPRESSION'
     const fieldName = `${side}_operand_value`
 
     if (isInput) {
+      const placeholder = type === 'LOOKBACK'
+        ? 'column:-offset'
+        : type === 'EXPRESSION'
+          ? 'e.g., (high - low) / close * 100'
+          : 'Value'
+
       return (
-        <Input
-          value={value}
-          placeholder={type === 'LOOKBACK' ? 'column:-offset' : 'Value'}
-          onChange={(e) => handleChange(fieldName, e.target.value)}
-        />
+        <div className="space-y-1">
+          <Input
+            value={value}
+            placeholder={placeholder}
+            onChange={(e) => handleChange(fieldName, e.target.value)}
+          />
+          {type === 'EXPRESSION' && (
+            <p className="text-xs text-muted-foreground">
+              Available: OHLCV columns (open, high, low, close, volume), indicator aliases, and lookback syntax (column:-1)
+            </p>
+          )}
+        </div>
       )
     }
 

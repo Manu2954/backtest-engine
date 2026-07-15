@@ -60,6 +60,7 @@ async def create_strategy(
     strategy = Strategy(
         name=payload.name,
         description=payload.description,
+        chart_type=payload.chart_type,
         entry_expression=payload.entry_expression,
         exit_expression=payload.exit_expression,
         short_entry_expression=payload.short_entry_expression,
@@ -73,14 +74,19 @@ async def create_strategy(
                 indicator_type=indicator.indicator_type,
                 params=indicator.params,
                 display_order=indicator.display_order or idx,
+                chart_type=indicator.chart_type,
             )
         )
 
     # Handle legacy single entry/exit groups (backward compatible)
-    if payload.entry and payload.exit:
+    # Allow mixed mode: named groups for entry, legacy for exit (and vice versa)
+    if payload.entry:
         entry_group = _build_group("ENTRY", payload.entry, group_name=None)
+        strategy.condition_groups.append(entry_group)
+
+    if payload.exit:
         exit_group = _build_group("EXIT", payload.exit, group_name=None)
-        strategy.condition_groups.extend([entry_group, exit_group])
+        strategy.condition_groups.append(exit_group)
 
     # Handle new expression-based groups
     if payload.entry_groups:
@@ -142,6 +148,7 @@ async def update_strategy(
 
     strategy.name = payload.name
     strategy.description = payload.description
+    strategy.chart_type = payload.chart_type
     strategy.entry_expression = payload.entry_expression
     strategy.exit_expression = payload.exit_expression
     strategy.short_entry_expression = payload.short_entry_expression
@@ -158,14 +165,19 @@ async def update_strategy(
                 indicator_type=indicator.indicator_type,
                 params=indicator.params,
                 display_order=indicator.display_order or idx,
+                chart_type=indicator.chart_type,
             )
         )
 
     # Handle legacy single entry/exit groups (backward compatible)
-    if payload.entry and payload.exit:
+    # Allow mixed mode: named groups for entry, legacy for exit (and vice versa)
+    if payload.entry:
         entry_group = _build_group("ENTRY", payload.entry, group_name=None)
+        strategy.condition_groups.append(entry_group)
+
+    if payload.exit:
         exit_group = _build_group("EXIT", payload.exit, group_name=None)
-        strategy.condition_groups.extend([entry_group, exit_group])
+        strategy.condition_groups.append(exit_group)
 
     # Handle new expression-based groups
     if payload.entry_groups:

@@ -11,6 +11,7 @@ class IndicatorCreate(BaseModel):
     alias: str
     params: dict[str, Any] = Field(default_factory=dict)
     display_order: int = 0
+    chart_type: str | None = None  # Per-indicator override (None = inherit from strategy)
 
 
 class ConditionCreate(BaseModel):
@@ -31,6 +32,7 @@ class ConditionGroupCreate(BaseModel):
 class StrategyCreate(BaseModel):
     name: str
     description: str | None = None
+    chart_type: str = "ohlcv"  # Strategy-level default: "ohlcv", "heikinashi", future: "renko", "kagi"
     indicators: list[IndicatorCreate] = Field(default_factory=list)
 
     # Legacy: single entry/exit groups (backward compatible)
@@ -64,6 +66,7 @@ class IndicatorOut(BaseModel):
     indicator_type: str
     params: dict[str, Any]
     display_order: int
+    chart_type: str | None = None
 
 
 class ConditionOut(BaseModel):
@@ -94,6 +97,7 @@ class StrategyOut(BaseModel):
     id: UUID
     name: str
     description: str | None
+    chart_type: str = "ohlcv"
     entry_expression: str | None
     exit_expression: str | None
     short_entry_expression: str | None = None

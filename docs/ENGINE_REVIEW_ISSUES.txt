@@ -1,0 +1,806 @@
+================================================================================
+BACKTEST ENGINE - REAL-WORLD EXECUTION REVIEW
+================================================================================
+Review Date: 2026-07-06
+Reviewer: Senior Developer/Architect Review (Multi-Agent Analysis)
+Status: PENDING DISCUSSION
+
+This document catalogs issues identified during a comprehensive review of the
+core engine logic against real-world trading execution requirements.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+1. CRITICAL ISSUES (Must Fix Before Production)
+2. HIGH SEVERITY ISSUES (Should Fix)
+3. MEDIUM SEVERITY ISSUES (Nice to Fix)
+4. LOW SEVERITY ISSUES (Documentation/Polish)
+5. ISSUE DETAILS BY COMPONENT
+6. RECOMMENDED FIX PHASES
+
+================================================================================
+SECTION 1: CRITICAL ISSUES (8 Total)
+================================================================================
+
+ID: CRIT-001
+Component: State Machine
+File: backend/app/engine/state_machine.py
+Lines: 335-358
+Title: Slippage Model Fundamentally Unrealistic
+Description:
+    Fixed percentage slippage ignores order size vs available liquidity.
+    Real slippage depends on: order size / daily volume, market volatility,
+    time of day, and asset liquidity class.
+Impact:
+    - Small orders: Slippage overestimated
+    - Large orders: Slippage underestimated by 20-60x
+    - Example: $1M order into illiquid market shows 0.05% slippage,
+      reality is 2-3% (market impact)
+Real-World Failure:
+    Strategy shows profitable in backtest, loses money live due to
+    execution costs eating all alpha on position entry/exit.
+Suggested Fix:
+    Implement volatility-adjusted slippage: slippage ∝ ATR × (position_size / avg_volume)
+    Or at minimum: Add volume validation and warn when position > 20% daily volume
+
+--------------------------------------------------------------------------------
+
+ID: CRIT-002
+Component: State Machine
+File: backend/app/engine/state_machine.py
+Lines: 625-629, 661-698
+Title: Liquidation Logic Incomplete for Leveraged Positions
+Description:
+    - Liquidation price set once at entry, never recalculated
+    - No funding rate charges (perpetual futures charge every 8h)
+    - No partial liquidations (real exchanges liquidate in tranches)
+    - No maintenance margin vs initial margin distinction
+Impact:
+    - Positions liquidate at different prices than backtest predicts
+    - Funding rates can drain 0.9%+ over 3 days, shifting liquidation threshold
+    - Backtest shows profitable leveraged trade; reality: liquidated due to funding
+Real-World Failure:
+    10x BTC futures position survives in backtest but liquidates live because
+    funding rate charges reduced effective margin by $900 on $10K position.
+Suggested Fix:
+    - Add funding_rate_pct parameter for perpetuals
+    - Recalculate liquidation price each bar based on cumulative funding
+    - Model partial liquidations (reduce 25% at a time)
+
+--------------------------------------------------------------------------------
+
+ID: CRIT-003
+Component: State Machine
+File: backend/app/engine/state_machine.py
+Lines: 284-332
+Title: No Volume Validation for Position Sizing
+Description:
+    Position size calculated without checking if that volume exists in market.
+    No minimum order size validation (exchanges have minimums).
+    No maximum position limits per exchange.
+Impact:
+    - Backtest assumes fill for 100K shares when daily volume is 50K
+    - Strategy tries to buy 0.00000001 BTC; Binance rejects (min $10 notional)
+    - Position exceeds exchange limits; order rejected live
+Real-World Failure:
+    Strategy enters 100,000 shares of $2 penny stock with $50K daily volume.
+    Backtest shows instant fill; reality is partial fill + 5% price impact.
+Suggested Fix:
+    - Add avg_daily_volume column or parameter
+    - Validate position_size <= 0.2 × avg_daily_volume
+    - Add min_order_size and max_position_size parameters
+
+--------------------------------------------------------------------------------
+
+ID: CRIT-004
+Component: Condition Engine
+File: backend/app/engine/condition_engine.py
+Lines: 23-69, 133
+Title: LOOKBACK Operand Allows Positive Offsets (Lookahead Bias)
+Status: ✅ FIXED (2026-07-08)
+Description:
+    The LOOKBACK operand type supported positive offsets like "close:+5" which
+    shifts data forward, accessing FUTURE prices. This creates lookahead bias
+    that invalidates backtest results.
+Fix Applied:
+    - Added validation in _parse_lookback() to reject offset > 0
+    - Updated docstrings to remove misleading positive offset examples
+    - Updated demo_lookback.py to clarify only negative offsets allowed
+    - Added unit test test_lookback_positive_offset_rejected()
+Impact:
+    - Strategy using "close:+5" compares today's price to price 5 bars in future
+    - Backtest shows 100% win rate; impossible to replicate live
+    - Subtle: User may not realize "+5" means future data
+Real-World Failure:
+    Strategy condition "close > close:+5" (price will drop) is literally
+    using a crystal ball. Backtest perfect, live performance random.
+Suggested Fix:
+    Add validation in _parse_lookback():
+    if offset > 0:
+        raise ValueError("LOOKBACK offset must be <= 0 (past data only)")
+
+--------------------------------------------------------------------------------
+
+ID: CRIT-005
+Component: Indicator Layer
+File: backend/app/engine/indicator_layer.py
+Lines: 250-252
+Title: MACD Column Extraction Order Wrong (Signal ↔ Histogram Swapped)
+Description:
+    pandas_ta returns columns in order: [MACD, Histogram, Signal]
+    Code assumes: [MACD, Signal, Histogram]
+    Result: signal line contains histogram values and vice versa.
+Impact:
+    - ALL MACD-based strategies produce wrong signals
+    - MACD crossover strategies (most common) completely broken
+    - Histogram-based strategies also broken
+Real-World Failure:
+    Strategy "buy when MACD crosses above signal" actually triggers on
+    "MACD crosses above histogram" - completely different timing.
+Suggested Fix:
+    Use explicit column names instead of positional indexing:
+    df_out[f"{alias}_macd"] = macd_df["MACD_12_26_9"]
+    df_out[f"{alias}_hist"] = macd_df["MACDh_12_26_9"]
+    df_out[f"{alias}_signal"] = macd_df["MACDs_12_26_9"]
+
+--------------------------------------------------------------------------------
+
+ID: CRIT-006
+Component: Data Layer
+File: backend/app/engine/data_layer.py
+Lines: 621-646
+Title: No Provider Failover, Partial Data Returned Silently
+Description:
+    - If yfinance returns partial data (80% of range), no error raised
+    - No automatic retry or failover to alternative provider
+    - Empty check exists but partial data check missing
+Impact:
+    - Backtest runs on 6 months of data when 12 months requested
+    - Performance metrics skewed (small sample, missing seasons)
+    - User has no indication data is incomplete
+Real-World Failure:
+    Request 2024 full year, yfinance connection drops after June.
+    Backtest runs on Jan-Jun only, reports "annual" return of 18%
+    when full year would show 8% (second half was down market).
+Suggested Fix:
+    - Validate returned data covers >= 95% of requested range
+    - Add provider failover (yfinance → alternative)
+    - Log warning when data is partial
+
+--------------------------------------------------------------------------------
+
+ID: CRIT-007
+Component: Report Generator
+File: backend/app/engine/report_generator.py
+Lines: 266-272
+Title: Sharpe Ratio Uses Wrong Denominator
+Description:
+    Code uses daily_returns.std() instead of excess_returns.std()
+    The Sharpe ratio should divide excess return mean by excess return std.
+Impact:
+    - Systematic underestimation of Sharpe when risk_free_rate > 0
+    - Strategy ranking affected when comparing across different risk-free assumptions
+    - Off by ~0.83% absolute in final Sharpe for typical strategies
+Real-World Failure:
+    Strategy A (Sharpe 1.5) vs Strategy B (Sharpe 1.4) - choose A.
+    With correct calculation: A=1.4, B=1.5 - should have chosen B.
+Suggested Fix:
+    Line 270 change:
+    sharpe = (excess_returns.mean() / excess_returns.std()) * (252 ** 0.5)
+
+--------------------------------------------------------------------------------
+
+ID: CRIT-008
+Component: Report Generator
+File: backend/app/engine/report_generator.py
+Lines: 294-296
+Title: Profit Factor Returns 0.0 for Perfect Strategies
+Description:
+    When gross_loss = 0 (no losing trades), profit_factor returns 0.0
+    Should return 999999.0 (or infinity) to indicate perfect strategy.
+Impact:
+    - Perfect strategy (all wins) shows PF = 0.0
+    - Indistinguishable from strategy with no trades
+    - User sees "bad" metric for their best strategy
+Real-World Failure:
+    Strategy A: 10 wins, 5 losses → PF = 2.0
+    Strategy B: 10 wins, 0 losses → PF = 0.0 (WRONG)
+    User chooses A over B based on this broken metric.
+Suggested Fix:
+    if gross_loss > 0:
+        profit_factor = gross_profit / gross_loss
+    elif gross_profit > 0:
+        profit_factor = 999999.0
+    else:
+        profit_factor = 0.0
+
+================================================================================
+SECTION 2: HIGH SEVERITY ISSUES (9 Total)
+================================================================================
+
+ID: HIGH-001
+Component: State Machine
+File: backend/app/engine/state_machine.py
+Lines: 1092-1113
+Title: Fill at Next Bar Open Ignores Gaps, Halts, Illiquidity
+Description:
+    All orders fill at next bar's opening price regardless of market conditions.
+    Does not account for overnight gaps, trading halts, or illiquid opens.
+Impact:
+    - Gap risk understated by 5-15% on volatile days
+    - Strategy assumes fill at -2% gap; reality is -15% after halt
+    - High-beta stocks/crypto especially affected
+Suggested Fix:
+    - Add gap_risk_multiplier parameter
+    - Track historical gap statistics per asset
+    - Warn when backtesting volatile assets with overnight holds
+
+--------------------------------------------------------------------------------
+
+ID: HIGH-002
+Component: State Machine
+File: backend/app/engine/state_machine.py
+Lines: 361-370
+Title: No Maker/Taker Fee Distinction
+Description:
+    Single commission_pct applies to all trades. Real exchanges charge
+    different rates for limit orders (maker, often -0.01% rebate) vs
+    market orders (taker, +0.05%).
+Impact:
+    - Fees off by 0.06% per trade
+    - Over 200 trades: 12% cumulative fee error
+    - High-frequency strategies most affected
+Suggested Fix:
+    Add maker_fee_pct and taker_fee_pct parameters
+    Apply maker to limit entries, taker to market exits
+
+--------------------------------------------------------------------------------
+
+ID: HIGH-003
+Component: Condition Engine
+File: backend/app/engine/condition_engine.py
+Line: 293
+Title: Division by Zero Produces Infinity Instead of Error
+Description:
+    Expression evaluation allows division by zero, producing inf.
+    inf > threshold evaluates to True, causing false signals.
+Impact:
+    - Silent corruption in condition evaluation
+    - Unexpected signal triggers on division-by-zero bars
+    - Hard to debug (inf comparisons behave strangely)
+Suggested Fix:
+    Add zero check before division:
+    if isinstance(right_val, (int, float)) and right_val == 0:
+        raise ValueError("Division by zero in expression")
+
+--------------------------------------------------------------------------------
+
+ID: HIGH-004
+Component: Condition Engine
+File: backend/app/engine/condition_engine.py
+Lines: 325-337
+Title: NaN Mid-Data Suppresses IS_RISING/IS_FALLING Signals
+Description:
+    When previous bar has NaN (not just warmup), IS_RISING comparison
+    produces NaN which gets converted to False via fillna().
+Impact:
+    - Valid signals missed after data gaps
+    - Example: RSI goes NaN for one bar due to data issue
+    - Next bar's IS_RISING check fails even though RSI recovered
+Suggested Fix:
+    Document behavior or add parameter for NaN handling strategy
+    Consider forward-filling NaN gaps before comparison
+
+--------------------------------------------------------------------------------
+
+ID: HIGH-005
+Component: Data Layer
+File: backend/app/engine/data_layer.py
+Lines: 244-246, yfinance_provider.py:110-112, binance_provider.py:116-206
+Title: Timezone Handling Inconsistent Across Providers
+Description:
+    - YFinance: Returns market timezone, then strips it
+    - Binance: Returns UTC, converts to local, then strips it
+    - Result: Both stored as naive datetime but represent different timezones
+Impact:
+    - Mixed asset backtests (NYSE + Binance) have 5.5-hour timestamp mismatch
+    - Orders at "15:00" execute on different actual times per asset
+    - Correlation analysis between assets is meaningless
+Suggested Fix:
+    - Standardize all timestamps to UTC before storage
+    - Add timezone metadata to stored data
+    - Document bar timestamp semantics (start vs end of bar)
+
+--------------------------------------------------------------------------------
+
+ID: HIGH-006
+Component: Data Layer
+File: backend/app/engine/data_layer.py
+Lines: 470-662
+Title: Cache Race Condition - No Locking on Concurrent Requests
+Description:
+    Two simultaneous fetch_ohlcv_async calls for same ticker can both
+    miss cache and both hit provider API, then both write to database
+    with potentially different data (timing differences).
+Impact:
+    - Data inconsistency between concurrent backtest runs
+    - Non-reproducible results
+    - Possible duplicate rows or conflicting prices
+Suggested Fix:
+    - Add asyncio.Lock per (ticker, resolution) key
+    - Use database advisory locks for cross-process safety
+    - Implement "fetch once, serve many" pattern
+
+--------------------------------------------------------------------------------
+
+ID: HIGH-007
+Component: Data Layer
+File: backend/app/engine/data_layer.py
+Lines: 581-591
+Title: Gap Detection 60% Threshold Too Loose
+Description:
+    Daily data only requires 60% of expected bars to pass validation.
+    This allows large trading gaps (market closures, data issues) to
+    pass as "complete" data.
+Impact:
+    - 100-day request with only 60 bars passes validation
+    - Missing 40% of data silently accepted
+    - Strategy may have position across invisible gap
+Suggested Fix:
+    - Increase threshold to 80-90% for daily data
+    - Add explicit gap detection (max consecutive missing days)
+    - Warn when gaps > 3 days detected
+
+--------------------------------------------------------------------------------
+
+ID: HIGH-008
+Component: Exit Rules
+File: backend/app/engine/state_machine.py
+Lines: 856-876
+Title: NaN at Entry Silently Deactivates Exit Rules
+Description:
+    When ref_col has NaN at trade entry, exit rule state is set to
+    {"ref_value": None, "active": False} with no warning.
+    Rule never fires for entire trade lifetime.
+Impact:
+    - User expects exit rule to protect position
+    - Rule silently disabled due to indicator warmup or data gap
+    - Position held without expected risk management
+Suggested Fix:
+    - Log warning when rule deactivated due to NaN
+    - Store deactivation_reason in exit_rule_states
+    - Make visible in trade record for debugging
+
+--------------------------------------------------------------------------------
+
+ID: HIGH-009
+Component: Exit Rules
+File: backend/app/engine/state_machine.py
+Lines: 1159-1327
+Title: Exit Rule Priority Undocumented (SL > TP > Signal > Rules)
+Description:
+    Exit checks run in order: Liquidation → Dynamic Stop → SL/TP → Signal → Rules
+    If SL triggers, exit rules never evaluated. Users expect rules to fire
+    but static SL wins due to undocumented priority.
+Impact:
+    - Exit rule at 97 never fires because SL at 95 triggers first
+    - User sees "stop_loss" exit reason, confused why rule didn't work
+    - May design redundant rules not understanding priority
+Suggested Fix:
+    - Document priority hierarchy in run_backtest() docstring
+    - Add priority field to ExitRule for user override
+    - Log when multiple exit conditions could fire
+
+================================================================================
+SECTION 3: MEDIUM SEVERITY ISSUES (10 Total)
+================================================================================
+
+ID: MED-001
+Component: State Machine
+File: backend/app/engine/state_machine.py
+Lines: 361-370
+Title: Commission Model Lacks Tiered Structure
+Description:
+    Flat commission_pct doesn't reflect exchange volume-based tiers.
+    High-volume traders get 0.02% vs default 0.05%.
+Impact:
+    Over 1-year backtest with $5M volume, fee calculation off by $100-400K
+
+--------------------------------------------------------------------------------
+
+ID: MED-002
+Component: State Machine
+File: backend/app/engine/state_machine.py
+Lines: 494-501
+Title: Negative Cash Clamped to Zero - Masks Problems
+Description:
+    When exit proceeds would make cash negative, it's clamped to 0.0.
+    This hides the real problem: commission exceeded position value.
+Impact:
+    Silently undercharges commission; live trading would overdraw account
+
+--------------------------------------------------------------------------------
+
+ID: MED-003
+Component: State Machine
+File: backend/app/engine/state_machine.py
+Lines: 750-820
+Title: Intrabar Stop Fill Assumes Exact Price
+Description:
+    If bar high is 105 and TP is 104, backtest fills at exactly 104.
+    Reality: Fill somewhere between 104-105 during price movement.
+Impact:
+    TP fills 0.5-1% more favorable in backtest than reality
+
+--------------------------------------------------------------------------------
+
+ID: MED-004
+Component: Indicator Layer
+File: backend/app/engine/indicator_layer.py
+Lines: 384-406
+Title: Double Heikin-Ashi Possible (Chart Type + Indicator)
+Description:
+    If strategy uses chart_type="heikinashi" AND adds HA indicator,
+    the HA transformation applies twice: HA(HA(raw)).
+Impact:
+    Incorrect indicator values; smoother than intended
+
+--------------------------------------------------------------------------------
+
+ID: MED-005
+Component: Indicator Layer
+File: backend/app/engine/indicator_layer.py
+Lines: 358-368
+Title: OBV and ROC Missing Input Validation
+Description:
+    OBV doesn't validate zero/NaN volume. ROC missing period validation.
+Impact:
+    Cryptic pandas_ta errors instead of clear validation messages
+
+--------------------------------------------------------------------------------
+
+ID: MED-006
+Component: Data Layer
+File: backend/app/engine/data_layer.py, yfinance_provider.py
+Title: Pre/Post-Market Data Mixed Without Filtering
+Description:
+    yfinance can return pre/post-market data. Code doesn't filter by
+    regular trading hours. Volume includes thin pre-market trading.
+Impact:
+    Volume-based signals triggered by low-liquidity pre-market activity
+
+--------------------------------------------------------------------------------
+
+ID: MED-007
+Component: Data Layer
+File: backend/app/engine/data_layer.py
+Lines: 595-603
+Title: Stale Cache During Split/Dividend Windows
+Description:
+    Cache staleness check (7 days) may retain pre-split prices.
+    yfinance auto-adjusts but cached data doesn't refresh.
+Impact:
+    P&L calculations 1-10% off around corporate actions
+
+--------------------------------------------------------------------------------
+
+ID: MED-008
+Component: Data Layer
+File: backend/app/providers/binance_provider.py
+Lines: 136-175
+Title: Binance Rate Limit Can Return Partial Data
+Description:
+    Empty response interpreted as end-of-data, but could be rate limit.
+    Function returns partial dataset without warning.
+Impact:
+    Missing 4+ days of data silently; backtest runs incomplete
+
+--------------------------------------------------------------------------------
+
+ID: MED-009
+Component: Exit Rules
+File: backend/app/engine/exit_rules.py
+Line: 5
+Title: Exit Rules Only Support LT/GT Operators
+Description:
+    SUPPORTED_OPERATORS = {"LT", "GT"} only.
+    No crossover operators (CROSSES_ABOVE, CROSSES_BELOW).
+Impact:
+    Can't express "exit when RSI crosses above 70" as exit rule
+
+--------------------------------------------------------------------------------
+
+ID: MED-010
+Component: Report Generator
+File: backend/app/engine/report_generator.py
+Lines: 181-184
+Title: Alpha Uses Simple Difference, Not Regression
+Description:
+    Alpha = strategy_return - benchmark_return (arithmetic difference).
+    True alpha requires regression: strategy = α + β×benchmark + ε
+Impact:
+    "Alpha" metric is marketing number, not academically meaningful
+
+================================================================================
+SECTION 4: LOW SEVERITY ISSUES (5 Total)
+================================================================================
+
+ID: LOW-001
+Component: Report Generator
+Title: Alpha Time Period Misaligned (Strategy vs Benchmark)
+Description:
+    Benchmark uses full data period; strategy starts after warmup trim.
+    Alpha comparison is apples-to-oranges.
+
+--------------------------------------------------------------------------------
+
+ID: LOW-002
+Component: Report Generator
+Title: Sortino Ratio Returns None, Not Sanitized
+Description:
+    When no negative returns, Sortino returns None.
+    JSON sanitization doesn't catch None (only float NaN/inf).
+
+--------------------------------------------------------------------------------
+
+ID: LOW-003
+Component: Report Generator
+Title: No Survivorship Bias Protection
+Description:
+    Can backtest delisted/bankrupt tickers as if they still trade.
+    No validation that ticker existed during requested period.
+
+--------------------------------------------------------------------------------
+
+ID: LOW-004
+Component: Condition Engine
+Title: All-NaN Column Silently Evaluates to False
+Description:
+    If indicator column is entirely NaN, all conditions evaluate False.
+    No warning that indicator never produced valid values.
+
+--------------------------------------------------------------------------------
+
+ID: LOW-005
+Component: Exit Rules
+Title: Activation Threshold One-Time Check
+Description:
+    Activation threshold checked only at entry.
+    If condition not met at entry, rule never activates (even if met later).
+
+================================================================================
+SECTION 5: ISSUE DETAILS BY COMPONENT
+================================================================================
+
+STATE MACHINE (state_machine.py)
+--------------------------------
+Critical: CRIT-001, CRIT-002, CRIT-003
+High:     HIGH-001, HIGH-002
+Medium:   MED-001, MED-002, MED-003
+
+Total: 8 issues
+Risk Level: HIGH - Core execution logic affects all backtests
+
+CONDITION ENGINE (condition_engine.py)
+--------------------------------------
+Critical: CRIT-004
+High:     HIGH-003, HIGH-004
+Low:      LOW-004
+
+Total: 4 issues
+Risk Level: HIGH - Lookahead bias invalidates all results using LOOKBACK
+
+INDICATOR LAYER (indicator_layer.py)
+------------------------------------
+Critical: CRIT-005
+Medium:   MED-004, MED-005
+
+Total: 3 issues
+Risk Level: CRITICAL - MACD broken affects majority of strategies
+
+DATA LAYER (data_layer.py, providers/)
+--------------------------------------
+Critical: CRIT-006
+High:     HIGH-005, HIGH-006, HIGH-007
+Medium:   MED-006, MED-007, MED-008
+
+Total: 7 issues
+Risk Level: HIGH - Data integrity affects all downstream calculations
+
+EXIT RULES (exit_rules.py, state_machine.py integration)
+--------------------------------------------------------
+High:     HIGH-008, HIGH-009
+Medium:   MED-009
+Low:      LOW-005
+
+Total: 4 issues
+Risk Level: MEDIUM - Affects risk management reliability
+
+REPORT GENERATOR (report_generator.py)
+--------------------------------------
+Critical: CRIT-007, CRIT-008
+Medium:   MED-010
+Low:      LOW-001, LOW-002, LOW-003
+
+Total: 6 issues
+Risk Level: MEDIUM - Metrics used for strategy comparison/selection
+
+================================================================================
+SECTION 6: RECOMMENDED FIX PHASES
+================================================================================
+
+PHASE 1: IMMEDIATE (Before Any Production Use)
+----------------------------------------------
+1. CRIT-004 - Block positive LOOKBACK offsets (1 line validation)
+2. CRIT-005 - Fix MACD column extraction (3 line change)
+3. CRIT-007 - Fix Sharpe ratio denominator (1 line change)
+4. CRIT-008 - Fix profit factor for perfect strategies (4 lines)
+5. HIGH-008 - Add exit rule NaN deactivation logging (5 lines)
+
+Estimated Effort: 2-4 hours
+Impact: Fixes data corruption and metric calculation errors
+
+PHASE 2: SOON (Before Serious Strategy Development)
+---------------------------------------------------
+6. CRIT-003 - Add volume-based position size validation
+7. CRIT-006 - Add partial data detection and warning
+8. HIGH-003 - Add division-by-zero checks in expressions
+9. HIGH-006 - Implement database write locking for cache
+10. HIGH-009 - Document exit rule priority hierarchy
+
+Estimated Effort: 1-2 days
+Impact: Prevents silent failures and improves reliability
+
+PHASE 3: BEFORE LIVE TRADING
+----------------------------
+11. CRIT-001 - Implement volatility-adjusted slippage model
+12. CRIT-002 - Add funding rate simulation for perpetuals
+13. HIGH-001 - Model gap risk for overnight holds
+14. HIGH-002 - Add maker/taker fee distinction
+15. HIGH-005 - Standardize timezone handling to UTC
+16. HIGH-007 - Tighten gap detection threshold
+
+Estimated Effort: 1-2 weeks
+Impact: Brings backtest realism closer to live execution
+
+PHASE 4: POLISH (Production Hardening)
+--------------------------------------
+17. MED-001 through MED-010 - Various improvements
+18. LOW-001 through LOW-005 - Documentation and edge cases
+19. Add comprehensive integration tests for fixed issues
+20. Performance optimization for large backtests
+
+Estimated Effort: 2-4 weeks
+Impact: Production-ready system with documented limitations
+
+================================================================================
+DISCUSSION NOTES
+================================================================================
+
+Questions for Discussion:
+1. Which critical issues should we address first?
+2. For CRIT-001 (slippage): Full market microstructure model vs simple volume check?
+3. For CRIT-002 (liquidation): Scope limited to Binance Futures or generic?
+4. For CRIT-005 (MACD): Should we add regression tests for all multi-column indicators?
+5. For HIGH-005 (timezone): Breaking change to store UTC? Migration needed?
+
+Trade-offs to Consider:
+- Complexity vs accuracy (slippage model)
+- Backward compatibility (data layer changes)
+- Performance impact (additional validations per bar)
+- User experience (more warnings vs clean output)
+
+================================================================================
+SECTION 7: COUNTER-TRADE BUGS (Added 2026-07-08)
+================================================================================
+
+NOTE: These bugs were NOT in the original review. Counter-trade logic was missed
+because the review scoped to "execution realism" (slippage, fills, liquidation)
+rather than "all optional features". Counter-trades are behind a flag
+(enable_counter_trades=False by default).
+
+--------------------------------------------------------------------------------
+
+ID: CT-001
+Component: State Machine (Counter-Trade)
+File: backend/app/engine/state_machine.py
+Lines: 1235-1246, 1269-1280
+Title: Stop-Loss Exits Do NOT Trigger Counter-Trades
+Status: ✅ CONFIRMED via test
+Description:
+    Counter-trades only trigger when exit_reason == "signal".
+    Stop-loss exits (which are often the worst losses) don't trigger counter-trades.
+Code:
+    if exit_reason == "signal" and pnl < 0:  # Line 1239
+        counter_trade_pending = {...}
+Impact:
+    User expects counter-trade on any losing exit. Stop-loss exits
+    (often -5% to -10%) don't get the reversal benefit.
+Design Question:
+    Is this intentional? TP exits not triggering makes sense (profitable).
+    But SL exits ARE losing trades - should they trigger counter-trades?
+Suggested Fix:
+    Change condition to: if exit_reason in ("signal", "stop_loss") and pnl < 0:
+
+--------------------------------------------------------------------------------
+
+ID: CT-002
+Component: State Machine (Counter-Trade)
+File: backend/app/engine/state_machine.py
+Lines: 1235-1246, 1269-1280
+Title: Counter-Trade Chains Can Spiral Infinitely
+Status: ✅ CONFIRMED via test
+Description:
+    When a counter-trade position exits with a loss via signal, it triggers
+    ANOTHER counter-trade. In a bad market, this creates infinite losing chains.
+Example:
+    LONG -10% loss → SHORT counter
+    SHORT -5% loss → LONG counter
+    LONG -8% loss → SHORT counter
+    ... (continues until account depleted)
+Impact:
+    HIGH - Can generate unlimited losing trades, draining the account.
+Suggested Fix:
+    Add is_counter_trade flag to position/trade. Block counter-trades from
+    spawning more counter-trades. Or add max_counter_trade_chain parameter.
+
+--------------------------------------------------------------------------------
+
+ID: CT-003
+Component: State Machine (Counter-Trade)
+File: backend/app/engine/state_machine.py
+Lines: 1114-1118, 1146-1150 vs 1346
+Title: dynamic_tp_pct_column Overwrites Counter-Trade TP
+Status: ✅ CONFIRMED via test
+Description:
+    Counter-trade sets dynamic_tp_pct = loss% × multiplier at line 1346.
+    But during entry fill, if dynamic_tp_pct_column exists, it OVERWRITES
+    this value at lines 1114-1118.
+Example:
+    - LONG loses 10%, counter-trade TP should be 15% (10% × 1.5)
+    - But dynamic_tp_pct_column has value 5%
+    - Counter-trade exits at 5% instead of 15%
+Impact:
+    Counter-trade TP is silently replaced, defeating the purpose of the feature.
+Suggested Fix:
+    Check if pos.dynamic_tp_pct was already set (by counter-trade) before
+    overwriting with column value. Counter-trade TP should take priority.
+
+--------------------------------------------------------------------------------
+
+ID: CT-004
+Component: State Machine (Counter-Trade)
+File: backend/app/engine/state_machine.py
+Line: 1344
+Title: entry_bar_idx Set to Arm Bar, Not Fill Bar
+Status: ✅ CONFIRMED (Minor)
+Description:
+    entry_bar_idx is set to the bar where the counter-trade is ARMED (exit bar),
+    not where it actually FILLS (next bar).
+Impact:
+    Low - mainly affects attribution and exit rule state capture, which
+    reference the wrong bar for indicator snapshots.
+Suggested Fix:
+    Don't set entry_bar_idx at arm time. Let _fill_entry set it correctly.
+
+================================================================================
+REVIEW COVERAGE GAP
+================================================================================
+
+The original review (2026-07-06) missed counter-trade logic because:
+
+1. Review scoped to "real-world execution realism" not "all features"
+2. Counter-trades behind optional flag (enable_counter_trades=False default)
+3. Subagent prompts focused on slippage/fills/liquidation, not optional features
+
+Other potentially unreviewed optional features:
+- Periodic contributions (DCA)
+- Attribution system
+- Signal transformers
+- Boolean expression evaluator
+
+Recommendation: Do feature-by-feature audit for remaining optional code paths.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

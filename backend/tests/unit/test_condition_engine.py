@@ -693,6 +693,56 @@ def test_lookback_offset_bounds() -> None:
         assert "offset must be between" in str(e).lower()
 
 
+def test_lookback_positive_offset_rejected() -> None:
+    """
+    Test that positive LOOKBACK offsets are rejected (lookahead bias prevention).
+
+    Positive offsets would access future data, which creates lookahead bias
+    that makes backtests unrealistic and non-reproducible in live trading.
+    """
+    df = make_df()
+
+    # Test positive offset in right operand
+    group = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "OHLCV",
+                "left_operand_value": "close",
+                "operator": "GT",
+                "right_operand_type": "LOOKBACK",
+                "right_operand_value": "close:+5",  # Future data - should be rejected
+            }
+        ],
+    }
+
+    try:
+        evaluate_conditions(df, group)
+        assert False, "Should have raised ValueError for positive offset (lookahead)"
+    except ValueError as e:
+        assert "lookahead" in str(e).lower() or "positive" in str(e).lower()
+
+    # Test positive offset in left operand
+    group2 = {
+        "logic": "AND",
+        "conditions": [
+            {
+                "left_operand_type": "LOOKBACK",
+                "left_operand_value": "close:+1",  # Future data - should be rejected
+                "operator": "GT",
+                "right_operand_type": "OHLCV",
+                "right_operand_value": "close",
+            }
+        ],
+    }
+
+    try:
+        evaluate_conditions(df, group2)
+        assert False, "Should have raised ValueError for positive offset (lookahead)"
+    except ValueError as e:
+        assert "lookahead" in str(e).lower() or "positive" in str(e).lower()
+
+
 def test_lookback_both_sides() -> None:
     """
     Test LOOKBACK on both left and right operands (compare two lookbacks).

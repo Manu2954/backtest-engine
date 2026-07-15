@@ -50,7 +50,7 @@ def _run_flow(base_url: str) -> None:
     }
 
     with httpx.Client(base_url=base_url, timeout=10.0) as client:
-        response = client.post("/strategies", json=strategy_payload)
+        response = client.post("/api/v1/strategies", json=strategy_payload)
         assert response.status_code == 200, response.text
         strategy = response.json()
         strategy_id = strategy["id"]
@@ -65,7 +65,7 @@ def _run_flow(base_url: str) -> None:
             "initial_capital": 10000.0,
         }
 
-        response = client.post("/backtests", json=backtest_payload)
+        response = client.post("/api/v1/backtests", json=backtest_payload)
         assert response.status_code == 200, response.text
         run = response.json()
         print(run)
@@ -73,7 +73,7 @@ def _run_flow(base_url: str) -> None:
 
         # Poll once after a short delay; M7 will run the engine.
         time.sleep(0.2)
-        response = client.get(f"/backtests/{run_id}")
+        response = client.get(f"/api/v1/backtests/{run_id}")
         assert response.status_code == 200, response.text
         status = response.json().get("status")
         assert status == "PENDING"

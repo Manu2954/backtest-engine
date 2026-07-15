@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { EquityCurve } from '@/components/charts'
 import { useBacktest, useBacktestTrades, backtestKeys } from '@/api/hooks'
 import { createBacktest } from '@/api'
@@ -44,19 +45,24 @@ function MetricCard({
   subValue,
   icon: Icon,
   trend,
+  tooltip,
 }: {
   label: string
   value: string
   subValue?: string
   icon?: React.ComponentType<{ className?: string }>
   trend?: 'up' | 'down' | 'neutral'
+  tooltip?: string
 }) {
   return (
     <Card>
       <CardContent className="pt-4">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-sm text-muted-foreground">{label}</p>
+            <div className="flex items-center gap-1">
+              <p className="text-sm text-muted-foreground">{label}</p>
+              {tooltip && <HelpTooltip text={tooltip} />}
+            </div>
             <p
               className={cn(
                 'text-2xl font-bold numeric mt-1',
@@ -297,18 +303,21 @@ export function BacktestReportPage() {
                 subValue="Risk-adjusted return"
                 icon={BarChart3}
                 trend="neutral"
+                tooltip="Risk-adjusted return. Higher is better. >1 is good, >2 is excellent. Calculated as (Return - Risk-Free Rate) / Volatility"
               />
               <MetricCard
                 label="Max Drawdown"
                 value={`${results.max_drawdown_pct?.toFixed(1) || 0}%`}
                 icon={TrendingDown}
                 trend="down"
+                tooltip="Largest peak-to-trough decline during the backtest period. Lower is better."
               />
               <MetricCard
                 label="Win Rate"
                 value={results.win_rate ? `${results.win_rate.toFixed(1)}%` : '—'}
                 icon={Target}
                 trend={results.win_rate && results.win_rate >= 50 ? 'up' : 'down'}
+                tooltip="Percentage of trades that were profitable. Note: A low win rate can still be profitable with good risk/reward."
               />
             </div>
 
@@ -326,6 +335,7 @@ export function BacktestReportPage() {
                 value={results.profit_factor?.toFixed(2) || '—'}
                 icon={DollarSign}
                 trend={results.profit_factor && results.profit_factor > 1 ? 'up' : 'down'}
+                tooltip="Gross profits divided by gross losses. >1 means profitable, >2 is good."
               />
               <MetricCard
                 label="Avg Win"
@@ -368,7 +378,10 @@ export function BacktestReportPage() {
                   </div>
                   <Separator />
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">CAGR</span>
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      CAGR
+                      <HelpTooltip text="Compound Annual Growth Rate. Annualized return accounting for compounding." />
+                    </span>
                     <span className="numeric">{results.cagr ? formatPercent(results.cagr) : '—'}</span>
                   </div>
                 </CardContent>
@@ -390,7 +403,10 @@ export function BacktestReportPage() {
                   </div>
                   <Separator />
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Alpha</span>
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      Alpha
+                      <HelpTooltip text="Excess return compared to buy-and-hold benchmark. Positive means strategy outperformed." />
+                    </span>
                     <span
                       className={cn(
                         'numeric',
@@ -401,12 +417,18 @@ export function BacktestReportPage() {
                     </span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Beta</span>
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      Beta
+                      <HelpTooltip text="Strategy's correlation with the market. 1 = moves with market, <1 = less volatile, >1 = more volatile." />
+                    </span>
                     <span className="numeric">{results.beta?.toFixed(2) || '—'}</span>
                   </div>
                   <Separator />
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Sortino Ratio</span>
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      Sortino Ratio
+                      <HelpTooltip text="Like Sharpe but only penalizes downside volatility. Higher is better." />
+                    </span>
                     <span className="numeric">{results.sortino_ratio?.toFixed(2) || '—'}</span>
                   </div>
                 </CardContent>

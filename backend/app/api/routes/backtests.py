@@ -57,6 +57,13 @@ async def create_backtest(
         slippage_pct=payload.slippage_pct,
         enable_attribution=payload.enable_attribution,
         risk_free_rate=payload.risk_free_rate,
+        # Advanced features
+        leverage=payload.leverage,
+        dynamic_stop_column=payload.dynamic_stop_column,
+        dynamic_tp_pct_column=payload.dynamic_tp_pct_column,
+        enable_counter_trades=payload.enable_counter_trades,
+        counter_tp_multiplier=payload.counter_tp_multiplier,
+        exit_rules=payload.exit_rules,
     )
     session.add(run)
     await session.commit()

@@ -4,6 +4,7 @@ import { Header } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { StrategyCard } from '@/components/strategy/StrategyCard'
 import { useStrategies, useDeleteStrategy, useCreateStrategy } from '@/api/hooks'
 import { Plus, Search, FlaskConical } from 'lucide-react'
@@ -11,6 +12,8 @@ import type { Strategy } from '@/types'
 
 export function StrategiesPage() {
   const [searchQuery, setSearchQuery] = useState('')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [strategyToDelete, setStrategyToDelete] = useState<string | null>(null)
   const { data: strategies, isLoading, error } = useStrategies({ limit: 100 })
   const deleteStrategy = useDeleteStrategy()
   const createStrategy = useCreateStrategy()
@@ -20,9 +23,16 @@ export function StrategiesPage() {
   )
 
   const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this strategy?')) {
-      deleteStrategy.mutate(id)
+    setStrategyToDelete(id)
+    setDeleteDialogOpen(true)
+  }
+
+  const confirmDelete = () => {
+    if (strategyToDelete) {
+      deleteStrategy.mutate(strategyToDelete)
     }
+    setDeleteDialogOpen(false)
+    setStrategyToDelete(null)
   }
 
   const handleDuplicate = (strategy: Strategy) => {
@@ -126,6 +136,16 @@ export function StrategiesPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title="Delete Strategy"
+        description="Are you sure you want to delete this strategy? This will also delete all associated backtests. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        onConfirm={confirmDelete}
+      />
     </>
   )
 }

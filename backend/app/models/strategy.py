@@ -28,6 +28,9 @@ class Strategy(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Chart type for indicator computation: "ohlcv" (default), "heikinashi", future: "renko", "kagi"
+    chart_type: Mapped[str] = mapped_column(String(32), nullable=False, default="ohlcv")
+
     # Boolean expression support
     entry_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
     exit_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -66,6 +69,8 @@ class Indicator(Base):
     indicator_type: Mapped[str] = mapped_column(String(64), nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Per-indicator chart type override (None = inherit from strategy)
+    chart_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     strategy = relationship("Strategy", back_populates="indicators")
 

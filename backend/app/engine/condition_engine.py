@@ -33,10 +33,14 @@ def _parse_lookback(value: str) -> tuple[str, int]:
     Examples:
         "adx:-3" -> ("adx", -3)  # 3 bars ago
         "close:-26" -> ("close", -26)  # 26 bars ago
-        "span_a:+26" -> ("span_a", 26)  # 26 bars ahead (future)
+        "rsi:-1" -> ("rsi", -1)  # Previous bar
+
+    Note:
+        Only negative offsets (lookback) are allowed. Positive offsets would
+        access future data, creating lookahead bias that invalidates backtests.
 
     Raises:
-        ValueError: If format is invalid
+        ValueError: If format is invalid or offset is positive (lookahead)
     """
     parts = value.split(":")
     if len(parts) != 2:
@@ -62,7 +66,15 @@ def _parse_lookback(value: str) -> tuple[str, int]:
     if abs(offset) > 1000:
         raise ValueError(
             f"Invalid offset in LOOKBACK: {offset}. "
-            f"Offset must be between -1000 and +1000"
+            f"Offset must be between -1000 and 0"
+        )
+
+    # Block positive offsets (lookahead bias)
+    if offset > 0:
+        raise ValueError(
+            f"Invalid offset in LOOKBACK: +{offset}. "
+            f"Positive offsets access future data (lookahead bias). "
+            f"Use negative offsets only (e.g., 'close:-3' for 3 bars ago)."
         )
 
     return column_name, offset
@@ -70,18 +82,19 @@ def _parse_lookback(value: str) -> tuple[str, int]:
 
 def _get_lookback_series(df: pd.DataFrame, value: str) -> pd.Series:
     """
-    Get a Series shifted by the specified offset.
+    Get a Series shifted by the specified offset (lookback only).
 
     Args:
         df: DataFrame containing the data
-        value: LOOKBACK format string "column:offset"
+        value: LOOKBACK format string "column:offset" (offset must be <= 0)
 
     Returns:
-        Shifted Series
+        Shifted Series representing historical values
 
     Notes:
-        - Negative offset (e.g., -3) means look back 3 bars (shift forward in time)
-        - Positive offset (e.g., +3) means look ahead 3 bars (shift backward in time)
+        - Negative offset (e.g., -3) means look back 3 bars
+        - Zero offset returns the current value (no shift)
+        - Positive offsets are rejected by _parse_lookback() to prevent lookahead bias
         - Pandas shift() convention: shift(1) moves data DOWN (forward in time)
         - So we use shift(-offset) to convert our offset to pandas convention
 
@@ -340,16 +353,19 @@ def _apply_operator(
         raise ValueError(f"{operator} requires both operands to be Series")
 
     if op == "CROSSES_ABOVE":
-        prev = (left.shift(1) < right.shift(1))
-        now = (left > right)
-        result = prev & now
+        # Cross above: was below or equal (<=), now is above (>)
+        # Requires two consecutive bars to detect transition
+        prev_not_above = left.shift(1) <= right.shift(1)
+        now_above = left > right
+        result = prev_not_above & now_above
     else:  # CROSSES_BELOW
-        prev = (left.shift(1) > right.shift(1))
-        now = (left < right)
-        result = prev & now
+        # Cross below: was above or equal (>=), now is below (<)
+        prev_not_below = left.shift(1) >= right.shift(1)
+        now_below = left < right
+        result = prev_not_below & now_below
 
-    if len(result) > 0:
-        result.iloc[0] = False
+    # First bar cannot be a crossover - requires prior bar for comparison
+    # NaN from shift propagates correctly (NaN & True = NaN -> fillna(False))
     return result.fillna(False)
 
 

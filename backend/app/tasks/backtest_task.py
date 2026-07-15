@@ -14,6 +14,7 @@ from sqlalchemy.pool import NullPool
 from app.core.config import settings
 from app.engine.condition_engine import evaluate_conditions, evaluate_expression
 from app.engine.data_layer import fetch_ohlcv_async
+from app.engine.exit_rules import ExitRule
 from app.engine.indicator_layer import compute_indicators, trim_warmup_period
 from app.engine.report_generator import generate_report, generate_attribution_report, generate_binning_report, calculate_buy_and_hold_equity
 from app.engine.state_machine import run_backtest
@@ -70,11 +71,21 @@ async def _run_backtest_async(run_id: str) -> None:
                     "indicator_type": ind.indicator_type,
                     "alias": ind.alias,
                     "params": ind.params,
+                    "chart_type": ind.chart_type,  # May be None (inherit from strategy)
                 }
                 for ind in strategy.indicators
             ]
             logger.info(f"Indicators to compute: {indicators}")
-            df = compute_indicators(df, indicators)
+            df = compute_indicators(df, indicators, strategy_chart_type=strategy.chart_type)
+
+            # Restore raw OHLCV for fills if strategy uses non-standard chart type (e.g., Heikin-Ashi)
+            # Indicators were computed on transformed data, but fills must use actual market prices
+            if strategy.chart_type and strategy.chart_type != "ohlcv":
+                logger.info(f"Restoring raw OHLCV for fills (strategy uses {strategy.chart_type})")
+                df["open"] = df["raw_open"]
+                df["high"] = df["raw_high"]
+                df["low"] = df["raw_low"]
+                df["close"] = df["raw_close"]
 
             # Trim warmup period where indicators have NaN values
             logger.info("Checking for indicator warmup period")
@@ -176,6 +187,13 @@ async def _run_backtest_async(run_id: str) -> None:
                 short_exit_signal=short_exit_signal,
                 short_entry_conditions=short_entry_conditions_for_attribution,
                 short_exit_conditions=short_exit_conditions_for_attribution,
+                # Advanced features
+                leverage=float(run.leverage) if run.leverage is not None else 1.0,
+                dynamic_stop_column=run.dynamic_stop_column,
+                dynamic_tp_pct_column=run.dynamic_tp_pct_column,
+                enable_counter_trades=run.enable_counter_trades if run.enable_counter_trades is not None else False,
+                counter_tp_multiplier=float(run.counter_tp_multiplier) if run.counter_tp_multiplier is not None else 1.5,
+                exit_rules=[ExitRule(**r) for r in run.exit_rules] if run.exit_rules else None,
             )
 
             logger.info("Generating report and persisting trades")

@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { Header } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Card,
   CardContent,
@@ -24,16 +26,20 @@ import {
 export function StrategyDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const { data: strategy, isLoading, error } = useStrategy(id!)
   const deleteStrategy = useDeleteStrategy()
   const { data: backtests } = useBacktests({ strategy_id: id, limit: 5 })
 
   const handleDelete = () => {
-    if (confirm('Are you sure you want to delete this strategy?')) {
-      deleteStrategy.mutate(id!, {
-        onSuccess: () => navigate('/strategies'),
-      })
-    }
+    setDeleteDialogOpen(true)
+  }
+
+  const confirmDelete = () => {
+    deleteStrategy.mutate(id!, {
+      onSuccess: () => navigate('/strategies'),
+    })
+    setDeleteDialogOpen(false)
   }
 
   if (isLoading) {
@@ -332,6 +338,16 @@ export function StrategyDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title="Delete Strategy"
+        description="Are you sure you want to delete this strategy? This will also delete all associated backtests. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        onConfirm={confirmDelete}
+      />
     </>
   )
 }

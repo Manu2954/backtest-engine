@@ -39,6 +39,14 @@ class BacktestCreate(BaseModel):
     # Sharpe ratio
     risk_free_rate: float = Field(0.0, description="Annual risk-free rate for Sharpe ratio (e.g., 0.05 for 5%)")
 
+    # Advanced features
+    leverage: float = Field(1.0, description="Leverage multiplier (1.0 = no leverage)")
+    dynamic_stop_column: str | None = Field(None, description="Column name for dynamic trailing stop")
+    dynamic_tp_pct_column: str | None = Field(None, description="Column name for dynamic take profit percentage")
+    enable_counter_trades: bool = Field(False, description="Enable counter-trade on losing exits")
+    counter_tp_multiplier: float = Field(1.5, description="Counter-trade TP = abs(loss%) × multiplier")
+    exit_rules: list[dict[str, Any]] | None = Field(None, description="Custom exit rules")
+
 
 class BacktestOut(BaseModel):
     """Response payload for a backtest run."""
@@ -70,6 +78,14 @@ class BacktestOut(BaseModel):
     slippage_pct: float | None = None
     enable_attribution: bool
     risk_free_rate: float | None = Field(None, description="Risk-free rate used for Sharpe ratio")
+
+    # Advanced features
+    leverage: float | None = None
+    dynamic_stop_column: str | None = None
+    dynamic_tp_pct_column: str | None = None
+    enable_counter_trades: bool = False
+    counter_tp_multiplier: float | None = None
+    exit_rules: list[dict[str, Any]] | None = None
 
 
 class TradeLogOut(BaseModel):

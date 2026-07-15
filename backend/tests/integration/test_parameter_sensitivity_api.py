@@ -58,7 +58,7 @@ async def test_create_parameter_sensitivity_analysis():
     }
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        strategy_response = await client.post("/strategies", json=strategy_data)
+        strategy_response = await client.post("/api/v1/strategies", json=strategy_data)
         assert strategy_response.status_code == 200
         strategy_id = strategy_response.json()["id"]
 
@@ -75,7 +75,7 @@ async def test_create_parameter_sensitivity_analysis():
         }
 
         response = await client.post(
-            "/robustness/parameter-sensitivity",
+            "/api/v1/robustness/parameter-sensitivity",
             json=request_data,
             timeout=10.0
         )
@@ -131,7 +131,7 @@ async def test_get_analysis_status():
             "entry_expression": "entry",
             "exit_expression": "exit"
         }
-        strategy_response = await client.post("/strategies", json=strategy_data)
+        strategy_response = await client.post("/api/v1/strategies", json=strategy_data)
         strategy_id = strategy_response.json()["id"]
 
         request_data = {
@@ -144,14 +144,14 @@ async def test_get_analysis_status():
         }
 
         create_response = await client.post(
-            "/robustness/parameter-sensitivity",
+            "/api/v1/robustness/parameter-sensitivity",
             json=request_data,
             timeout=10.0
         )
         analysis_id = create_response.json()["id"]
 
         # Get analysis status
-        get_response = await client.get(f"/robustness/{analysis_id}")
+        get_response = await client.get(f"/api/v1/robustness/{analysis_id}")
 
         assert get_response.status_code == 200
         data = get_response.json()
@@ -168,7 +168,7 @@ async def test_get_nonexistent_analysis():
     fake_id = str(uuid4())
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(f"/robustness/{fake_id}")
+        response = await client.get(f"/api/v1/robustness/{fake_id}")
 
         assert response.status_code == 404
 
@@ -183,7 +183,7 @@ async def test_delete_analysis():
             "indicators": [{"alias": "rsi_14", "indicator_type": "RSI", "params": {"period": 14}}],
             "condition_groups": []
         }
-        strategy_response = await client.post("/strategies", json=strategy_data)
+        strategy_response = await client.post("/api/v1/strategies", json=strategy_data)
         strategy_id = strategy_response.json()["id"]
 
         request_data = {
@@ -196,18 +196,18 @@ async def test_delete_analysis():
         }
 
         create_response = await client.post(
-            "/robustness/parameter-sensitivity",
+            "/api/v1/robustness/parameter-sensitivity",
             json=request_data,
             timeout=10.0
         )
         analysis_id = create_response.json()["id"]
 
         # Delete analysis
-        delete_response = await client.delete(f"/robustness/{analysis_id}")
+        delete_response = await client.delete(f"/api/v1/robustness/{analysis_id}")
         assert delete_response.status_code == 200
 
         # Verify it's deleted
-        get_response = await client.get(f"/robustness/{analysis_id}")
+        get_response = await client.get(f"/api/v1/robustness/{analysis_id}")
         assert get_response.status_code == 404
 
 
@@ -226,7 +226,7 @@ async def test_analysis_params_validation():
         }
 
         response = await client.post(
-            "/robustness/parameter-sensitivity",
+            "/api/v1/robustness/parameter-sensitivity",
             json=request_data
         )
 
@@ -239,7 +239,9 @@ async def test_analysis_report_structure():
     # Note: This test requires Celery worker running and completing tasks
     # For now, we'll just verify the database model can store report structure
 
-    async with get_session() as session:
+    from app.core.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
         analysis = RobustnessAnalysis(
             strategy_id=uuid4(),
             analysis_type="PARAMETER_SENSITIVITY",

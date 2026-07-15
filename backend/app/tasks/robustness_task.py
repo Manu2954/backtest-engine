@@ -47,9 +47,8 @@ from app.engine.robustness.feature_conditioning import (
     build_feature_conditioning_report,
 )
 from app.models.backtest import BacktestRun
-from app.models.robustness import RobustnessAnalysis, RobustnessVariantBacktest
+from app.models.robustness import RobustnessAnalysis
 from app.models.strategy import Strategy, Indicator, ConditionGroup, Condition
-from app.tasks.backtest_task import run_backtest_task
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +321,7 @@ async def _get_backtest_metrics(backtest_run_id: UUID, session_maker) -> dict[st
     return metrics
 
 
-@celery_app.task(name="robustness.parameter_sensitivity")
+@celery_app.task(name="robustness.parameter_sensitivity", time_limit=600, soft_time_limit=580)
 def run_parameter_sensitivity_analysis(
     strategy_id: str,
     backtest_params: dict[str, Any],
@@ -376,6 +375,12 @@ async def _run_analysis_async(
     session_maker,
 ) -> str:
     """Async implementation of parameter sensitivity analysis."""
+    from app.engine.data_layer import fetch_ohlcv_async
+    from app.engine.indicator_layer import compute_indicators, trim_warmup_period
+    from app.engine.condition_engine import evaluate_conditions, evaluate_expression
+    from app.engine.state_machine import run_backtest
+    from app.engine.report_generator import generate_report
+
     strategy_uuid = UUID(strategy_id)
 
     # Create analysis record
@@ -388,15 +393,33 @@ async def _run_analysis_async(
         session_maker,
     )
 
-    # Track temp strategies for cleanup
-    temp_strategy_ids = []
-
     try:
         # Update status to RUNNING
         await _update_analysis_status(analysis.id, "RUNNING", session_maker)
 
         # Load strategy
         strategy = await _get_strategy(strategy_uuid, session_maker)
+
+        # Parse dates
+        start_date = backtest_params["start_date"]
+        end_date = backtest_params["end_date"]
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+        # Fetch OHLCV data once (shared across all variants)
+        logger.info(f"Parameter sensitivity: Fetching OHLCV for {backtest_params['ticker']}")
+        async with session_maker() as session:
+            df_raw = await fetch_ohlcv_async(
+                backtest_params["ticker"],
+                start_date,
+                end_date,
+                backtest_params.get("bar_resolution", "1d"),
+                backtest_params.get("asset_class", "STOCK"),
+                session=session,
+                provider=backtest_params.get("provider"),
+            )
 
         # Convert strategy to dict
         strategy_dict = {
@@ -433,26 +456,101 @@ async def _run_analysis_async(
             "exit_expression": strategy.exit_expression,
         }
 
-        # Run baseline backtest first
-        baseline_run_id = await _create_backtest_run(
-            strategy_uuid,
-            backtest_params,
-            session_maker,
-        )
-        run_backtest_task.apply_async(args=[str(baseline_run_id)])
+        # Build condition groups for evaluation
+        entry_groups_dict = {}
+        exit_groups_dict = {}
+        entry_group_legacy = None
+        exit_group_legacy = None
 
-        # Wait for baseline to complete
-        await _wait_for_backtest_completion(baseline_run_id, session_maker)
+        for cg in strategy.condition_groups:
+            group_payload = {
+                "logic": cg.logic,
+                "conditions": [
+                    {
+                        "id": str(c.id),
+                        "left_operand_type": c.left_operand_type,
+                        "left_operand_value": c.left_operand_value,
+                        "operator": c.operator,
+                        "right_operand_type": c.right_operand_type,
+                        "right_operand_value": c.right_operand_value,
+                    }
+                    for c in cg.conditions
+                ],
+            }
 
-        await _link_backtest_to_analysis(
-            analysis.id,
-            baseline_run_id,
-            "Baseline (original parameters)",
-            {"baseline": True},
-            session_maker,
-        )
+            if cg.group_type == "ENTRY":
+                if cg.group_name:
+                    entry_groups_dict[cg.group_name] = group_payload
+                else:
+                    entry_group_legacy = group_payload
+            elif cg.group_type == "EXIT":
+                if cg.group_name:
+                    exit_groups_dict[cg.group_name] = group_payload
+                else:
+                    exit_group_legacy = group_payload
 
-        baseline_metrics = await _get_backtest_metrics(baseline_run_id, session_maker)
+        initial_capital = float(backtest_params["initial_capital"])
+
+        # Helper to run a single backtest with given indicator params
+        def run_single_backtest(indicator_list: list[dict]) -> dict[str, float]:
+            """Run backtest with specific indicator parameters, return metrics."""
+            df = df_raw.copy()
+            df = compute_indicators(df, indicator_list)
+            df, _ = trim_warmup_period(df)
+
+            if len(df) < 30:
+                return {}  # Not enough data
+
+            # Evaluate signals
+            if strategy.entry_expression:
+                entry_signal = evaluate_expression(df, entry_groups_dict, strategy.entry_expression)
+            else:
+                entry_signal = evaluate_conditions(df, entry_group_legacy)
+
+            if strategy.exit_expression:
+                exit_signal = evaluate_expression(df, exit_groups_dict, strategy.exit_expression)
+            else:
+                exit_signal = evaluate_conditions(df, exit_group_legacy)
+
+            trades, equity_curve = run_backtest(
+                df=df,
+                entry_signal=entry_signal,
+                exit_signal=exit_signal,
+                initial_capital=initial_capital,
+                asset_class=backtest_params.get("asset_class", "STOCK"),
+                position_size_type=backtest_params.get("position_size_type", "full_capital"),
+                position_size_value=float(backtest_params.get("position_size_value", 100.0)),
+                stop_loss_pct=float(backtest_params["stop_loss_pct"]) if backtest_params.get("stop_loss_pct") else None,
+                take_profit_pct=float(backtest_params["take_profit_pct"]) if backtest_params.get("take_profit_pct") else None,
+                commission_per_trade=float(backtest_params.get("commission_per_trade", 0.0)),
+                commission_pct=float(backtest_params.get("commission_pct", 0.0)),
+                slippage_pct=float(backtest_params.get("slippage_pct", 0.0)),
+            )
+
+            report = generate_report(trades, equity_curve, initial_capital)
+            return {
+                "total_return_pct": report.get("total_return_pct", 0.0),
+                "sharpe_ratio": report.get("sharpe_ratio", 0.0),
+                "win_rate": report.get("win_rate", 0.0),
+                "max_drawdown_pct": report.get("max_drawdown_pct", 0.0),
+                "profit_factor": report.get("profit_factor", 0.0),
+                "total_trades": report.get("total_trades", 0),
+            }
+
+        # Run baseline backtest
+        logger.info("Parameter sensitivity: Running baseline backtest")
+        baseline_indicators = [
+            {
+                "indicator_type": ind.indicator_type,
+                "alias": ind.alias,
+                "params": ind.params,
+            }
+            for ind in strategy.indicators
+        ]
+        baseline_metrics = run_single_backtest(baseline_indicators)
+
+        if not baseline_metrics:
+            raise ValueError("Baseline backtest failed - insufficient data after warmup")
 
         # Generate variants
         variants = generate_parameter_variants(strategy_dict, variation_pct)
@@ -470,7 +568,7 @@ async def _run_analysis_async(
                 },
                 "variants": [],
                 "stability_metrics": {
-                    "overall_stability_score": 1.0,  # Perfect stability (no variation possible)
+                    "overall_stability_score": 1.0,
                     "per_metric_cv": {},
                 },
                 "assessment": {
@@ -487,51 +585,19 @@ async def _run_analysis_async(
             )
             return str(analysis.id)
 
-        # Create temporary strategies for each variant
+        # Run variant backtests
+        logger.info(f"Parameter sensitivity: Running {len(variants)} variant backtests")
+        variant_metrics_list = []
         variant_labels = []
         variant_params_list = []
 
-        for variant_data in variants:
-            temp_strategy_id = await _create_temporary_strategy(
-                strategy,
-                variant_data,
-                session_maker,
-            )
-            temp_strategy_ids.append(temp_strategy_id)
+        for i, variant_data in enumerate(variants):
+            logger.info(f"Parameter sensitivity: Variant {i+1}/{len(variants)} - {variant_data['variant_label']}")
+            variant_indicators = variant_data["strategy"]["indicators"]
+            metrics = run_single_backtest(variant_indicators)
+            variant_metrics_list.append(metrics if metrics else {})
             variant_labels.append(variant_data["variant_label"])
             variant_params_list.append(variant_data["variant_params"])
-
-        # Create BacktestRun records for each variant
-        variant_run_ids = []
-        for temp_id in temp_strategy_ids:
-            run_id = await _create_backtest_run(temp_id, backtest_params, session_maker)
-            variant_run_ids.append(run_id)
-
-        # Run variant backtests in parallel using Celery
-        for run_id in variant_run_ids:
-            run_backtest_task.apply_async(args=[str(run_id)])
-
-        # Wait for all variants to complete (in parallel)
-        await asyncio.gather(*[
-            _wait_for_backtest_completion(run_id, session_maker)
-            for run_id in variant_run_ids
-        ])
-
-        # Link variant backtests to analysis and collect metrics
-        variant_metrics_list = []
-        for i, run_id in enumerate(variant_run_ids):
-            # Link to analysis
-            await _link_backtest_to_analysis(
-                analysis.id,
-                run_id,
-                variant_labels[i],
-                variant_params_list[i],
-                session_maker,
-            )
-
-            # Get metrics
-            metrics = await _get_backtest_metrics(run_id, session_maker)
-            variant_metrics_list.append(metrics)
 
         # Calculate stability metrics
         stability_score, metric_cvs = calculate_stability_score(
@@ -576,10 +642,6 @@ async def _run_analysis_async(
             },
         }
 
-        # Clean up temporary strategies
-        for temp_id in temp_strategy_ids:
-            await _delete_temporary_strategy(temp_id, session_maker)
-
         await _update_analysis_status(
             analysis.id,
             "COMPLETE",
@@ -589,13 +651,7 @@ async def _run_analysis_async(
         return str(analysis.id)
 
     except Exception as e:
-        # Clean up temp strategies on error
-        for temp_id in temp_strategy_ids:
-            try:
-                await _delete_temporary_strategy(temp_id, session_maker)
-            except Exception:
-                pass  # Best effort cleanup
-
+        logger.exception(f"Parameter sensitivity failed: {e}")
         await _update_analysis_status(
             analysis.id,
             "FAILED",
@@ -609,7 +665,7 @@ async def _run_analysis_async(
 # Walk-Forward Validation
 # =============================================================================
 
-@celery_app.task(name="robustness.walk_forward")
+@celery_app.task(name="robustness.walk_forward", time_limit=600, soft_time_limit=580)
 def run_walk_forward_validation(
     strategy_id: str,
     backtest_params: dict[str, Any],
@@ -889,7 +945,7 @@ async def _create_walk_forward_analysis_record(
 # Regime Detection
 # =============================================================================
 
-@celery_app.task(name="robustness.regime_detection")
+@celery_app.task(name="robustness.regime_detection", time_limit=300, soft_time_limit=280)
 def run_regime_detection(
     strategy_id: str,
     backtest_params: dict[str, Any],
@@ -1206,7 +1262,7 @@ async def _create_regime_detection_analysis_record(
 # Feature Conditioning
 # =============================================================================
 
-@celery_app.task(name="robustness.feature_conditioning")
+@celery_app.task(name="robustness.feature_conditioning", time_limit=300, soft_time_limit=280)
 def run_feature_conditioning(
     strategy_id: str,
     backtest_params: dict[str, Any],

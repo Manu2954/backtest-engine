@@ -1,4 +1,4 @@
-import { Search, Moon, Sun, Bell } from 'lucide-react'
+import { Search, Moon, Sun, Monitor, Bell } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useUIStore } from '@/store/uiStore'
@@ -11,6 +11,9 @@ interface HeaderProps {
 
 export function Header({ title, children }: HeaderProps) {
   const { theme, toggleTheme, sidebarCollapsed } = useUIStore()
+
+  const ThemeIcon =
+    theme === 'dark' ? Sun : theme === 'light' ? Moon : Monitor
 
   return (
     <header
@@ -44,11 +47,7 @@ export function Header({ title, children }: HeaderProps) {
 
         {/* Theme toggle */}
         <Button variant="ghost" size="icon" onClick={toggleTheme}>
-          {theme === 'dark' ? (
-            <Sun className="h-5 w-5" />
-          ) : (
-            <Moon className="h-5 w-5" />
-          )}
+          <ThemeIcon className="h-5 w-5" />
         </Button>
       </div>
     </header>

@@ -29,6 +29,7 @@ export interface Strategy {
   id: string;
   name: string;
   description?: string;
+  chart_type?: string;
   indicators: Indicator[];
   condition_groups: ConditionGroup[];
   entry_expression?: string;
@@ -40,6 +41,7 @@ export interface Strategy {
 export interface StrategyCreate {
   name: string;
   description?: string;
+  chart_type?: string;
   indicators: Omit<Indicator, "id">[];
   entry?: Omit<ConditionGroup, "id" | "group_type">;
   exit?: Omit<ConditionGroup, "id" | "group_type">;
@@ -53,6 +55,19 @@ export interface StrategyCreate {
   exit_expression?: string;
   short_entry_expression?: string;
   short_exit_expression?: string;
+}
+
+// Exit Rule Types
+export interface ExitRule {
+  name: string;                           // Stamps trade's exit_reason
+  ref_col?: string | null;                // Column to capture at entry (frozen for trade)
+  monitor_col?: string | null;            // Column to check per bar
+  operator?: string;                      // LT or GT (default: LT)
+  activation_threshold?: number | null;   // Rule only active if ref meets this at entry
+  activation_operator?: string;           // GTE, LTE, GT, LT for activation check
+  min_loss_pct?: number | null;           // Rule only fires if trade losing >= this %
+  skip_col?: string | null;               // Per-bar boolean column to suppress evaluation
+  fixed_threshold?: number | null;        // Compare monitor against static value (no ref)
 }
 
 // Backtest Types
@@ -69,6 +84,7 @@ export interface BacktestConfig {
   position_size_value?: number;
   stop_loss_pct?: number | null;
   take_profit_pct?: number | null;
+  dynamic_tp_pct_column?: string | null;
   dynamic_stop_column?: string | null;
   commission_per_trade?: number;
   commission_pct?: number;
@@ -81,6 +97,10 @@ export interface BacktestConfig {
     include_start?: boolean;
   };
   leverage?: number;
+  exit_rules?: ExitRule[];
+  enable_counter_trades?: boolean;
+  counter_tp_multiplier?: number;
+  risk_free_rate?: number;
 }
 
 export interface BacktestResults {
@@ -162,6 +182,7 @@ export interface IndicatorInput {
   alias: string;
   params: Record<string, number | string>;
   display_order?: number;
+  chart_type?: string; // Per-indicator chart type override
 }
 
 export interface ConditionInput {

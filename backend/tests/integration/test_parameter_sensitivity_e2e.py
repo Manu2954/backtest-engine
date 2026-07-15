@@ -90,7 +90,7 @@ async def test_full_parameter_sensitivity_workflow():
             "exit_expression": "overbought"
         }
 
-        strategy_response = await client.post("/strategies", json=strategy_data)
+        strategy_response = await client.post("/api/v1/strategies", json=strategy_data)
         assert strategy_response.status_code == 200
         strategy_id = strategy_response.json()["id"]
         print(f"\n✓ Created strategy: {strategy_id}")
@@ -111,7 +111,7 @@ async def test_full_parameter_sensitivity_workflow():
         }
 
         analysis_response = await client.post(
-            "/robustness/parameter-sensitivity",
+            "/api/v1/robustness/parameter-sensitivity",
             json=analysis_request,
             timeout=10.0
         )
@@ -132,7 +132,7 @@ async def test_full_parameter_sensitivity_workflow():
         completed = False
 
         while time.time() - start_time < max_wait:
-            status_response = await client.get(f"/robustness/{analysis_id}")
+            status_response = await client.get(f"/api/v1/robustness/{analysis_id}")
             assert status_response.status_code == 200
 
             status_data = status_response.json()
@@ -154,7 +154,7 @@ async def test_full_parameter_sensitivity_workflow():
         print(f"✓ Analysis completed in {int(time.time() - start_time)}s")
 
         # Step 4: Verify report structure
-        final_response = await client.get(f"/robustness/{analysis_id}")
+        final_response = await client.get(f"/api/v1/robustness/{analysis_id}")
         final_data = final_response.json()
 
         assert final_data["status"] == "COMPLETE"
@@ -237,7 +237,7 @@ async def test_full_parameter_sensitivity_workflow():
         print(f"\n✓ Report structure verified via API")
 
         # Cleanup: Delete analysis
-        delete_response = await client.delete(f"/robustness/{analysis_id}")
+        delete_response = await client.delete(f"/api/v1/robustness/{analysis_id}")
         assert delete_response.status_code == 200
         print(f"✓ Cleaned up analysis")
 
@@ -288,7 +288,7 @@ async def test_parameter_sensitivity_with_ema_crossover():
             "exit_expression": "crossunder"
         }
 
-        strategy_response = await client.post("/strategies", json=strategy_data)
+        strategy_response = await client.post("/api/v1/strategies", json=strategy_data)
         strategy_id = strategy_response.json()["id"]
 
         # Submit analysis
@@ -302,7 +302,7 @@ async def test_parameter_sensitivity_with_ema_crossover():
         }
 
         analysis_response = await client.post(
-            "/robustness/parameter-sensitivity",
+            "/api/v1/robustness/parameter-sensitivity",
             json=analysis_request,
             timeout=60.0
         )
@@ -312,7 +312,7 @@ async def test_parameter_sensitivity_with_ema_crossover():
         # Wait for completion
         max_attempts = 60
         for _ in range(max_attempts):
-            status_response = await client.get(f"/robustness/{analysis_id}")
+            status_response = await client.get(f"/api/v1/robustness/{analysis_id}")
             status_data = status_response.json()
 
             if status_data["status"] == "COMPLETE":
@@ -382,7 +382,7 @@ async def test_parameter_sensitivity_with_small_integer_params():
             "exit_expression": "exit"
         }
 
-        strategy_response = await client.post("/strategies", json=strategy_data)
+        strategy_response = await client.post("/api/v1/strategies", json=strategy_data)
         strategy_id = strategy_response.json()["id"]
 
         analysis_request = {
@@ -395,7 +395,7 @@ async def test_parameter_sensitivity_with_small_integer_params():
         }
 
         analysis_response = await client.post(
-            "/robustness/parameter-sensitivity",
+            "/api/v1/robustness/parameter-sensitivity",
             json=analysis_request,
             timeout=60.0
         )
@@ -405,7 +405,7 @@ async def test_parameter_sensitivity_with_small_integer_params():
         # Wait and check that it completes without error
         max_attempts = 60
         for _ in range(max_attempts):
-            status_response = await client.get(f"/robustness/{analysis_id}")
+            status_response = await client.get(f"/api/v1/robustness/{analysis_id}")
             status_data = status_response.json()
 
             if status_data["status"] == "COMPLETE":
