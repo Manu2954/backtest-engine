@@ -45,9 +45,9 @@ from app.engine.report_generator import generate_report
 # ═══════════════════════════════════════════════════════════════════════════════
 
 TICKER = "BTCUSDT"
-START = "2025-10-20"
+START = "2025-01-01"
 END = "2026-06-01"
-RESOLUTION = "4h"
+RESOLUTION = "1h"
 ASSET_CLASS = "CRYPTO"
 INITIAL_CAPITAL = 100.0
 
