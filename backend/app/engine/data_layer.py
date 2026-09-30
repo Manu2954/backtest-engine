@@ -216,9 +216,10 @@ def _redis_client() -> redis.Redis:
     return redis.Redis.from_url(settings.redis_url, decode_responses=False)
 
 
-def get_cache_key(ticker: str, resolution: str, start: date, end: date) -> str:
+def get_cache_key(provider:str, ticker: str, resolution: str, asset: str, market_type:str, startDt: date, endDt: date) -> str:
     ticker_key = ticker.upper().strip()
-    return f"ohlcv:{ticker_key}:{resolution}:{start.isoformat()}:{end.isoformat()}"
+
+    return f"ohlcv:{provider}:{ticker_key}:{resolution}:{asset}:{market_type}:{startDt.isoformat()}:{endDt.isoformat()}"
 
 
 def serialize_df(df: pd.DataFrame) -> bytes:
@@ -632,7 +633,7 @@ async def fetch_ohlcv_async(
     start_date = _to_date(start)
     end_date = _to_date(end)
 
-    key = get_cache_key(ticker, resolution, start_date, end_date)
+    key = get_cache_key(provider, ticker, resolution, asset, market_type, start_date, end_date)
 
     # Try Redis cache (graceful fallback on failure)
     try:

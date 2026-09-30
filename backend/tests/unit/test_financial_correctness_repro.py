@@ -48,21 +48,16 @@ from app.engine.report_generator import (
 # the *intended* future signature; until the fix lands the extra kwargs raise
 # TypeError, which is why the test xfails.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    reason="data_layer.py:219 get_cache_key omits asset_class/provider/market_type",
-    strict=True,
-    raises=(AssertionError, TypeError),
-)
 def test_cache_key_distinguishes_market_type() -> None:
     from datetime import date
 
     start, end = date(2026, 1, 1), date(2026, 2, 1)
 
     spot_key = get_cache_key(
-        "BTCUSDT", "1d", start, end, asset_class="CRYPTO", market_type="SPOT"
+        "BINANCE", "BTCUSDT", "1d", "CRYPTO", "SPOT", start, end
     )
     futures_key = get_cache_key(
-        "BTCUSDT", "1d", start, end, asset_class="CRYPTO", market_type="FUTURES"
+         "BINANCE", "BTCUSDT", "1d", "CRYPTO", "FUTURES", start, end
     )
 
     assert spot_key != futures_key, (

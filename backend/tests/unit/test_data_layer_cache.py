@@ -35,12 +35,12 @@ class TestCacheKeyGeneration:
     """Tests for cache key generation."""
 
     def test_get_cache_key_format(self):
-        key = get_cache_key("AAPL", "1d", date(2026, 1, 1), date(2026, 1, 31))
-        assert key == "ohlcv:AAPL:1d:2026-01-01:2026-01-31"
+        key = get_cache_key("BINANCE","AAPL", "1d", "CRYPTO","FUTURES",date(2026, 1, 1), date(2026, 1, 31))
+        assert key == "ohlcv:BINANCE:AAPL:1d:CRYPTO:FUTURES:2026-01-01:2026-01-31"
 
     def test_get_cache_key_normalizes_ticker(self):
-        key = get_cache_key("  aapl  ", "1d", date(2026, 1, 1), date(2026, 1, 31))
-        assert key == "ohlcv:AAPL:1d:2026-01-01:2026-01-31"
+        key = get_cache_key("BINANCE","  aapl  ", "1d", "CRYPTO", "FUTURES", date(2026, 1, 1), date(2026, 1, 31))
+        assert key == "ohlcv:BINANCE:AAPL:1d:CRYPTO:FUTURES:2026-01-01:2026-01-31"
 
 
 class TestSerializationRoundtrip:
