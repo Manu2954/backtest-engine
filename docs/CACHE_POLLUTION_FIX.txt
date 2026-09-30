@@ -1,0 +1,59 @@
+================================================================================
+CACHE POLLUTION BUG — WRONG-RESOLUTION DATA (root-cause guard)
+Date fixed: 2026-07-18
+File: backend/app/engine/data_layer.py
+Tests: backend/tests/unit/test_data_layer_cache.py (TestResolutionIntegrityGuard)
+================================================================================
+
+SYMPTOM
+-------
+Backtests silently ran on corrupted OHLCV data: 30-minute bars were stored and
+served under the resolution="1h" cache key. A "1h" fetch returned 96 bars/day
+(30m spacing) instead of 24. This corrupted every indicator computed on 1h data.
+Discovered across BTCUSDT years 2022, 2023, 2024, 2025, 2026 — widespread.
+
+The live-sim script's no-lookahead assertion is what first exposed it: mislabeled
+30m-under-1h bars have overlapping [ts, ts+1h) windows vs the 5m/1m exec bars,
+tripping the lookahead check (52,380 violations for 2025).
+
+ROOT CAUSE
+----------
+The polluted rows were historical artifacts — produced by an older/different
+fetch path, not the current provider (verified: a fresh Binance fetch returns
+clean on-the-hour 1h bars). The real defect was that the data layer had NO guard
+preventing wrong-resolution data from being persisted or served. Once bad rows
+existed in Postgres/Redis, they were served silently forever (Redis 24h TTL just
+re-populated from the polluted DB).
+
+FIX (source-level, self-healing)
+---------------------------------
+Added `_resolution_matches(df, resolution)` in data_layer.py: checks the DataFrame's
+DOMINANT bar spacing (mode of index diffs, robust to gaps/DST) against the expected
+seconds for that resolution (_RESOLUTION_SECONDS). Skips the check for empty/single-row
+frames and irregular resolutions (weeks/months).
+
+Wired into THREE points in fetch_ohlcv_async:
+1. Redis read  — a wrong-spacing blob is ignored (falls through to DB/provider).
+2. DB read     — wrong-spacing rows are PURGED (via _invalidate_stale_db_cache)
+                 then clean data is re-fetched. Self-healing: bad rows don't accumulate.
+3. Before store — never persist/cache data whose spacing != requested resolution;
+                  raises ValueError instead of writing garbage.
+
+VERIFIED
+--------
+- Unit: TestResolutionIntegrityGuard (4 tests) — match/mismatch/gaps/not-applicable.
+- End-to-end: injected 96 polluted 30m rows under resolution="1h" → fetch detected,
+  purged, re-fetched clean; DB ended with minutes=[0] only. Self-healed.
+- Full unit suite: 340 passed.
+
+CLEANUP DONE
+------------
+Purged all polluted 1h rows for BTCUSDT 2022-2026 from Postgres and cleared Redis
+ohlcv keys. Re-fetched clean. All year backtests re-run with ✅ no lookahead.
+
+NOTE
+----
+The guard is defense-in-depth: even if a future/unknown code path produces
+wrong-resolution data, it can no longer be silently persisted or served. The
+lookahead assertion in the live-sim script remains a second, independent check.
+================================================================================

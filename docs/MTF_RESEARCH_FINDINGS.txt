@@ -1,0 +1,127 @@
+================================================================================
+BACKTESTING ENGINES: LIVE/FORMING BAR vs CLOSED BAR & INTRA-BAR EXECUTION
+Research findings (deep-research, 20 primary sources, 24 verified claims)
+Date: 2026-07-16
+================================================================================
+
+QUESTION
+--------
+How do battle-tested backtesting engines simulate the LIVE trading experience
+on past data — specifically intra-candle entry when a higher-TF indicator
+crosses on the still-forming candle — WITHOUT lookahead bias?
+
+
+HOW EACH ENGINE HANDLES SIGNAL DETECTION & FILLS (verified vs primary docs)
+---------------------------------------------------------------------------
+
+backtesting.py
+  - Signals: next() fires once per FULL (closed) bar. No tick/intra-bar. [confirmed]
+  - Fills: MARKET orders fill at NEXT bar's open by default. [verbatim confirmed]
+    "market orders are filled on next bar's open, whereas other order types
+     (limit, stop-limit, stop-market) are filled when conditions are met."
+  - trade_on_close=True => fill at CURRENT bar close instead. [confirmed]
+  - No-lookahead device: inside next(), data arrays are truncated to the current
+    iteration ("gradual price point revelation"). [confirmed]
+
+Backtrader
+  - Default Market order: "executed with the 1st tick of the NEXT bar (the open
+    price)". [verbatim confirmed]
+  - Cheat-On-Close (set_coc): matches market order to CLOSE of the SAME bar.
+    Docs explicitly call this "cheating, because the bar is closed". [confirmed]
+  - Cheat-On-Open (set_coo + next_open): fills at current bar OPEN, evaluated in
+    next_open() before broker. NOT inherently lookahead if only open is used.
+    [the "CoO = lookahead" claim was REFUTED 0-3 — CoO uses only the known open]
+
+TradingView Pine Script  (THE key reference for the live-candle case)
+  - barstate.isrealtime true only on the live forming bar; historical bars are
+    always "confirmed". [confirmed]
+  - On realtime bars, high/low/close are FLUID and update every tick; only the
+    open is fixed. [verbatim confirmed]
+  - REPAINTING defined: "nothing guarantees this condition will hold true until
+    the end of the realtime bar." A cross seen mid-bar can vanish at close.
+    [verbatim confirmed]
+  - Anti-repaint device: barstate.isconfirmed — evaluate only on the bar's last
+    iteration "when it closes and prices are confirmed"; reproduces on historical
+    bars which are always confirmed. [verbatim confirmed]
+  - request.security() with lookahead=barmerge.lookahead_on "returns data from
+    the future on historical bars, which is dangerously misleading." The safe
+    HTF pattern offsets the series by [1] (use the PRIOR completed HTF value).
+    [verbatim confirmed]
+
+NautilusTrader
+  - Bar-based backtests simulate an intra-bar PRICE PATH: each bar => 4 sequential
+    price points O->H->L->C, volume split 25% each. Orders match along that path.
+    [verbatim confirmed]  => this is how it does intra-bar fills without ticks.
+
+QuantConnect LEAN
+  - Consolidators build higher-TF bars from finer bars ("create bars of any length
+    from smaller bars", "combine one-minute bars into longer bars"). A consolidated
+    HTF bar only emits when it CLOSES — no partial HTF value leaks. [confirmed]
+
+VectorBT
+  - from_order_func traverses row-by-row (time), column-by-column (asset),
+    event-driven => "less risk of exposure to look-ahead bias". [confirmed,
+    correctly attributed as a vendor claim]
+
+ta4j  (the engine the user named)
+  - Does NOT enforce closed-only: "ta4j evaluates the data that currently exists
+    in your BarSeries." [verbatim from ta4j wiki]
+  - CLOSED-candle mode = recommended default: append only finished bars, evaluate
+    once per completed bar (less noise, one decision per bar).
+  - LIVE-candle mode = supported: "replace/update the last bar as ticks arrive"
+    and evaluate on the forming bar. Requires an IDEMPOTENCY GUARD (track
+    lastEntryBarIndex; act only if index != lastEntryBarIndex) to avoid
+    re-firing while the bar is still forming.
+  - Core principle: "Strategy signal = 'should I attempt an order?'  Trading
+    record = 'what actually filled?'" — only the fill updates the record.
+
+
+THE UNIVERSAL PATTERN (what they all agree on)
+----------------------------------------------
+1. LIVE/FORMING BAR IS LEGITIMATE to trade on — ta4j and Pine both support
+   evaluating on the forming bar. This IS the live experience.
+2. THE FORMING BAR REPAINTS — a mid-bar cross may reverse by close. That is
+   accepted: you acted live, the trade is real. Repainting is only a BUG when a
+   backtest pretends historical bars were live (i.e., uses the FINAL bar values
+   as if known mid-bar).
+3. THE NO-LOOKAHEAD LINE: at simulated time T you may use bar data only through
+   T. Building the forming bar from finer bars up to T is legal. Using the
+   finished bar's H/L/C (known only at T_close) while standing at T < T_close is
+   lookahead — the exact bug we must avoid.
+4. HTF-ON-LTF SAFE RULE (Pine's [1] offset / LEAN's close-only emit): a higher-TF
+   indicator value is only "final" at HTF close. Two honest choices:
+     (a) FORMING HTF: recompute the HTF indicator from LTF bars up to now
+         (repaints, matches the live chart the user watches). Legal — no future
+         data used.
+     (b) CONFIRMED HTF: use the last CLOSED HTF indicator value (Pine [1] / LEAN
+         consolidator). Stable, no repaint, but you react one HTF-bar late.
+
+
+IMPLICATION FOR OUR ENGINE
+--------------------------
+- The user watches the FORMING 1h candle (price + indicators moving live) and
+  enters on the live cross. This maps to Pine's realtime-bar / ta4j live-candle
+  mode = choice (a) FORMING HTF.
+- To simulate faithfully on past data: step at 1m granularity; at each 1m step
+  rebuild the forming 1h candle from 1m bars since the hour opened; recompute
+  SMA/Donchian on [closed 1h bars ... + forming 1h bar]; detect cross; enter at
+  that 1m price. NEVER use the 11:00 close while standing before 11:00.
+- Naive forward-fill of the CLOSED 1h indicator onto 1m bars (choice b done
+  wrong) produces a FALSE cross at each hour boundary when the indicator level
+  steps — reproduced and confirmed in our own tests. Must be avoided.
+- Idempotency guard (ta4j): once a cross fires and we enter, don't re-fire on
+  subsequent 1m bars of the same forming hour.
+
+
+SOURCES (primary/official unless noted)
+---------------------------------------
+- backtesting.py API docs (kernc.github.io)
+- backtrader.com/docu/broker, /docu/order-execution-type
+- tradingview.com/pine-script-docs: repainting, bar-states, strategies,
+  other-timeframes-and-data
+- nautilustrader.io/docs/latest/concepts/backtesting
+- quantconnect.com/docs/v2 consolidating-data, trade-fills
+- vectorbt.dev/api/portfolio/base
+- ta4j.github.io/ta4j-wiki: Live-Candle-vs-Closed-Candle-Evaluation, Live-trading
+- quantstart.com (blog) lookahead pitfalls
+================================================================================
