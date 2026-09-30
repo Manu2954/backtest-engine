@@ -1436,106 +1436,13 @@ def run_backtest(
         open_price = float(row["open"])
         close_price = float(row["close"])
 
-        # ─── Fill pending LONG entry ───
-        if long_pos.pending_entry and not long_pos.in_position:
-            cash = _fill_entry(
-                pos=long_pos,
-                open_price=open_price,
-                row=row,
-                cash=cash,
-                df=df,
-                slippage_pct=slippage_pct,
-                commission_per_trade=commission_per_trade,
-                commission_pct=commission_pct,
-                position_size_type=position_size_type,
-                position_size_value=position_size_value,
-                allow_fractional=allow_fractional,
-                stop_loss_pct=stop_loss_pct,
-                dynamic_stop_column=dynamic_stop_column,
-                ts=ts,
-                # CT-NEW-005 FIX: Use pending_leverage for counter-trades, else global leverage
-                leverage=long_pos.pending_leverage if long_pos.pending_leverage is not None else leverage,
-                # SIZE-001: Pass positions for equity calculation
-                long_pos_for_equity=long_pos,
-                short_pos_for_equity=short_pos if has_short else None,
-                # ATTR-001: Pass fill bar index for accurate market return
-                fill_bar_idx=i,
-                # Kelly sizing params
-                kelly_win_rate=kelly_win_rate,
-                kelly_payoff_ratio=kelly_payoff_ratio,
-                kelly_fraction=kelly_fraction,
-            )
-            # Clear pending_leverage after fill
-            long_pos.pending_leverage = None
-            if long_pos.in_position and dynamic_tp_pct_column:
-                if dynamic_tp_pct_column in df.columns and long_pos.entry_bar_idx is not None:
-                    val = float(df.iloc[long_pos.entry_bar_idx][dynamic_tp_pct_column])
-                    # DYN-003 FIX: Validate dynamic TP > 0 (negative/zero would cause instant trigger)
-                    if not pd.isna(val) and val > 0:
-                        long_pos.dynamic_tp_pct = val
-                    elif not pd.isna(val):
-                        logger.warning(
-                            "Invalid dynamic TP value %.2f at bar %d (must be > 0), ignoring",
-                            val, long_pos.entry_bar_idx
-                        )
-            if long_pos.in_position and dynamic_exit_ref_column:
-                if dynamic_exit_ref_column in df.columns and long_pos.entry_bar_idx is not None:
-                    val = float(df.iloc[long_pos.entry_bar_idx][dynamic_exit_ref_column])
-                    if not pd.isna(val):
-                        long_pos.dynamic_exit_ref = val
-            if long_pos.in_position and exit_rules:
-                long_pos.exit_rule_states = _capture_exit_rule_states(exit_rules, df, long_pos.entry_bar_idx)
-
-        # ─── Fill pending SHORT entry ───
-        # CT-NEW-009 FIX: Also check pending_entry when counter-trades enabled (counter-trade may arm SHORT)
-        if (has_short or enable_counter_trades) and short_pos.pending_entry and not short_pos.in_position:
-            cash = _fill_entry(
-                pos=short_pos,
-                open_price=open_price,
-                row=row,
-                cash=cash,
-                df=df,
-                slippage_pct=slippage_pct,
-                commission_per_trade=commission_per_trade,
-                commission_pct=commission_pct,
-                position_size_type=position_size_type,
-                position_size_value=position_size_value,
-                allow_fractional=allow_fractional,
-                stop_loss_pct=stop_loss_pct,
-                dynamic_stop_column=dynamic_stop_column,
-                ts=ts,
-                # CT-NEW-005 FIX: Use pending_leverage for counter-trades, else global leverage
-                leverage=short_pos.pending_leverage if short_pos.pending_leverage is not None else leverage,
-                # SIZE-001: Pass positions for equity calculation
-                long_pos_for_equity=long_pos,
-                short_pos_for_equity=short_pos,
-                # ATTR-001: Pass fill bar index for accurate market return
-                fill_bar_idx=i,
-                # Kelly sizing params
-                kelly_win_rate=kelly_win_rate,
-                kelly_payoff_ratio=kelly_payoff_ratio,
-                kelly_fraction=kelly_fraction,
-            )
-            # Clear pending_leverage after fill
-            short_pos.pending_leverage = None
-            if short_pos.in_position and dynamic_tp_pct_column:
-                if dynamic_tp_pct_column in df.columns and short_pos.entry_bar_idx is not None:
-                    val = float(df.iloc[short_pos.entry_bar_idx][dynamic_tp_pct_column])
-                    # DYN-003 FIX: Validate dynamic TP > 0 (negative/zero would cause instant trigger)
-                    if not pd.isna(val) and val > 0:
-                        short_pos.dynamic_tp_pct = val
-                    elif not pd.isna(val):
-                        logger.warning(
-                            "Invalid dynamic TP value %.2f at bar %d (must be > 0), ignoring",
-                            val, short_pos.entry_bar_idx
-                        )
-            if short_pos.in_position and dynamic_exit_ref_column:
-                if dynamic_exit_ref_column in df.columns and short_pos.entry_bar_idx is not None:
-                    val = float(df.iloc[short_pos.entry_bar_idx][dynamic_exit_ref_column])
-                    if not pd.isna(val):
-                        short_pos.dynamic_exit_ref = val
-            if short_pos.in_position and exit_rules:
-                short_pos.exit_rule_states = _capture_exit_rule_states(exit_rules, df, short_pos.entry_bar_idx)
+        # ═══════════════════════════════════════════════════════════════════════════
+        # FILL ORDER: EXITS FIRST, THEN ENTRIES
+        # This ensures position flips work correctly:
+        #   Bar N: exit signal + entry signal both fire (pending_exit, pending_entry)
+        #   Bar N+1: exit fills FIRST (closes old position), then entry fills (opens new)
+        # If entries filled first, we'd have overlapping positions.
+        # ═══════════════════════════════════════════════════════════════════════════
 
         # ─── Check stops for LONG (BEFORE pending exits - TP/SL takes priority) ───
         # If TP/SL is hit during this bar, it overrides any pending signal exit
@@ -1688,6 +1595,161 @@ def run_backtest(
 
             short_pos.reset()
 
+        # ─── Fill pending LONG entry (AFTER exits to prevent overlapping positions) ───
+        # Skip if counter-trade is pending for LONG - counter-trade will convert this to a CT with dynamic TP
+        if long_pos.pending_entry and not long_pos.in_position:
+            if counter_trade_pending is not None and counter_trade_pending["direction"] == "LONG":
+                # Counter-trade takes priority - convert this entry to counter-trade
+                long_pos.dynamic_tp_pct = counter_trade_pending["tp_pct"]
+                long_pos.pending_leverage = counter_trade_pending.get("leverage", leverage)
+                counter_trade_pending = None
+            cash = _fill_entry(
+                pos=long_pos,
+                open_price=open_price,
+                row=row,
+                cash=cash,
+                df=df,
+                slippage_pct=slippage_pct,
+                commission_per_trade=commission_per_trade,
+                commission_pct=commission_pct,
+                position_size_type=position_size_type,
+                position_size_value=position_size_value,
+                allow_fractional=allow_fractional,
+                stop_loss_pct=stop_loss_pct,
+                dynamic_stop_column=dynamic_stop_column,
+                ts=ts,
+                # CT-NEW-005 FIX: Use pending_leverage for counter-trades, else global leverage
+                leverage=long_pos.pending_leverage if long_pos.pending_leverage is not None else leverage,
+                # SIZE-001: Pass positions for equity calculation
+                long_pos_for_equity=long_pos,
+                short_pos_for_equity=short_pos if has_short else None,
+                # ATTR-001: Pass fill bar index for accurate market return
+                fill_bar_idx=i,
+                # Kelly sizing params
+                kelly_win_rate=kelly_win_rate,
+                kelly_payoff_ratio=kelly_payoff_ratio,
+                kelly_fraction=kelly_fraction,
+            )
+            # Clear pending_leverage after fill
+            long_pos.pending_leverage = None
+            if long_pos.in_position and dynamic_tp_pct_column:
+                if dynamic_tp_pct_column in df.columns and long_pos.entry_bar_idx is not None:
+                    val = float(df.iloc[long_pos.entry_bar_idx][dynamic_tp_pct_column])
+                    # DYN-003 FIX: Validate dynamic TP > 0 (negative/zero would cause instant trigger)
+                    if not pd.isna(val) and val > 0:
+                        long_pos.dynamic_tp_pct = val
+                    elif not pd.isna(val):
+                        logger.warning(
+                            "Invalid dynamic TP value %.2f at bar %d (must be > 0), ignoring",
+                            val, long_pos.entry_bar_idx
+                        )
+            if long_pos.in_position and dynamic_exit_ref_column:
+                if dynamic_exit_ref_column in df.columns and long_pos.entry_bar_idx is not None:
+                    val = float(df.iloc[long_pos.entry_bar_idx][dynamic_exit_ref_column])
+                    if not pd.isna(val):
+                        long_pos.dynamic_exit_ref = val
+            if long_pos.in_position and exit_rules:
+                long_pos.exit_rule_states = _capture_exit_rule_states(exit_rules, df, long_pos.entry_bar_idx)
+
+        # ─── Fill pending SHORT entry (AFTER exits to prevent overlapping positions) ───
+        # CT-NEW-009 FIX: Also check pending_entry when counter-trades enabled (counter-trade may arm SHORT)
+        if (has_short or enable_counter_trades) and short_pos.pending_entry and not short_pos.in_position:
+            # Skip if counter-trade is pending for SHORT - counter-trade will convert this to a CT with dynamic TP
+            if counter_trade_pending is not None and counter_trade_pending["direction"] == "SHORT":
+                # Counter-trade takes priority - convert this entry to counter-trade
+                short_pos.dynamic_tp_pct = counter_trade_pending["tp_pct"]
+                short_pos.pending_leverage = counter_trade_pending.get("leverage", leverage)
+                counter_trade_pending = None
+            cash = _fill_entry(
+                pos=short_pos,
+                open_price=open_price,
+                row=row,
+                cash=cash,
+                df=df,
+                slippage_pct=slippage_pct,
+                commission_per_trade=commission_per_trade,
+                commission_pct=commission_pct,
+                position_size_type=position_size_type,
+                position_size_value=position_size_value,
+                allow_fractional=allow_fractional,
+                stop_loss_pct=stop_loss_pct,
+                dynamic_stop_column=dynamic_stop_column,
+                ts=ts,
+                # CT-NEW-005 FIX: Use pending_leverage for counter-trades, else global leverage
+                leverage=short_pos.pending_leverage if short_pos.pending_leverage is not None else leverage,
+                # SIZE-001: Pass positions for equity calculation
+                long_pos_for_equity=long_pos,
+                short_pos_for_equity=short_pos,
+                # ATTR-001: Pass fill bar index for accurate market return
+                fill_bar_idx=i,
+                # Kelly sizing params
+                kelly_win_rate=kelly_win_rate,
+                kelly_payoff_ratio=kelly_payoff_ratio,
+                kelly_fraction=kelly_fraction,
+            )
+            # Clear pending_leverage after fill
+            short_pos.pending_leverage = None
+            if short_pos.in_position and dynamic_tp_pct_column:
+                if dynamic_tp_pct_column in df.columns and short_pos.entry_bar_idx is not None:
+                    val = float(df.iloc[short_pos.entry_bar_idx][dynamic_tp_pct_column])
+                    # DYN-003 FIX: Validate dynamic TP > 0 (negative/zero would cause instant trigger)
+                    if not pd.isna(val) and val > 0:
+                        short_pos.dynamic_tp_pct = val
+                    elif not pd.isna(val):
+                        logger.warning(
+                            "Invalid dynamic TP value %.2f at bar %d (must be > 0), ignoring",
+                            val, short_pos.entry_bar_idx
+                        )
+            if short_pos.in_position and dynamic_exit_ref_column:
+                if dynamic_exit_ref_column in df.columns and short_pos.entry_bar_idx is not None:
+                    val = float(df.iloc[short_pos.entry_bar_idx][dynamic_exit_ref_column])
+                    if not pd.isna(val):
+                        short_pos.dynamic_exit_ref = val
+            if short_pos.in_position and exit_rules:
+                short_pos.exit_rule_states = _capture_exit_rule_states(exit_rules, df, short_pos.entry_bar_idx)
+
+        # ─── Check stops for newly entered positions (same-bar stop triggers) ───
+        # This catches cases where entry fills and price immediately hits stop on same bar
+        if long_pos.in_position and long_pos.entry_fill_bar_idx == i:
+            cash = _check_stops(
+                pos=long_pos,
+                current_price=open_price,
+                ts=ts,
+                i=i,
+                df=df,
+                cash=cash,
+                trade_log=trade_log,
+                slippage_pct=slippage_pct,
+                commission_per_trade=commission_per_trade,
+                commission_pct=commission_pct,
+                enable_attribution=enable_attribution,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
+                dynamic_stop_column=dynamic_stop_column,
+                dynamic_stop_type=dynamic_stop_type,
+                dynamic_tp_pct=long_pos.dynamic_tp_pct,
+            )
+
+        if (has_short or enable_counter_trades) and short_pos.in_position and short_pos.entry_fill_bar_idx == i:
+            cash = _check_stops(
+                pos=short_pos,
+                current_price=open_price,
+                ts=ts,
+                i=i,
+                df=df,
+                cash=cash,
+                trade_log=trade_log,
+                slippage_pct=slippage_pct,
+                commission_per_trade=commission_per_trade,
+                commission_pct=commission_pct,
+                enable_attribution=enable_attribution,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
+                dynamic_stop_column=dynamic_stop_column,
+                dynamic_stop_type=dynamic_stop_type,
+                dynamic_tp_pct=short_pos.dynamic_tp_pct,
+            )
+
         # ─── Check dynamic exit reference (indicator < captured threshold) ───
         if dynamic_exit_monitor_column and dynamic_exit_monitor_column in df.columns:
             skip_exit = False
@@ -1744,9 +1806,12 @@ def run_backtest(
             # Counter-trade enters at NEXT bar (i+1), so arm it now
             target_direction = counter_trade_pending["direction"]
             target_pos = long_pos if target_direction == "LONG" else short_pos
+            opposite_pos = short_pos if target_direction == "LONG" else long_pos
 
-            # Only arm if target position is empty
-            if not target_pos.in_position and not target_pos.pending_entry:
+            # Only arm if target position is empty AND opposite position is not active
+            # This prevents overlapping positions (e.g., arming LONG counter while SHORT is in)
+            opposite_blocking = opposite_pos.in_position and not opposite_pos.pending_exit
+            if not target_pos.in_position and not target_pos.pending_entry and not opposite_blocking:
                 target_pos.pending_entry = True
                 target_pos.entry_bar_idx = i
                 # Set dynamic TP for counter-trade
@@ -1758,46 +1823,54 @@ def run_backtest(
                 # Clear counter-trade
                 counter_trade_pending = None
 
-        # LONG signals (skip if counter-trade is arming SHORT)
+        # ─── EXIT SIGNALS FIRST (so pending_exit is set before entry checks) ───
+        # LONG exit signal
+        if long_pos.in_position and not long_pos.pending_exit and exit_signal.iloc[i]:
+            long_pos.pending_exit = True
+            long_pos.exit_bar_idx = i
+            if enable_attribution:
+                long_pos.exit_attribution_data = _capture_exit_attribution(
+                    df, i, exit_conditions
+                )
+
+        # SHORT exit signal
+        if has_short and short_pos.in_position and not short_pos.pending_exit and short_exit_signal.iloc[i]:
+            short_pos.pending_exit = True
+            short_pos.exit_bar_idx = i
+            if enable_attribution:
+                short_pos.exit_attribution_data = _capture_exit_attribution(
+                    df, i, short_exit_conditions
+                )
+
+        # ─── ENTRY SIGNALS (after exits, so we can check pending_exit for flips) ───
+        # LONG entry (skip if counter-trade is arming SHORT)
         if counter_trade_armed_direction != "SHORT":
             if not long_pos.in_position and not long_pos.pending_entry and entry_signal.iloc[i]:
-                # Binance Futures constraint: no simultaneous long/short on same symbol
-                # Skip long entry if short position is currently active
-                if not (short_pos.in_position or short_pos.pending_entry):
+                # Allow LONG entry if SHORT is not active, OR if SHORT has a pending exit
+                # This enables position flips: SHORT exit + LONG entry on same signal
+                short_blocking = short_pos.in_position and not short_pos.pending_exit
+                if not short_blocking and not short_pos.pending_entry:
                     long_pos.pending_entry = True
                     long_pos.entry_bar_idx = i
                     if enable_attribution:
                         long_pos.entry_attribution_data = _capture_entry_attribution(
                             df, i, entry_conditions
                         )
-            elif long_pos.in_position and not long_pos.pending_exit and exit_signal.iloc[i]:
-                long_pos.pending_exit = True
-                long_pos.exit_bar_idx = i
-                if enable_attribution:
-                    long_pos.exit_attribution_data = _capture_exit_attribution(
-                        df, i, exit_conditions
-                    )
 
-        # SHORT signals (skip if counter-trade is arming LONG)
+        # SHORT entry (skip if counter-trade is arming LONG)
         if has_short:
             if counter_trade_armed_direction != "LONG":
                 if not short_pos.in_position and not short_pos.pending_entry and short_entry_signal.iloc[i]:
-                    # Binance Futures constraint: no simultaneous long/short on same symbol
-                    # Skip short entry if long position is currently active
-                    if not (long_pos.in_position or long_pos.pending_entry):
+                    # Allow SHORT entry if LONG is not active, OR if LONG has a pending exit
+                    # This enables position flips: LONG exit + SHORT entry on same signal
+                    long_blocking = long_pos.in_position and not long_pos.pending_exit
+                    if not long_blocking and not long_pos.pending_entry:
                         short_pos.pending_entry = True
                         short_pos.entry_bar_idx = i
                         if enable_attribution:
                             short_pos.entry_attribution_data = _capture_entry_attribution(
                                 df, i, short_entry_conditions
                             )
-                elif short_pos.in_position and not short_pos.pending_exit and short_exit_signal.iloc[i]:
-                    short_pos.pending_exit = True
-                    short_pos.exit_bar_idx = i
-                    if enable_attribution:
-                        short_pos.exit_attribution_data = _capture_exit_attribution(
-                            df, i, short_exit_conditions
-                        )
 
     # ─── Handle pending entries on last bar ───
     for pos, is_short in [(long_pos, False), (short_pos, True)]:

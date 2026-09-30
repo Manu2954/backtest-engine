@@ -236,3 +236,52 @@ class TestCryptoNoStalenessCheck:
                             assert result["close"].iloc[0] == pytest.approx(50100)
                             # _store_db_ohlcv should NOT be called (used cache)
                             mock_store.assert_not_called()
+
+
+class TestResolutionIntegrityGuard:
+    """Tests for the wrong-resolution data-integrity guard (_resolution_matches)."""
+
+    def _make_df(self, freq, periods=30):
+        idx = pd.date_range("2026-01-01", periods=periods, freq=freq)
+        n = len(idx)
+        return pd.DataFrame(
+            {
+                "open": [100.0] * n, "high": [101.0] * n,
+                "low": [99.0] * n, "close": [100.5] * n, "volume": [1.0] * n,
+            },
+            index=idx,
+        )
+
+    def test_matching_resolution_passes(self):
+        from app.engine.data_layer import _resolution_matches
+        assert _resolution_matches(self._make_df("1h"), "1h") is True
+        assert _resolution_matches(self._make_df("5min"), "5m") is True
+        assert _resolution_matches(self._make_df("1min"), "1m") is True
+
+    def test_wrong_resolution_detected(self):
+        from app.engine.data_layer import _resolution_matches
+        # 30m data mislabeled as 1h — the exact pollution bug
+        assert _resolution_matches(self._make_df("30min"), "1h") is False
+        # 1h data mislabeled as 5m
+        assert _resolution_matches(self._make_df("1h"), "5m") is False
+
+    def test_occasional_gaps_still_pass(self):
+        from app.engine.data_layer import _resolution_matches
+        # Mostly 1h with a couple missing bars — mode is still 1h, should pass
+        idx = list(pd.date_range("2026-01-01", periods=20, freq="1h"))
+        del idx[10]  # drop one bar -> one 2h gap
+        del idx[5]   # drop another
+        df = pd.DataFrame(
+            {"open": [1.0]*len(idx), "high": [1.0]*len(idx), "low": [1.0]*len(idx),
+             "close": [1.0]*len(idx), "volume": [1.0]*len(idx)},
+            index=pd.DatetimeIndex(idx),
+        )
+        assert _resolution_matches(df, "1h") is True
+
+    def test_not_applicable_cases_pass(self):
+        from app.engine.data_layer import _resolution_matches
+        # empty, single row, and irregular (monthly) resolutions skip the check
+        empty = pd.DataFrame({c: [] for c in ("open", "high", "low", "close", "volume")})
+        assert _resolution_matches(empty, "1h") is True
+        assert _resolution_matches(self._make_df("1h", periods=1), "1h") is True
+        assert _resolution_matches(self._make_df("1h"), "1mo") is True  # irregular res skipped

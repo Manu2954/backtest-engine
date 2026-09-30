@@ -168,6 +168,39 @@ BINANCE_INTERVAL_MS = {
     "1mo": 30 * 24 * 60 * 60 * 1000,
 }
 
+# Expected bar spacing per resolution, in seconds. Used by the integrity guard
+# to detect data stored/served under the wrong resolution (e.g. 30m bars cached
+# under the "1h" key). Month/week resolutions are intentionally omitted — their
+# spacing is irregular (calendar-based), so the guard skips them.
+_RESOLUTION_SECONDS = {
+    "1m": 60, "2m": 120, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
+    "60m": 3600, "90m": 5400, "1h": 3600, "2h": 7200, "4h": 14400,
+    "6h": 21600, "8h": 28800, "12h": 43200, "1d": 86400,
+}
+
+
+def _resolution_matches(df: pd.DataFrame, resolution: str) -> bool:
+    """
+    True if the DataFrame's dominant bar spacing matches `resolution`.
+
+    Guards against wrong-resolution data (the cache-pollution class of bug where
+    30m bars were persisted/served under the "1h" key). Returns True when the
+    check is not applicable: empty/single-row frames, non-datetime index, or a
+    resolution with irregular spacing (weeks/months) not in _RESOLUTION_SECONDS.
+    """
+    expected = _RESOLUTION_SECONDS.get(resolution)
+    if expected is None:
+        return True  # irregular/unknown resolution — skip the check
+    if not isinstance(df.index, pd.DatetimeIndex) or len(df) < 2:
+        return True
+    diffs = df.index.to_series().diff().dropna().dt.total_seconds()
+    if diffs.empty:
+        return True
+    # Use the MOST COMMON spacing (mode), robust to occasional gaps/DST/missing bars.
+    dominant = diffs.mode().iloc[0]
+    return bool(abs(dominant - expected) < 1.0)  # native bool (float-safe)
+
+
 
 def _to_date(value: str | date | datetime) -> date:
     if isinstance(value, datetime):
@@ -610,8 +643,15 @@ async def fetch_ohlcv_async(
             if cached_blob:
                 try:
                     cached_df = deserialize_df(cached_blob)
-                    if not cached_df.empty:
+                    if not cached_df.empty and _resolution_matches(cached_df, resolution):
                         return cached_df
+                    if not cached_df.empty:
+                        # Wrong-resolution blob cached under this key — drop it and
+                        # fall through to DB/provider (data-integrity guard).
+                        logger.warning(
+                            "Redis cache key %s has wrong bar spacing for "
+                            "resolution=%s; ignoring.", key, resolution,
+                        )
                 except Exception as e:
                     logger.warning("Redis cache deserialization failed for key %s: %s", key, e)
         # DATA-004 FIX: Don't explicitly delete on force_refresh
@@ -644,6 +684,19 @@ async def fetch_ohlcv_async(
             db_df, oldest_fetched_at = await _load_db_ohlcv(
                 session, ticker, asset, resolution, start_date, end_date
             )
+
+        if not db_df.empty and not _resolution_matches(db_df, resolution):
+            # Cached DB rows have the wrong bar spacing for this resolution
+            # (data-integrity guard against wrong-resolution pollution). Purge the
+            # bad rows so they don't accumulate, then re-fetch clean data.
+            logger.warning(
+                "DB cache for %s %s has wrong bar spacing for resolution=%s; "
+                "purging and re-fetching.", ticker, asset, resolution,
+            )
+            await _invalidate_stale_db_cache(
+                session, ticker, asset, resolution, start_date, end_date, own_session
+            )
+            db_df = pd.DataFrame()
 
         if not db_df.empty:
             covers_start = db_df.index.min().date() <= start_date
@@ -735,6 +788,18 @@ async def fetch_ohlcv_async(
         if df.empty:
             raise ValueError(
                 f"No OHLCV data for {ticker} in range {start_date.isoformat()} to {end_date.isoformat()}"
+            )
+
+        # Data-integrity guard: never persist/cache data whose bar spacing does
+        # not match the requested resolution. This is the source-level fix for
+        # the wrong-resolution cache-pollution bug (e.g. 30m bars under "1h").
+        if not _resolution_matches(df, resolution):
+            diffs = df.index.to_series().diff().dropna().dt.total_seconds()
+            dominant = int(diffs.mode().iloc[0]) if not diffs.empty else -1
+            raise ValueError(
+                f"Provider returned data with wrong bar spacing for "
+                f"{ticker} resolution={resolution}: dominant spacing {dominant}s, "
+                f"expected {_RESOLUTION_SECONDS.get(resolution)}s. Not caching."
             )
 
         await _store_db_ohlcv(session, df, ticker, asset, resolution, own_session)
