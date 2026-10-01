@@ -216,9 +216,10 @@ def _redis_client() -> redis.Redis:
     return redis.Redis.from_url(settings.redis_url, decode_responses=False)
 
 
-def get_cache_key(ticker: str, resolution: str, start: date, end: date) -> str:
+def get_cache_key(provider:str, ticker: str, resolution: str, asset: str, market_type:str, startDt: date, endDt: date) -> str:
     ticker_key = ticker.upper().strip()
-    return f"ohlcv:{ticker_key}:{resolution}:{start.isoformat()}:{end.isoformat()}"
+
+    return f"ohlcv:{provider}:{ticker_key}:{resolution}:{asset}:{market_type}:{startDt.isoformat()}:{endDt.isoformat()}"
 
 
 def serialize_df(df: pd.DataFrame) -> bytes:
@@ -302,7 +303,7 @@ def _filter_incomplete_bars(df: pd.DataFrame, resolution: str) -> pd.DataFrame:
         return df
 
     # Only filter intraday resolutions
-    intraday_resolutions = {"1m", "2m", "3m", "5m", "15m", "30m", "60m", "90m", "1h", "2h", "4h", "6h", "8h", "12h"}
+    intraday_resolutions = {"1m", "2m", "3m", "5m", "15m", "30m", "60m", "90m", "1h", "2h", "4h", "6h", "8h", "12h", "1d"}
     if resolution not in intraday_resolutions:
         return df
 
@@ -322,6 +323,7 @@ def _filter_incomplete_bars(df: pd.DataFrame, resolution: str) -> pd.DataFrame:
         "6h": 21600,
         "8h": 28800,
         "12h": 43200,
+        "1d": 86400
     }.get(resolution, 0)
 
     if resolution_seconds == 0:
@@ -632,7 +634,7 @@ async def fetch_ohlcv_async(
     start_date = _to_date(start)
     end_date = _to_date(end)
 
-    key = get_cache_key(ticker, resolution, start_date, end_date)
+    key = get_cache_key(provider, ticker, resolution, asset, market_type, start_date, end_date)
 
     # Try Redis cache (graceful fallback on failure)
     try:

@@ -48,21 +48,16 @@ from app.engine.report_generator import (
 # the *intended* future signature; until the fix lands the extra kwargs raise
 # TypeError, which is why the test xfails.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    reason="data_layer.py:219 get_cache_key omits asset_class/provider/market_type",
-    strict=True,
-    raises=(AssertionError, TypeError),
-)
 def test_cache_key_distinguishes_market_type() -> None:
     from datetime import date
 
     start, end = date(2026, 1, 1), date(2026, 2, 1)
 
     spot_key = get_cache_key(
-        "BTCUSDT", "1d", start, end, asset_class="CRYPTO", market_type="SPOT"
+        "BINANCE", "BTCUSDT", "1d", "CRYPTO", "SPOT", start, end
     )
     futures_key = get_cache_key(
-        "BTCUSDT", "1d", start, end, asset_class="CRYPTO", market_type="FUTURES"
+         "BINANCE", "BTCUSDT", "1d", "CRYPTO", "FUTURES", start, end
     )
 
     assert spot_key != futures_key, (
@@ -84,11 +79,7 @@ def test_cache_key_distinguishes_market_type() -> None:
 # Benchmark daily returns / Sharpe are UNAFFECTED (pct_change cancels the
 # constant factor); only the level and return/alpha metrics are wrong.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    reason="report_generator.py:54-57 benchmark equity[0] = capital*close0/open0, not capital",
-    strict=True,
-    raises=AssertionError,
-)
+
 def test_benchmark_equity_anchors_at_initial_capital() -> None:
     capital = 10_000.0
     df = pd.DataFrame(
@@ -107,13 +98,7 @@ def test_benchmark_equity_anchors_at_initial_capital() -> None:
         f"got {eq.iloc[0]} (phantom bar-0 return of close0/open0)."
     )
 
-
-@pytest.mark.xfail(
-    reason="report_generator.py:54-57 phantom bar-0 return distorts benchmark_return_pct",
-    strict=True,
-    raises=AssertionError,
-)
-def test_benchmark_return_pct_is_buy_at_open_to_close() -> None:
+def test_benchmark_return_pct_is_buy_at_close_to_close() -> None:
     capital = 10_000.0
     df = pd.DataFrame(
         {
@@ -134,8 +119,8 @@ def test_benchmark_return_pct_is_buy_at_open_to_close() -> None:
         benchmark_equity=benchmark_equity,
     )
 
-    # Buy at open[0]=100, hold to close[-1]=120 => +20%.
-    expected = (df.iloc[-1]["close"] / df.iloc[0]["open"] - 1) * 100
+    # Buy at close[0]=110, hold to close[-1]=120 => +20%.
+    expected = (df.iloc[-1]["close"] / df.iloc[0]["close"] - 1) * 100
     got = report.get("benchmark_return_pct", 0.0)
     assert got == pytest.approx(expected, abs=0.5), (
         f"benchmark_return_pct should be ~{expected:.2f}% (buy at open[0], hold "
@@ -154,11 +139,6 @@ def test_benchmark_return_pct_is_buy_at_open_to_close() -> None:
 # RMS of min(excess, 0) over the full series (target = risk-free = 0).
 # This test uses >=2 down days so the difference is a finite, checkable number.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    reason="report_generator.py:280 downside_std = subset std about own mean, not RMS of shortfalls",
-    strict=True,
-    raises=AssertionError,
-)
 def test_sortino_uses_rms_downside_deviation() -> None:
     capital = 10_000.0
     # Construct an equity curve with known daily returns including two down days.
@@ -198,11 +178,7 @@ def test_sortino_uses_rms_downside_deviation() -> None:
 # resolutions; "1d"/"1w"/"1mo" hit the early return, so a still-forming daily
 # bar (fetched mid-day) is kept with a non-final high/low/close.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    reason="data_layer.py:305 _filter_incomplete_bars skips daily+; forming 1d bar kept",
-    strict=True,
-    raises=AssertionError,
-)
+
 def test_incomplete_daily_bar_is_filtered() -> None:
     # Two daily bars: yesterday (complete) and today (still forming).
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -221,6 +197,8 @@ def test_incomplete_daily_bar_is_filtered() -> None:
     )
 
     filtered = _filter_incomplete_bars(df, "1d")
+
+    print(filtered.all())
 
     assert today not in filtered.index, (
         "The still-forming daily bar (bar_end > now) must be dropped for '1d' "

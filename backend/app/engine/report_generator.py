@@ -42,8 +42,8 @@ def calculate_buy_and_hold_equity(
     if df.empty or "open" not in df.columns or "close" not in df.columns:
         return pd.Series([], dtype=float, name="benchmark_equity")
 
-    # Entry at first bar's open price
-    entry_price = float(df.iloc[0]["open"])
+    # Entry at first bar's close price
+    entry_price = float(df.iloc[0]["close"])
 
     if entry_price <= 0:
         # Invalid entry price - return flat equity at initial capital
@@ -276,12 +276,12 @@ def generate_report(
     if not daily_returns.empty:
         daily_rf = (1 + risk_free_rate) ** (1 / 252) - 1
         excess_returns_sortino = daily_returns - daily_rf
-        # Downside deviation: std of returns below target (risk-free rate)
-        downside_returns = excess_returns_sortino[excess_returns_sortino < 0]
+        # Downside deviation: RMS of returns below target (risk-free rate)
+        downside_returns = excess_returns_sortino.clip(upper=0)
         if len(downside_returns) > 0:
-            downside_std = downside_returns.std()
-            if downside_std != 0:
-                sortino = (excess_returns_sortino.mean() / downside_std) * (252 ** 0.5)
+            downside_dev = ((downside_returns ** 2).mean()) ** 0.5
+            if downside_dev != 0:
+                sortino = (excess_returns_sortino.mean() / downside_dev) * (252 ** 0.5)
             else:
                 # No volatility in downside returns (all same value)
                 sortino = None
