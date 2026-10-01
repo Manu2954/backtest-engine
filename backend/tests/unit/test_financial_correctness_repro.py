@@ -139,11 +139,6 @@ def test_benchmark_return_pct_is_buy_at_close_to_close() -> None:
 # RMS of min(excess, 0) over the full series (target = risk-free = 0).
 # This test uses >=2 down days so the difference is a finite, checkable number.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    reason="report_generator.py:280 downside_std = subset std about own mean, not RMS of shortfalls",
-    strict=True,
-    raises=AssertionError,
-)
 def test_sortino_uses_rms_downside_deviation() -> None:
     capital = 10_000.0
     # Construct an equity curve with known daily returns including two down days.
