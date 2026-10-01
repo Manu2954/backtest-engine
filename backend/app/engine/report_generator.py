@@ -42,8 +42,8 @@ def calculate_buy_and_hold_equity(
     if df.empty or "open" not in df.columns or "close" not in df.columns:
         return pd.Series([], dtype=float, name="benchmark_equity")
 
-    # Entry at first bar's open price
-    entry_price = float(df.iloc[0]["open"])
+    # Entry at first bar's close price
+    entry_price = float(df.iloc[0]["close"])
 
     if entry_price <= 0:
         # Invalid entry price - return flat equity at initial capital

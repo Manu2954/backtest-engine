@@ -79,11 +79,7 @@ def test_cache_key_distinguishes_market_type() -> None:
 # Benchmark daily returns / Sharpe are UNAFFECTED (pct_change cancels the
 # constant factor); only the level and return/alpha metrics are wrong.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    reason="report_generator.py:54-57 benchmark equity[0] = capital*close0/open0, not capital",
-    strict=True,
-    raises=AssertionError,
-)
+
 def test_benchmark_equity_anchors_at_initial_capital() -> None:
     capital = 10_000.0
     df = pd.DataFrame(
@@ -102,13 +98,7 @@ def test_benchmark_equity_anchors_at_initial_capital() -> None:
         f"got {eq.iloc[0]} (phantom bar-0 return of close0/open0)."
     )
 
-
-@pytest.mark.xfail(
-    reason="report_generator.py:54-57 phantom bar-0 return distorts benchmark_return_pct",
-    strict=True,
-    raises=AssertionError,
-)
-def test_benchmark_return_pct_is_buy_at_open_to_close() -> None:
+def test_benchmark_return_pct_is_buy_at_close_to_close() -> None:
     capital = 10_000.0
     df = pd.DataFrame(
         {
@@ -129,8 +119,8 @@ def test_benchmark_return_pct_is_buy_at_open_to_close() -> None:
         benchmark_equity=benchmark_equity,
     )
 
-    # Buy at open[0]=100, hold to close[-1]=120 => +20%.
-    expected = (df.iloc[-1]["close"] / df.iloc[0]["open"] - 1) * 100
+    # Buy at close[0]=110, hold to close[-1]=120 => +20%.
+    expected = (df.iloc[-1]["close"] / df.iloc[0]["close"] - 1) * 100
     got = report.get("benchmark_return_pct", 0.0)
     assert got == pytest.approx(expected, abs=0.5), (
         f"benchmark_return_pct should be ~{expected:.2f}% (buy at open[0], hold "
