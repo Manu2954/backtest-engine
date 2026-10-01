@@ -193,11 +193,7 @@ def test_sortino_uses_rms_downside_deviation() -> None:
 # resolutions; "1d"/"1w"/"1mo" hit the early return, so a still-forming daily
 # bar (fetched mid-day) is kept with a non-final high/low/close.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    reason="data_layer.py:305 _filter_incomplete_bars skips daily+; forming 1d bar kept",
-    strict=True,
-    raises=AssertionError,
-)
+
 def test_incomplete_daily_bar_is_filtered() -> None:
     # Two daily bars: yesterday (complete) and today (still forming).
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -216,6 +212,8 @@ def test_incomplete_daily_bar_is_filtered() -> None:
     )
 
     filtered = _filter_incomplete_bars(df, "1d")
+
+    print(filtered.all())
 
     assert today not in filtered.index, (
         "The still-forming daily bar (bar_end > now) must be dropped for '1d' "
